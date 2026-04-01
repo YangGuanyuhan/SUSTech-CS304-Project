@@ -43,15 +43,39 @@ def _chunk_text(text: str, chunk_size: int = 600) -> list[str]:
 async def _stream_agent_result(result: dict[str, object], *, session_id: str):
     approval_request = result.get("approval_request")
     if approval_request is not None:
-        yield {"event": "approval_required", "data": json.dumps(approval_request)}
-        yield {"event": "done", "data": json.dumps({"session_id": session_id, "status": "approval_required"})}
+        yield {
+            "event": "approval_required",
+            "data": json.dumps(
+                {
+                    **approval_request,
+                    "tool_events": result.get("tool_events", []),
+                }
+            ),
+        }
+        yield {
+            "event": "done",
+            "data": json.dumps(
+                {
+                    "session_id": session_id,
+                    "status": "approval_required",
+                    "tool_events": result.get("tool_events", []),
+                }
+            ),
+        }
         return
 
     for chunk in _chunk_text(str(result.get("response", ""))):
         yield {"event": "message", "data": json.dumps({"chunk": chunk})}
     yield {
         "event": "done",
-        "data": json.dumps({"session_id": session_id, "status": "completed", "tools_used": result.get("tools_used", [])}),
+        "data": json.dumps(
+            {
+                "session_id": session_id,
+                "status": "completed",
+                "tools_used": result.get("tools_used", []),
+                "tool_events": result.get("tool_events", []),
+            }
+        ),
     }
 
 

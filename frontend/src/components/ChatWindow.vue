@@ -93,6 +93,28 @@
             class="markdown-body"
             v-html="renderMarkdown(message.content)"
           />
+          <div v-if="message.toolEvents?.length" class="tool-events">
+            <details
+              v-for="(toolEvent, index) in message.toolEvents"
+              :key="`${message.id}-${toolEvent.tool_name}-${index}`"
+              class="tool-event"
+            >
+              <summary class="tool-event-summary">
+                <span class="tool-event-name">{{ toolEvent.tool_name }}</span>
+                <span :class="['tool-event-status', toolEvent.status]">{{ formatToolStatus(toolEvent.status) }}</span>
+              </summary>
+              <div class="tool-event-body">
+                <div class="tool-event-block">
+                  <strong>Input</strong>
+                  <pre>{{ formatToolPayload(toolEvent.arguments) }}</pre>
+                </div>
+                <div v-if="toolEvent.output" class="tool-event-block">
+                  <strong>Output</strong>
+                  <pre>{{ formatToolPayload(toolEvent.output) }}</pre>
+                </div>
+              </div>
+            </details>
+          </div>
         </article>
       </div>
 
@@ -154,7 +176,8 @@ function makeConversation(title = "New Conversation") {
         id: crypto.randomUUID(),
         role: "assistant",
         content: "UI is connected to the backend contract. Start here or continue a previous session.",
-        elapsedLabel: ""
+        elapsedLabel: "",
+        toolEvents: []
       })
     ]
   });
@@ -171,7 +194,12 @@ function restoreConversations() {
         ...conversation,
         workspaceRoot: conversation.workspaceRoot || "",
         pendingApproval: conversation.pendingApproval || null,
-        messages: (conversation.messages || []).map((message) => reactive(message))
+        messages: (conversation.messages || []).map((message) =>
+          reactive({
+            ...message,
+            toolEvents: message.toolEvents || []
+          })
+        )
       })
     );
   } catch {
@@ -227,6 +255,21 @@ function formatConversationTime(timestamp) {
 function formatElapsed(ms) {
   if (ms < 1000) return `${ms} ms`;
   return `${(ms / 1000).toFixed(1)} s`;
+}
+
+function formatToolStatus(status) {
+  if (status === "completed") return "Completed";
+  if (status === "failed") return "Failed";
+  if (status === "denied") return "Denied";
+  if (status === "awaiting_approval") return "Awaiting Approval";
+  return status;
+}
+
+function formatToolPayload(payload) {
+  if (typeof payload === "string") {
+    return payload;
+  }
+  return JSON.stringify(payload, null, 2);
 }
 
 function startTimer(message) {
@@ -305,7 +348,8 @@ function appendMessage(role, content) {
       id: crypto.randomUUID(),
       role,
       content,
-      elapsedLabel: ""
+      elapsedLabel: "",
+      toolEvents: []
     })
   );
   activeConversation.value.updatedAt = Date.now();
@@ -342,7 +386,8 @@ async function submitMessage() {
     id: crypto.randomUUID(),
     role: "assistant",
     content: "Waiting for model response...",
-    elapsedLabel: ""
+    elapsedLabel: "",
+    toolEvents: []
   });
   conversation.messages.push(assistantMessage);
   conversation.updatedAt = Date.now();
@@ -368,10 +413,12 @@ async function submitMessage() {
         },
         onApprovalRequired(approval) {
           assistantMessage.content = "Tool invocation is waiting for your approval.";
+          assistantMessage.toolEvents = approval.tool_events || [];
           conversation.pendingApproval = approval;
         },
-        onDone() {
+        onDone(payload) {
           assistantMessage.content = assistantMessage.content.trim();
+          assistantMessage.toolEvents = payload.tool_events || assistantMessage.toolEvents || [];
         }
       }
     );
@@ -393,7 +440,8 @@ async function resolveApproval(approved) {
     id: crypto.randomUUID(),
     role: "assistant",
     content: approved ? "Executing approved action..." : "Approval denied. Letting the agent continue...",
-    elapsedLabel: ""
+    elapsedLabel: "",
+    toolEvents: []
   });
   conversation.messages.push(assistantMessage);
   conversation.pendingApproval = null;
@@ -420,10 +468,12 @@ async function resolveApproval(approved) {
         },
         onApprovalRequired(nextApproval) {
           assistantMessage.content = "Another action is waiting for your approval.";
+          assistantMessage.toolEvents = nextApproval.tool_events || [];
           conversation.pendingApproval = nextApproval;
         },
-        onDone() {
+        onDone(payload) {
           assistantMessage.content = assistantMessage.content.trim();
+          assistantMessage.toolEvents = payload.tool_events || assistantMessage.toolEvents || [];
         }
       }
     );
@@ -774,6 +824,83 @@ onBeforeUnmount(() => {
 
 .markdown-body :deep(a) {
   color: var(--accent);
+}
+
+.tool-events {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.tool-event {
+  border: 1px solid rgba(28, 36, 48, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  overflow: hidden;
+}
+
+.tool-event-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.tool-event-summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-event-name {
+  font-weight: 700;
+}
+
+.tool-event-status {
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.tool-event-status.completed {
+  background: rgba(34, 197, 94, 0.12);
+  color: #15803d;
+}
+
+.tool-event-status.failed,
+.tool-event-status.denied {
+  background: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+}
+
+.tool-event-status.awaiting_approval {
+  background: rgba(245, 158, 11, 0.16);
+  color: #b45309;
+}
+
+.tool-event-body {
+  display: grid;
+  gap: 12px;
+  padding: 0 16px 16px;
+}
+
+.tool-event-block {
+  display: grid;
+  gap: 6px;
+}
+
+.tool-event-block pre {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  overflow: auto;
+  background: rgba(28, 36, 48, 0.94);
+  color: #f8fafc;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.9rem;
+  line-height: 1.55;
 }
 
 .composer textarea {

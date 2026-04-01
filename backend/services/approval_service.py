@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-from backend.models.tooling import ToolApprovalRequest
+from backend.models.tooling import ToolApprovalRequest, ToolTrace
 
 
 @dataclass
@@ -21,6 +21,7 @@ class PendingApproval:
     workspace_root: str | None
     messages: list[dict[str, Any]]
     tools_used: list[str]
+    tool_events: list[ToolTrace]
 
 
 class ApprovalService:
@@ -41,6 +42,7 @@ class ApprovalService:
         workspace_root: str | None,
         messages: list[dict[str, Any]],
         tools_used: list[str],
+        tool_events: list[ToolTrace],
     ) -> ToolApprovalRequest:
         approval_id = str(uuid4())
         pending = PendingApproval(
@@ -54,6 +56,7 @@ class ApprovalService:
             workspace_root=workspace_root,
             messages=messages,
             tools_used=tools_used,
+            tool_events=tool_events,
         )
         self._pending[approval_id] = pending
         return ToolApprovalRequest(

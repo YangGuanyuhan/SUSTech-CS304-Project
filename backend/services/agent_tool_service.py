@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -205,7 +206,8 @@ class AgentToolService:
             mode = "append to" if arguments.get("append") else "write"
             return f"{mode.capitalize()} local file `{arguments.get('path', '')}` in workspace `{workspace_root or '<unset>'}`."
         if tool_name == "run_local_command":
-            command = " ".join(arguments.get("command", []))
+            raw_command = arguments.get("command", [])
+            command = raw_command if isinstance(raw_command, str) else " ".join(raw_command)
             return f"Run local command `{command}` in workspace `{workspace_root or '<unset>'}`."
         if tool_name == "fetch_webpage":
             return f"Visit webpage `{arguments.get('url', '')}` and extract content."
@@ -327,10 +329,8 @@ class AgentToolService:
 
     async def _run_local_command(self, arguments: dict[str, Any], workspace_root: str | None) -> str:
         cwd = self._workspace_root(workspace_root)
-        command = arguments.get("command")
+        command = self._normalize_command(arguments.get("command"), cwd)
         timeout_seconds = int(arguments.get("timeout_seconds", 20))
-        if not isinstance(command, list) or not command or not all(isinstance(item, str) for item in command):
-            raise ToolExecutionError("`command` must be a non-empty string array.")
 
         process = await asyncio.create_subprocess_exec(
             *command,
@@ -353,6 +353,23 @@ class AgentToolService:
             "stderr": stderr.decode("utf-8", errors="ignore")[:12000],
         }
         return json.dumps(payload, ensure_ascii=False)
+
+    def _normalize_command(self, raw_command: Any, cwd: Path) -> list[str]:
+        if isinstance(raw_command, str):
+            command = shlex.split(raw_command)
+        elif isinstance(raw_command, list) and raw_command and all(isinstance(item, str) for item in raw_command):
+            command = list(raw_command)
+        else:
+            raise ToolExecutionError("`command` must be a non-empty string or string array.")
+
+        first = command[0]
+        candidate = cwd / first
+        if candidate.is_file():
+            if candidate.suffix == ".py":
+                return ["python3", first, *command[1:]]
+            if candidate.suffix == ".sh" and not candidate.stat().st_mode & 0o111:
+                return ["bash", first, *command[1:]]
+        return command
 
     async def _fetch_webpage(self, arguments: dict[str, Any]) -> str:
         url = str(arguments.get("url", "")).strip()

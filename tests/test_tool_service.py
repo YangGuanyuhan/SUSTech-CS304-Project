@@ -72,6 +72,7 @@ async def test_agent_returns_approval_request_for_local_file_tools(db_session, t
 
     result = await agent.run("Read notes.txt", "session-approval", str(tmp_path))
     assert result["approval_request"]["tool_name"] == "read_local_file"
+    assert result["tool_events"][0]["status"] == "awaiting_approval"
 
 
 async def test_agent_resume_approval_executes_tool_and_finishes(db_session, tmp_path):
@@ -91,3 +92,22 @@ async def test_agent_resume_approval_executes_tool_and_finishes(db_session, tmp_
 
     assert result["response"] == "I read the file successfully."
     assert "read_local_file" in result["tools_used"]
+    assert result["tool_events"][0]["status"] == "completed"
+
+
+async def test_command_tool_accepts_string_command(db_session, tmp_path):
+    service = AgentToolService(db_session)
+    result_raw = await service.execute("run_local_command", {"command": "pwd"}, workspace_root=str(tmp_path))
+    result = json.loads(result_raw)
+    assert result["returncode"] == 0
+
+
+async def test_command_tool_runs_python_script_with_interpreter(db_session, tmp_path):
+    script = tmp_path / "hello.py"
+    script.write_text("print('hello from script')\n", encoding="utf-8")
+
+    service = AgentToolService(db_session)
+    result_raw = await service.execute("run_local_command", {"command": ["hello.py"]}, workspace_root=str(tmp_path))
+    result = json.loads(result_raw)
+    assert result["returncode"] == 0
+    assert "hello from script" in result["stdout"]

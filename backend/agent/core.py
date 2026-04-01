@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from backend.models.tooling import AgentTurnResult
+from backend.models.tooling import AgentTurnResult, ToolTrace
 from backend.services.agent_tool_service import (
     AgentToolService,
     ToolExecutionError,
@@ -83,6 +83,7 @@ class StudentProductivityAgent:
         session_id: str,
         messages: list[dict[str, Any]],
         tools_used: list[str],
+        tool_events: list[ToolTrace],
         workspace_root: str | None,
     ) -> AgentTurnResult:
         while True:
@@ -108,7 +109,11 @@ class StudentProductivityAgent:
             messages.append(assistant_message)
 
             if not assistant.tool_calls:
-                return AgentTurnResult(response=(assistant.content or "").strip(), tools_used=tools_used)
+                return AgentTurnResult(
+                    response=(assistant.content or "").strip(),
+                    tools_used=tools_used,
+                    tool_events=tool_events,
+                )
 
             for tool_call in assistant.tool_calls:
                 tool_name = tool_call.function.name
@@ -118,6 +123,13 @@ class StudentProductivityAgent:
                     arguments = {}
 
                 if self.tool_service.requires_approval(tool_name):
+                    tool_events.append(
+                        ToolTrace(
+                            tool_name=tool_name,
+                            arguments=arguments,
+                            status="awaiting_approval",
+                        )
+                    )
                     approval_request = approval_service.create(
                         session_id=session_id,
                         user_input=user_input,
@@ -132,6 +144,7 @@ class StudentProductivityAgent:
                         workspace_root=workspace_root,
                         messages=self._serialize_messages(messages),
                         tools_used=list(tools_used),
+                        tool_events=list(tool_events),
                     )
                     llm_logger.log_event(
                         session_id,
@@ -143,10 +156,23 @@ class StudentProductivityAgent:
                             "summary": approval_request.summary,
                         },
                     )
-                    return AgentTurnResult(tools_used=tools_used, approval_request=approval_request)
+                    return AgentTurnResult(
+                        tools_used=tools_used,
+                        tool_events=tool_events,
+                        approval_request=approval_request,
+                    )
 
                 tool_result = await self._execute_tool(tool_name, arguments, workspace_root=workspace_root)
                 tools_used.append(tool_name)
+                status = "failed" if '"ok": false' in tool_result.lower() else "completed"
+                tool_events.append(
+                    ToolTrace(
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        status=status,
+                        output=tool_result,
+                    )
+                )
                 llm_logger.log_event(
                     session_id,
                     "tool_result",
@@ -187,6 +213,7 @@ class StudentProductivityAgent:
                 session_id=session_id,
                 messages=await self._build_messages(message, session_id, workspace_root),
                 tools_used=[],
+                tool_events=[],
                 workspace_root=workspace_root,
             )
         except (LLMConfigurationError, LLMConnectionError) as exc:
@@ -196,10 +223,11 @@ class StudentProductivityAgent:
                     f"LLM is not ready yet: {exc}\n"
                     f"Current runtime config: `{llm_config.provider}` / `{llm_config.model}`.\n"
                     "Open the settings panel and configure an OpenAI-compatible endpoint."
-                )
+                ),
+                tool_events=[],
             )
         except Exception as exc:
-            result = AgentTurnResult(response=f"LLM request failed: {exc}")
+            result = AgentTurnResult(response=f"LLM request failed: {exc}", tool_events=[])
 
         if result.approval_request is None:
             await TaskHistoryService(self.session).add_history(
@@ -229,11 +257,13 @@ class StudentProductivityAgent:
                 workspace_root=pending.workspace_root,
             )
             pending.tools_used.append(pending.tool_name)
+            status = "failed" if '"ok": false' in tool_result.lower() else "completed"
         else:
             tool_result = json.dumps(
                 {"ok": False, "error": f"User denied approval for `{pending.tool_name}`."},
                 ensure_ascii=False,
             )
+            status = "denied"
         llm_logger.log_event(
             pending.session_id,
             "approval_resolution",
@@ -253,6 +283,23 @@ class StudentProductivityAgent:
                 "content": tool_result,
             }
         )
+        pending.tool_events = [
+            event
+            for event in pending.tool_events
+            if not (
+                event.tool_name == pending.tool_name
+                and event.arguments == pending.tool_arguments
+                and event.status == "awaiting_approval"
+            )
+        ]
+        pending.tool_events.append(
+            ToolTrace(
+                tool_name=pending.tool_name,
+                arguments=pending.tool_arguments,
+                status=status,
+                output=tool_result,
+            )
+        )
 
         try:
             result = await self._continue_with_messages(
@@ -260,6 +307,7 @@ class StudentProductivityAgent:
                 session_id=pending.session_id,
                 messages=pending.messages,
                 tools_used=pending.tools_used,
+                tool_events=pending.tool_events,
                 workspace_root=pending.workspace_root,
             )
         except (LLMConfigurationError, LLMConnectionError) as exc:
@@ -271,9 +319,14 @@ class StudentProductivityAgent:
                     "Open the settings panel and configure an OpenAI-compatible endpoint."
                 ),
                 tools_used=pending.tools_used,
+                tool_events=pending.tool_events,
             )
         except Exception as exc:
-            result = AgentTurnResult(response=f"LLM request failed: {exc}", tools_used=pending.tools_used)
+            result = AgentTurnResult(
+                response=f"LLM request failed: {exc}",
+                tools_used=pending.tools_used,
+                tool_events=pending.tool_events,
+            )
 
         if result.approval_request is None:
             await TaskHistoryService(self.session).add_history(
