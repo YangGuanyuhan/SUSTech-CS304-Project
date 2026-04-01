@@ -86,3 +86,19 @@ class Quiz(BaseModel):
     source_file: str
     questions: list[QuizQuestion]
     generated_at: datetime
+
+
+class DateTimeInfo(BaseModel):
+    """Structured datetime information."""
+
+    timestamp: float
+    iso_format: str
+    year: int
+    month: int
+    day: int
+    hour: int
+    minute: int
+    second: int
+    microsecond: int
+    tzname: str
+    utc_offset_hours: float

@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 from sqlalchemy.orm import Session
 
+from backend.services.datetime_service import DateTimeService
 from backend.services.memory_service import MemoryService
 
 
@@ -161,6 +162,17 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_current_datetime",
+                "description": "Get current date and time with structured fields including timezone and UTC offset.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
     ]
 
 
@@ -222,6 +234,8 @@ class AgentToolService:
             return await self._run_local_command(arguments, workspace_root)
         if tool_name == "fetch_webpage":
             return await self._fetch_webpage(arguments)
+        if tool_name == "get_current_datetime":
+            return await self._get_current_datetime()
         raise ToolExecutionError(f"Unknown tool `{tool_name}`.")
 
     async def _memory_search(self, arguments: dict[str, Any]) -> str:
@@ -359,6 +373,10 @@ class AgentToolService:
             "content": text[:max_chars],
         }
         return json.dumps(payload, ensure_ascii=False)
+
+    async def _get_current_datetime(self) -> str:
+        datetime_info = DateTimeService().get_current_datetime()
+        return json.dumps(datetime_info.model_dump(mode="json"), ensure_ascii=False)
 
     def _workspace_root(self, workspace_root: str | None) -> Path:
         root = Path(workspace_root or "").expanduser()
