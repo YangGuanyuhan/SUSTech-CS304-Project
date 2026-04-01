@@ -76,3 +76,55 @@ class UserPreferenceRecord(Base):
     key: Mapped[str] = mapped_column(String(128), index=True)
     value: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class QuizSessionRecord(Base):
+    __tablename__ = "quiz_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    owner_id: Mapped[str] = mapped_column(String(64), default="local-user", index=True)
+    chat_session_id: Mapped[str] = mapped_column(String(128), index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    topic: Mapped[str] = mapped_column(Text)
+    source_material: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class QuizQuestionRecord(Base):
+    __tablename__ = "quiz_questions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    quiz_session_id: Mapped[str] = mapped_column(String(36), index=True)
+    position: Mapped[int] = mapped_column(index=True)
+    question_type: Mapped[str] = mapped_column(String(32))
+    prompt: Mapped[str] = mapped_column(Text)
+    options_json: Mapped[str] = mapped_column(Text, default="[]")
+    correct_answer: Mapped[str] = mapped_column(Text)
+    explanation: Mapped[str] = mapped_column(Text)
+    rubric: Mapped[str | None] = mapped_column(Text, nullable=True)
+    points: Mapped[float] = mapped_column(default=1.0)
+
+
+class QuizAttemptRecord(Base):
+    __tablename__ = "quiz_attempts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    owner_id: Mapped[str] = mapped_column(String(64), default="local-user", index=True)
+    quiz_session_id: Mapped[str] = mapped_column(String(36), index=True)
+    score: Mapped[float] = mapped_column(default=0.0)
+    total_points: Mapped[float] = mapped_column(default=0.0)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class QuizAnswerRecord(Base):
+    __tablename__ = "quiz_answers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    attempt_id: Mapped[str] = mapped_column(String(36), index=True)
+    quiz_question_id: Mapped[str] = mapped_column(String(36), index=True)
+    submitted_answer: Mapped[str] = mapped_column(Text)
+    is_correct: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    score: Mapped[float] = mapped_column(default=0.0)
+    feedback: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

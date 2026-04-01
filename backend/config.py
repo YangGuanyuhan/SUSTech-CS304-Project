@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     search_timeout: int = 30
     api_timeout: int = 60
     task_timeout: int = 120
+    quiz_subjective_grading_timeout: int = 30
     llm_log_dir: str = "./data/llm-logs"
     allowed_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]

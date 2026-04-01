@@ -40,12 +40,18 @@ async def test_memory_tool_round_trip(db_session):
     saved_raw = await service.execute(
         "memory_save",
         {"key": "favorite_editor", "value": "vscode", "category": "preference", "tags": ["dev"]},
+        chat_session_id="chat-1",
         workspace_root=None,
     )
     saved = json.loads(saved_raw)
     assert saved["key"] == "favorite_editor"
 
-    search_raw = await service.execute("memory_search", {"query": "editor vscode"}, workspace_root=None)
+    search_raw = await service.execute(
+        "memory_search",
+        {"query": "editor vscode"},
+        chat_session_id="chat-1",
+        workspace_root=None,
+    )
     results = json.loads(search_raw)
     assert results[0]["key"] == "favorite_editor"
 
@@ -58,6 +64,7 @@ async def test_file_tool_rejects_path_escape(db_session, tmp_path):
         await service.execute(
             "read_local_file",
             {"path": str(outside_file)},
+            chat_session_id="chat-1",
             workspace_root=str(tmp_path),
         )
 
@@ -97,7 +104,12 @@ async def test_agent_resume_approval_executes_tool_and_finishes(db_session, tmp_
 
 async def test_command_tool_accepts_string_command(db_session, tmp_path):
     service = AgentToolService(db_session)
-    result_raw = await service.execute("run_local_command", {"command": "pwd"}, workspace_root=str(tmp_path))
+    result_raw = await service.execute(
+        "run_local_command",
+        {"command": "pwd"},
+        chat_session_id="chat-1",
+        workspace_root=str(tmp_path),
+    )
     result = json.loads(result_raw)
     assert result["returncode"] == 0
 
@@ -107,7 +119,12 @@ async def test_command_tool_runs_python_script_with_interpreter(db_session, tmp_
     script.write_text("print('hello from script')\n", encoding="utf-8")
 
     service = AgentToolService(db_session)
-    result_raw = await service.execute("run_local_command", {"command": ["hello.py"]}, workspace_root=str(tmp_path))
+    result_raw = await service.execute(
+        "run_local_command",
+        {"command": ["hello.py"]},
+        chat_session_id="chat-1",
+        workspace_root=str(tmp_path),
+    )
     result = json.loads(result_raw)
     assert result["returncode"] == 0
     assert "hello from script" in result["stdout"]

@@ -18,6 +18,7 @@ from backend.api.schemas import (
     LLMProfileRequest,
     LLMSettingsRequest,
     MemoryDeleteByQueryRequest,
+    QuizAttemptRequest,
 )
 from backend.db.database import get_db_session
 from backend.models.common import ApiResponse
@@ -27,6 +28,7 @@ from backend.services.approval_service import approval_service
 from backend.services.email_service import EmailService, UnconfirmedSendError
 from backend.services.llm_service import LLMConnectionError, LLMService
 from backend.services.memory_service import MemoryService
+from backend.services.quiz_service import QuizService
 from backend.services.runtime_settings import RuntimeLLMUpdate, runtime_settings
 from backend.services.settings_service import SettingsService
 
@@ -230,6 +232,36 @@ async def delete_memory_by_query(
 ) -> ApiResponse[dict[str, int]]:
     deleted = await MemoryService(session).delete_memories_by_query(request.query)
     return ApiResponse(success=True, data={"deleted": deleted})
+
+
+@router.get("/quiz/history", response_model=ApiResponse[object])
+async def get_quiz_history(
+    limit: int = Query(default=5, ge=1, le=20),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    history = await QuizService(session).get_history_summary(limit=limit)
+    return ApiResponse(success=True, data=history)
+
+
+@router.get("/quiz/{quiz_id}", response_model=ApiResponse[object])
+async def get_quiz(quiz_id: str, session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    quiz = await QuizService(session).get_quiz(quiz_id)
+    if quiz is None:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    return ApiResponse(success=True, data=quiz)
+
+
+@router.post("/quiz/{quiz_id}/attempts", response_model=ApiResponse[object])
+async def submit_quiz_attempt(
+    quiz_id: str,
+    request: QuizAttemptRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    try:
+        result = await QuizService(session).submit_attempt(quiz_id, request.answers)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=result)
 
 
 @router.post("/email/draft", response_model=ApiResponse[object])

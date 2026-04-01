@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from backend.services.datetime_service import DateTimeService
 from backend.services.memory_service import MemoryService
+from backend.services.quiz_service import QuizService
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -166,6 +167,36 @@ def get_tool_definitions() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "create_quiz",
+                "description": "Create a quiz session for the user and return structured quiz questions.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "topic": {"type": "string"},
+                        "question_count": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
+                        "source_material": {"type": "string"},
+                        "title": {"type": "string"},
+                    },
+                    "required": ["topic"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "quiz_history_summary",
+                "description": "Summarize the user's recent quiz attempts for personalized study guidance.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "get_current_datetime",
                 "description": "Get current date and time with structured fields including timezone and UTC offset.",
                 "parameters": {
@@ -187,6 +218,7 @@ class AgentToolService:
     def __init__(self, session: Session):
         self.session = session
         self.memory_service = MemoryService(session)
+        self.quiz_service = QuizService(session)
 
     def requires_approval(self, tool_name: str) -> bool:
         return tool_name in _APPROVAL_REQUIRED_TOOLS
@@ -218,6 +250,7 @@ class AgentToolService:
         tool_name: str,
         arguments: dict[str, Any],
         *,
+        chat_session_id: str,
         workspace_root: str | None,
     ) -> str:
         if tool_name == "memory_search":
@@ -236,6 +269,10 @@ class AgentToolService:
             return await self._run_local_command(arguments, workspace_root)
         if tool_name == "fetch_webpage":
             return await self._fetch_webpage(arguments)
+        if tool_name == "create_quiz":
+            return await self._create_quiz(arguments, chat_session_id=chat_session_id)
+        if tool_name == "quiz_history_summary":
+            return await self._quiz_history_summary(arguments)
         if tool_name == "get_current_datetime":
             return await self._get_current_datetime()
         raise ToolExecutionError(f"Unknown tool `{tool_name}`.")
@@ -390,6 +427,23 @@ class AgentToolService:
             "content": text[:max_chars],
         }
         return json.dumps(payload, ensure_ascii=False)
+
+    async def _create_quiz(self, arguments: dict[str, Any], *, chat_session_id: str) -> str:
+        topic = str(arguments.get("topic", "")).strip()
+        if not topic:
+            raise ToolExecutionError("`topic` is required for create_quiz.")
+        quiz = await self.quiz_service.create_quiz(
+            chat_session_id=chat_session_id,
+            topic=topic,
+            question_count=int(arguments.get("question_count", 5)),
+            source_material=arguments.get("source_material"),
+            title=arguments.get("title"),
+        )
+        return json.dumps({"quiz_session": quiz.model_dump(mode="json")}, ensure_ascii=False)
+
+    async def _quiz_history_summary(self, arguments: dict[str, Any]) -> str:
+        history = await self.quiz_service.get_history_summary(limit=int(arguments.get("limit", 5)))
+        return json.dumps({"history": history.model_dump(mode="json")}, ensure_ascii=False)
 
     async def _get_current_datetime(self) -> str:
         datetime_info = DateTimeService().get_current_datetime()

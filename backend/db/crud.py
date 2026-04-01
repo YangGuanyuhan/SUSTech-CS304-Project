@@ -14,6 +14,10 @@ from backend.db.models import (
     BlackboardCacheRecord,
     EmailDraftRecord,
     MemoryRecord,
+    QuizAnswerRecord,
+    QuizAttemptRecord,
+    QuizQuestionRecord,
+    QuizSessionRecord,
     TaskHistoryRecord,
     UserPreferenceRecord,
 )
@@ -267,6 +271,165 @@ async def delete_user_preference(session: Session, *, key: str, owner_id: str = 
     result = session.execute(stmt)
     session.commit()
     return result.rowcount > 0
+
+
+async def create_quiz_session(
+    session: Session,
+    *,
+    chat_session_id: str,
+    title: str,
+    topic: str,
+    source_material: str | None,
+    owner_id: str = "local-user",
+) -> QuizSessionRecord:
+    record = QuizSessionRecord(
+        owner_id=owner_id,
+        chat_session_id=chat_session_id,
+        title=title,
+        topic=topic,
+        source_material=source_material,
+    )
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    return record
+
+
+async def create_quiz_questions(
+    session: Session,
+    *,
+    quiz_session_id: str,
+    questions: list[dict[str, Any]],
+) -> list[QuizQuestionRecord]:
+    records: list[QuizQuestionRecord] = []
+    for index, question in enumerate(questions, start=1):
+        record = QuizQuestionRecord(
+            id=question["id"],
+            quiz_session_id=quiz_session_id,
+            position=index,
+            question_type=question["question_type"],
+            prompt=question["prompt"],
+            options_json=json.dumps(question.get("options", []), ensure_ascii=False),
+            correct_answer=question["correct_answer"],
+            explanation=question["explanation"],
+            rubric=question.get("rubric"),
+            points=float(question.get("points", 1.0)),
+        )
+        session.add(record)
+        records.append(record)
+    session.commit()
+    for record in records:
+        session.refresh(record)
+    return records
+
+
+async def get_quiz_session(
+    session: Session,
+    quiz_id: str,
+    *,
+    owner_id: str = "local-user",
+) -> QuizSessionRecord | None:
+    stmt = select(QuizSessionRecord).where(
+        QuizSessionRecord.id == quiz_id,
+        QuizSessionRecord.owner_id == owner_id,
+    )
+    return session.execute(stmt).scalar_one_or_none()
+
+
+async def list_quiz_questions(
+    session: Session,
+    quiz_id: str,
+) -> list[QuizQuestionRecord]:
+    stmt = (
+        select(QuizQuestionRecord)
+        .where(QuizQuestionRecord.quiz_session_id == quiz_id)
+        .order_by(QuizQuestionRecord.position.asc())
+    )
+    return list(session.execute(stmt).scalars())
+
+
+async def list_recent_quiz_sessions(
+    session: Session,
+    *,
+    limit: int = 10,
+    owner_id: str = "local-user",
+) -> list[QuizSessionRecord]:
+    stmt = (
+        select(QuizSessionRecord)
+        .where(QuizSessionRecord.owner_id == owner_id)
+        .order_by(QuizSessionRecord.created_at.desc())
+        .limit(limit)
+    )
+    return list(session.execute(stmt).scalars())
+
+
+async def create_quiz_attempt(
+    session: Session,
+    *,
+    quiz_session_id: str,
+    score: float,
+    total_points: float,
+    summary: str,
+    owner_id: str = "local-user",
+) -> QuizAttemptRecord:
+    record = QuizAttemptRecord(
+        owner_id=owner_id,
+        quiz_session_id=quiz_session_id,
+        score=score,
+        total_points=total_points,
+        summary=summary,
+    )
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    return record
+
+
+async def create_quiz_answers(
+    session: Session,
+    *,
+    attempt_id: str,
+    answers: list[dict[str, Any]],
+) -> list[QuizAnswerRecord]:
+    records: list[QuizAnswerRecord] = []
+    for answer in answers:
+        record = QuizAnswerRecord(
+            attempt_id=attempt_id,
+            quiz_question_id=answer["quiz_question_id"],
+            submitted_answer=answer["submitted_answer"],
+            is_correct=answer.get("is_correct"),
+            score=float(answer["score"]),
+            feedback=answer["feedback"],
+        )
+        session.add(record)
+        records.append(record)
+    session.commit()
+    for record in records:
+        session.refresh(record)
+    return records
+
+
+async def list_recent_quiz_attempts(
+    session: Session,
+    *,
+    limit: int = 10,
+    owner_id: str = "local-user",
+) -> list[QuizAttemptRecord]:
+    stmt = (
+        select(QuizAttemptRecord)
+        .where(QuizAttemptRecord.owner_id == owner_id)
+        .order_by(QuizAttemptRecord.submitted_at.desc())
+        .limit(limit)
+    )
+    return list(session.execute(stmt).scalars())
+
+
+async def list_quiz_answers_for_attempt(
+    session: Session,
+    attempt_id: str,
+) -> list[QuizAnswerRecord]:
+    stmt = select(QuizAnswerRecord).where(QuizAnswerRecord.attempt_id == attempt_id)
+    return list(session.execute(stmt).scalars())
 
 
 __all__ = ["Base"]

@@ -84,6 +84,25 @@ export async function createEmailDraft(payload) {
   return parseJson(response);
 }
 
+export async function getQuiz(quizId) {
+  const response = await fetch(`${API_BASE}/quiz/${encodeURIComponent(quizId)}`);
+  return parseJson(response);
+}
+
+export async function submitQuizAttempt(quizId, payload) {
+  const response = await fetch(`${API_BASE}/quiz/${encodeURIComponent(quizId)}/attempts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function getQuizHistory(limit = 5) {
+  const response = await fetch(`${API_BASE}/quiz/history?limit=${encodeURIComponent(limit)}`);
+  return parseJson(response);
+}
+
 async function consumeSSE(response, handlers) {
   if (!response.ok || !response.body) {
     let detail = `Chat request failed with status ${response.status}`;

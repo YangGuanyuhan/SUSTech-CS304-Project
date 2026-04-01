@@ -115,6 +115,15 @@
               </div>
             </details>
           </div>
+          <template
+            v-for="(toolEvent, index) in message.toolEvents?.filter((event) => event.tool_name === 'create_quiz') || []"
+            :key="`${message.id}-quiz-${index}`"
+          >
+            <QuizPanel
+              v-if="tryParseToolOutput(toolEvent.output)?.quiz_session"
+              :quiz="tryParseToolOutput(toolEvent.output).quiz_session"
+            />
+          </template>
         </article>
       </div>
 
@@ -152,6 +161,7 @@
 <script setup>
 import MarkdownIt from "markdown-it";
 import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
+import QuizPanel from "./QuizPanel.vue";
 import { getCourses, streamApprovalDecision, streamChat } from "../api/client";
 
 const CHAT_CONVERSATIONS_KEY = "spa-conversations";
@@ -270,6 +280,15 @@ function formatToolPayload(payload) {
     return payload;
   }
   return JSON.stringify(payload, null, 2);
+}
+
+function tryParseToolOutput(output) {
+  if (!output || typeof output !== "string") return null;
+  try {
+    return JSON.parse(output);
+  } catch {
+    return null;
+  }
 }
 
 function startTimer(message) {

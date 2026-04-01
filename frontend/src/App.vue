@@ -17,6 +17,7 @@
             {{ checking ? "Checking..." : "Check Backend" }}
           </button>
           <button class="secondary" @click="settingsOpen = true">Configure APIs</button>
+          <button class="secondary" @click="quizHistoryOpen = true">Quiz History</button>
         </div>
       </aside>
     </section>
@@ -27,18 +28,26 @@
         <SettingsPanel @close="settingsOpen = false" />
       </div>
     </div>
+
+    <div v-if="quizHistoryOpen" class="overlay" @click.self="quizHistoryOpen = false">
+      <div class="overlay-panel">
+        <QuizHistoryPanel @close="quizHistoryOpen = false" />
+      </div>
+    </div>
   </main>
 </template>
 
 <script setup>
 import { onMounted, ref } from "vue";
 import ChatWindow from "./components/ChatWindow.vue";
+import QuizHistoryPanel from "./components/QuizHistoryPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import { getHealth } from "./api/client";
 
 const status = ref("Unknown");
 const checking = ref(false);
 const settingsOpen = ref(false);
+const quizHistoryOpen = ref(false);
 
 async function checkHealth() {
   checking.value = true;

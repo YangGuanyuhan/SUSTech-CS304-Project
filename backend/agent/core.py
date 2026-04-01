@@ -162,7 +162,12 @@ class StudentProductivityAgent:
                         approval_request=approval_request,
                     )
 
-                tool_result = await self._execute_tool(tool_name, arguments, workspace_root=workspace_root)
+                tool_result = await self._execute_tool(
+                    tool_name,
+                    arguments,
+                    chat_session_id=session_id,
+                    workspace_root=workspace_root,
+                )
                 tools_used.append(tool_name)
                 status = "failed" if '"ok": false' in tool_result.lower() else "completed"
                 tool_events.append(
@@ -195,10 +200,16 @@ class StudentProductivityAgent:
         tool_name: str,
         arguments: dict[str, Any],
         *,
+        chat_session_id: str,
         workspace_root: str | None,
     ) -> str:
         try:
-            return await self.tool_service.execute(tool_name, arguments, workspace_root=workspace_root)
+            return await self.tool_service.execute(
+                tool_name,
+                arguments,
+                chat_session_id=chat_session_id,
+                workspace_root=workspace_root,
+            )
         except ToolExecutionError as exc:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
         except Exception as exc:
@@ -254,6 +265,7 @@ class StudentProductivityAgent:
             tool_result = await self._execute_tool(
                 pending.tool_name,
                 pending.tool_arguments,
+                chat_session_id=pending.session_id,
                 workspace_root=pending.workspace_root,
             )
             pending.tools_used.append(pending.tool_name)
