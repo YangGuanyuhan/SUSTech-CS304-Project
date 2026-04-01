@@ -1,1 +1,54 @@
-[![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-22041afd0340ce965d47ae6ef1cefeee28c7c493a6346c4f15d667ab976d596c.svg)](https://classroom.github.com/a/py413vYq)
+# Student Productivity Agent
+
+Student Productivity Agent is a modular software engineering project for SUSTech students. The backend uses FastAPI, async SQLAlchemy, and pluggable providers for Blackboard, email, search, file automation, and memory. The frontend is a Vue 3 + Vite shell that consumes stable HTTP and SSE APIs.
+
+## Current scope
+
+- Backend-first architecture with stable domain models
+- Mock-first Blackboard integration with cache fallback path
+- Human-in-the-loop email draft and send flow
+- Local file summary and batch rename workflow
+- Memory CRUD and task history persistence
+- Minimal Vue frontend shell
+
+## Quick start
+
+### Backend
+
+```bash
+uv sync
+uv run uvicorn backend.main:app --reload
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### Tests
+
+```bash
+uv run pytest
+```
+
+## Project layout
+
+```text
+backend/
+  agent/       Agent orchestration and tool wrappers
+  api/         FastAPI routers and request models
+  db/          Async database engine, ORM models, repositories
+  models/      Shared Pydantic contracts
+  services/    Domain services and provider adapters
+frontend/      Vue 3 + Vite client
+tests/         Backend test suite
+```
+
+## Notes
+
+- Secrets are loaded from environment variables only.
+- Blackboard V1 defaults to a mock provider behind a stable interface.
+- Production migration to PostgreSQL is driven by `DATABASE_URL`.
