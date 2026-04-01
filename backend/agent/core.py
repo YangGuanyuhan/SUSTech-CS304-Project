@@ -16,6 +16,7 @@ from backend.services.agent_tool_service import (
 )
 from backend.services.approval_service import approval_service
 from backend.services.llm_service import LLMConfigurationError, LLMConnectionError, LLMService
+from backend.services.llm_logging_service import llm_logger
 from backend.services.runtime_settings import runtime_settings
 from backend.services.task_service import TaskHistoryService
 
@@ -27,10 +28,24 @@ except ImportError:  # pragma: no cover - optional dependency during static work
 
 SYSTEM_PROMPT = """
 You are Student Productivity Agent, a study assistant for SUSTech students.
-Use the available tools when they materially help. Save durable user preferences or facts
-with memory tools when appropriate. For local file, local command, and webpage access,
-the backend enforces explicit user approval. Do not claim an action has completed until a
-tool result confirms it. Respond in Markdown when useful and keep explanations concise.
+You have access to real backend tools. Treat local file access, local command execution,
+web access, and memory operations as available capabilities provided by tools.
+
+Tool usage rules:
+1. When the user asks to read files, list directories, write files, run commands, or visit webpages,
+   prefer the matching tool instead of replying that you cannot access the local machine or the web.
+2. For file tools and command tools, stay within the configured workspace root.
+3. For local file access, local command execution, and webpage access, the backend may require user approval.
+   You should still initiate the tool call when it is needed; the system will handle approval.
+4. Do not say that you are blocked by sandbox or security restrictions unless a tool result explicitly says so.
+5. Only claim an action succeeded after you receive a tool result confirming it.
+6. Use memory tools to save durable user preferences, project facts, and useful follow-up context when appropriate.
+7. If a tool result reports an error, explain that error plainly and suggest the next step.
+
+Response style:
+- Be concise and practical.
+- Respond in Markdown when useful.
+- Do not invent file contents, command output, or webpage content.
 """.strip()
 
 
@@ -71,7 +86,17 @@ class StudentProductivityAgent:
         workspace_root: str | None,
     ) -> AgentTurnResult:
         while True:
+            llm_logger.log_event(
+                session_id,
+                "llm_request",
+                {
+                    "messages": llm_logger.summarize_messages(messages),
+                    "tools": [tool["function"]["name"] for tool in get_tool_definitions()],
+                    "workspace_root": workspace_root,
+                },
+            )
             response = await self.llm_service.create_chat_completion(messages, tools=get_tool_definitions())
+            llm_logger.log_event(session_id, "llm_response", llm_logger.summarize_response(response))
             assistant = response.choices[0].message
             assistant_message: dict[str, Any] = {"role": "assistant"}
             if assistant.content:
@@ -108,10 +133,29 @@ class StudentProductivityAgent:
                         messages=self._serialize_messages(messages),
                         tools_used=list(tools_used),
                     )
+                    llm_logger.log_event(
+                        session_id,
+                        "approval_required",
+                        {
+                            "approval_id": approval_request.id,
+                            "tool_name": tool_name,
+                            "arguments": arguments,
+                            "summary": approval_request.summary,
+                        },
+                    )
                     return AgentTurnResult(tools_used=tools_used, approval_request=approval_request)
 
                 tool_result = await self._execute_tool(tool_name, arguments, workspace_root=workspace_root)
                 tools_used.append(tool_name)
+                llm_logger.log_event(
+                    session_id,
+                    "tool_result",
+                    {
+                        "tool_name": tool_name,
+                        "arguments": arguments,
+                        "result": tool_result[:3000] + ("...<truncated>" if len(tool_result) > 3000 else ""),
+                    },
+                )
                 messages.append(
                     {
                         "role": "tool",
@@ -190,6 +234,17 @@ class StudentProductivityAgent:
                 {"ok": False, "error": f"User denied approval for `{pending.tool_name}`."},
                 ensure_ascii=False,
             )
+        llm_logger.log_event(
+            pending.session_id,
+            "approval_resolution",
+            {
+                "approval_id": pending.id,
+                "approved": approved,
+                "tool_name": pending.tool_name,
+                "arguments": pending.tool_arguments,
+                "result": tool_result[:3000] + ("...<truncated>" if len(tool_result) > 3000 else ""),
+            },
+        )
 
         pending.messages.append(
             {
