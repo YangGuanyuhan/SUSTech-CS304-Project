@@ -66,7 +66,17 @@
           <h2>{{ activeConversation.title }}</h2>
           <p>Continue any saved session or start a new one. Responses render in Markdown.</p>
         </div>
-        <button :disabled="loading" @click="loadCourses">Load Blackboard Courses</button>
+        <div class="toolbar-actions">
+          <label class="workspace-field">
+            <span>Workspace Root</span>
+            <input
+              v-model="activeConversation.workspaceRoot"
+              type="text"
+              placeholder="/path/to/your/project"
+            />
+          </label>
+          <button :disabled="loading" @click="loadCourses">Load Blackboard Courses</button>
+        </div>
       </header>
 
       <div class="messages">
@@ -85,6 +95,21 @@
           />
         </article>
       </div>
+
+      <section v-if="activeConversation.pendingApproval" class="approval-panel">
+        <div>
+          <p class="eyebrow">Approval Required</p>
+          <h3>{{ activeConversation.pendingApproval.tool_name }}</h3>
+          <p>{{ activeConversation.pendingApproval.summary }}</p>
+          <code v-if="activeConversation.pendingApproval.workspace_root">
+            {{ activeConversation.pendingApproval.workspace_root }}
+          </code>
+        </div>
+        <div class="approval-actions">
+          <button :disabled="loading" @click="resolveApproval(true)">Approve</button>
+          <button class="secondary" :disabled="loading" @click="resolveApproval(false)">Deny</button>
+        </div>
+      </section>
 
       <form class="composer" @submit.prevent="submitMessage">
         <textarea
@@ -105,7 +130,7 @@
 <script setup>
 import MarkdownIt from "markdown-it";
 import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
-import { getCourses, streamChat } from "../api/client";
+import { getCourses, streamApprovalDecision, streamChat } from "../api/client";
 
 const CHAT_CONVERSATIONS_KEY = "spa-conversations";
 const ACTIVE_CONVERSATION_KEY = "spa-active-conversation-id";
@@ -122,6 +147,8 @@ function makeConversation(title = "New Conversation") {
     title,
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    workspaceRoot: "",
+    pendingApproval: null,
     messages: [
       reactive({
         id: crypto.randomUUID(),
@@ -142,6 +169,8 @@ function restoreConversations() {
     return raw.map((conversation) =>
       reactive({
         ...conversation,
+        workspaceRoot: conversation.workspaceRoot || "",
+        pendingApproval: conversation.pendingApproval || null,
         messages: (conversation.messages || []).map((message) => reactive(message))
       })
     );
@@ -317,6 +346,7 @@ async function submitMessage() {
   });
   conversation.messages.push(assistantMessage);
   conversation.updatedAt = Date.now();
+  conversation.pendingApproval = null;
   updateConversationTitle(conversation);
   draft.value = "";
   loading.value = true;
@@ -324,13 +354,21 @@ async function submitMessage() {
 
   try {
     await streamChat(
-      { message: content, session_id: conversation.id },
+      {
+        message: content,
+        session_id: conversation.id,
+        workspace_root: conversation.workspaceRoot?.trim() || null
+      },
       {
         onChunk(chunk) {
           if (assistantMessage.content === "Waiting for model response...") {
             assistantMessage.content = "";
           }
           assistantMessage.content += chunk;
+        },
+        onApprovalRequired(approval) {
+          assistantMessage.content = "Tool invocation is waiting for your approval.";
+          conversation.pendingApproval = approval;
         },
         onDone() {
           assistantMessage.content = assistantMessage.content.trim();
@@ -339,6 +377,58 @@ async function submitMessage() {
     );
   } catch (error) {
     assistantMessage.content = `Chat failed: ${error.message}`;
+  } finally {
+    conversation.updatedAt = Date.now();
+    stopTimer();
+    loading.value = false;
+  }
+}
+
+async function resolveApproval(approved) {
+  const conversation = activeConversation.value;
+  const pending = conversation.pendingApproval;
+  if (!pending) return;
+
+  const assistantMessage = reactive({
+    id: crypto.randomUUID(),
+    role: "assistant",
+    content: approved ? "Executing approved action..." : "Approval denied. Letting the agent continue...",
+    elapsedLabel: ""
+  });
+  conversation.messages.push(assistantMessage);
+  conversation.pendingApproval = null;
+  conversation.updatedAt = Date.now();
+  loading.value = true;
+  const stopTimer = startTimer(assistantMessage);
+
+  try {
+    await streamApprovalDecision(
+      {
+        session_id: conversation.id,
+        approval_id: pending.id,
+        approved
+      },
+      {
+        onChunk(chunk) {
+          if (
+            assistantMessage.content === "Executing approved action..." ||
+            assistantMessage.content === "Approval denied. Letting the agent continue..."
+          ) {
+            assistantMessage.content = "";
+          }
+          assistantMessage.content += chunk;
+        },
+        onApprovalRequired(nextApproval) {
+          assistantMessage.content = "Another action is waiting for your approval.";
+          conversation.pendingApproval = nextApproval;
+        },
+        onDone() {
+          assistantMessage.content = assistantMessage.content.trim();
+        }
+      }
+    );
+  } catch (error) {
+    assistantMessage.content = `Approval flow failed: ${error.message}`;
   } finally {
     conversation.updatedAt = Date.now();
     stopTimer();
@@ -506,6 +596,33 @@ onBeforeUnmount(() => {
   margin-bottom: 20px;
 }
 
+.toolbar-actions {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+}
+
+.workspace-field {
+  display: grid;
+  gap: 4px;
+  min-width: 360px;
+}
+
+.workspace-field span {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.workspace-field input {
+  border-radius: 14px;
+  border: 1px solid rgba(28, 36, 48, 0.12);
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.88);
+  font: inherit;
+}
+
 .toolbar h2 {
   margin: 0;
   font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
@@ -539,6 +656,46 @@ onBeforeUnmount(() => {
   margin-bottom: 18px;
   max-height: 560px;
   overflow: auto;
+}
+
+.approval-panel {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  margin-bottom: 16px;
+  border-radius: 20px;
+  background: #fff5db;
+  border: 1px solid #f2d48a;
+}
+
+.approval-panel h3,
+.approval-panel p {
+  margin: 0;
+}
+
+.approval-panel h3 {
+  margin-top: 4px;
+  margin-bottom: 6px;
+}
+
+.approval-panel code {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(28, 36, 48, 0.08);
+}
+
+.approval-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.approval-actions .secondary {
+  background: rgba(28, 36, 48, 0.12);
+  color: var(--ink);
 }
 
 .message {
@@ -648,6 +805,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 700px) {
   .toolbar,
+  .toolbar-actions,
   .sidebar-head,
   .conversation-card,
   .conversation-title-row,

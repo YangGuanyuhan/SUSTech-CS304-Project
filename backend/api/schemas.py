@@ -8,6 +8,13 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     message: str
     session_id: str = Field(default="default")
+    workspace_root: str | None = None
+
+
+class ChatApprovalRequest(BaseModel):
+    session_id: str
+    approval_id: str
+    approved: bool
 
 
 class EmailDraftRequest(BaseModel):

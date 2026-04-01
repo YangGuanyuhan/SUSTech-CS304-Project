@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from backend.agent.core import StudentProductivityAgent
 from backend.api.schemas import (
+    ChatApprovalRequest,
     ChatRequest,
     EmailConfirmRequest,
     EmailDraftRequest,
@@ -22,6 +23,7 @@ from backend.db.database import get_db_session
 from backend.models.common import ApiResponse
 from backend.models.settings import LLMProfile
 from backend.services.blackboard_service import BlackboardService, MockBlackboardProvider
+from backend.services.approval_service import approval_service
 from backend.services.email_service import EmailService, UnconfirmedSendError
 from backend.services.llm_service import LLMConnectionError, LLMService
 from backend.services.memory_service import MemoryService
@@ -30,6 +32,27 @@ from backend.services.settings_service import SettingsService
 
 
 router = APIRouter(prefix="/api")
+
+
+def _chunk_text(text: str, chunk_size: int = 600) -> list[str]:
+    if not text:
+        return []
+    return [text[index : index + chunk_size] for index in range(0, len(text), chunk_size)]
+
+
+async def _stream_agent_result(result: dict[str, object], *, session_id: str):
+    approval_request = result.get("approval_request")
+    if approval_request is not None:
+        yield {"event": "approval_required", "data": json.dumps(approval_request)}
+        yield {"event": "done", "data": json.dumps({"session_id": session_id, "status": "approval_required"})}
+        return
+
+    for chunk in _chunk_text(str(result.get("response", ""))):
+        yield {"event": "message", "data": json.dumps({"chunk": chunk})}
+    yield {
+        "event": "done",
+        "data": json.dumps({"session_id": session_id, "status": "completed", "tools_used": result.get("tools_used", [])}),
+    }
 
 
 @router.get("/health", response_model=ApiResponse[dict[str, str]])
@@ -125,9 +148,30 @@ async def chat(
     agent = StudentProductivityAgent(session)
 
     async def event_generator():
-        async for chunk in agent.run_stream(request.message, request.session_id):
-            yield {"event": "message", "data": json.dumps({"chunk": chunk})}
-        yield {"event": "done", "data": json.dumps({"session_id": request.session_id})}
+        result = await agent.run(request.message, request.session_id, request.workspace_root)
+        async for event in _stream_agent_result(result, session_id=request.session_id):
+            yield event
+
+    return EventSourceResponse(event_generator())
+
+
+@router.post("/chat/approval")
+async def handle_chat_approval(
+    request: ChatApprovalRequest,
+    session: Session = Depends(get_db_session),
+) -> EventSourceResponse:
+    pending = approval_service.get(request.approval_id)
+    if pending is None:
+        raise HTTPException(status_code=404, detail="Approval request not found")
+    if pending.session_id != request.session_id:
+        raise HTTPException(status_code=400, detail="Approval request does not belong to this session")
+
+    agent = StudentProductivityAgent(session)
+
+    async def event_generator():
+        result = await agent.resume_approval(request.approval_id, approved=request.approved)
+        async for event in _stream_agent_result(result, session_id=request.session_id):
+            yield event
 
     return EventSourceResponse(event_generator())
 

@@ -84,15 +84,16 @@ export async function createEmailDraft(payload) {
   return parseJson(response);
 }
 
-export async function streamChat(payload, handlers) {
-  const response = await fetch(`${API_BASE}/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-
+async function consumeSSE(response, handlers) {
   if (!response.ok || !response.body) {
-    throw new Error(`Chat request failed with status ${response.status}`);
+    let detail = `Chat request failed with status ${response.status}`;
+    try {
+      const payload = await response.json();
+      detail = payload.detail || payload.error || detail;
+    } catch {
+      // Ignore parse failure and keep the status-based message.
+    }
+    throw new Error(detail);
   }
 
   const decoder = new TextDecoder();
@@ -137,6 +138,9 @@ export async function streamChat(payload, handlers) {
       if (eventName === "message") {
         handlers.onChunk?.(parsed.chunk);
       }
+      if (eventName === "approval_required") {
+        handlers.onApprovalRequired?.(parsed);
+      }
       if (eventName === "done") {
         handlers.onDone?.(parsed);
       }
@@ -156,7 +160,26 @@ export async function streamChat(payload, handlers) {
     if (data) {
       const parsed = JSON.parse(data);
       if (eventName === "message") handlers.onChunk?.(parsed.chunk);
+      if (eventName === "approval_required") handlers.onApprovalRequired?.(parsed);
       if (eventName === "done") handlers.onDone?.(parsed);
     }
   }
+}
+
+export async function streamChat(payload, handlers) {
+  const response = await fetch(`${API_BASE}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return consumeSSE(response, handlers);
+}
+
+export async function streamApprovalDecision(payload, handlers) {
+  const response = await fetch(`${API_BASE}/chat/approval`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return consumeSSE(response, handlers);
 }

@@ -1,20 +1,32 @@
 from unittest.mock import AsyncMock
 
 from backend.agent.core import StudentProductivityAgent
+from backend.services.llm_service import LLMConfigurationError
 
 
-async def test_agent_returns_course_list_for_course_queries(db_session):
+async def test_agent_returns_llm_response(db_session):
     agent = StudentProductivityAgent(db_session)
-    agent.llm_service.generate_chat = AsyncMock(return_value="Here are the courses you asked for.")
-    result = await agent.run("Show my Blackboard courses", "session-1")
-    assert "courses" in result["response"].lower()
-    assert "blackboard.get_all_courses" in result["tools_used"]
+    agent.llm_service.create_chat_completion = AsyncMock(
+        return_value=type(
+            "Response",
+            (),
+            {
+                "choices": [
+                    type(
+                        "Choice",
+                        (),
+                        {"message": type("Message", (), {"content": "Here is the answer.", "tool_calls": None})()},
+                    )
+                ]
+            },
+        )()
+    )
+    result = await agent.run("Hello", "session-1")
+    assert result["response"] == "Here is the answer."
 
 
 async def test_agent_uses_llm_runtime_fallback_when_unconfigured(db_session):
     agent = StudentProductivityAgent(db_session)
-    agent.llm_service.generate_chat = AsyncMock(side_effect=Exception("boom"))
-    try:
-        await agent.run("Hello", "session-2")
-    except Exception:
-        assert True
+    agent.llm_service.create_chat_completion = AsyncMock(side_effect=LLMConfigurationError("No API key"))
+    result = await agent.run("Hello", "session-2")
+    assert "LLM is not ready yet" in result["response"]

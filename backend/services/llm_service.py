@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator
+from typing import Any
 
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 from openai.types.chat import ChatCompletionMessageParam
@@ -37,6 +38,29 @@ class LLMService:
             http_client=DefaultAsyncHttpxClient(trust_env=False),
         )
         return client, config.model
+
+    async def create_chat_completion(
+        self,
+        messages: list[dict[str, Any]] | list[ChatCompletionMessageParam],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+    ):
+        """Return a non-streaming chat completion, optionally with tool definitions."""
+
+        client, model = self._build_client()
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.2,
+            "stream": False,
+        }
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+        try:
+            return await client.chat.completions.create(**kwargs)
+        except Exception as exc:  # pragma: no cover - network and remote behavior vary
+            raise LLMConnectionError(str(exc)) from exc
 
     async def stream_chat(self, messages: list[ChatCompletionMessageParam]) -> AsyncIterator[str]:
         """Stream a chat completion token-by-token."""
@@ -101,17 +125,7 @@ class LLMService:
     async def generate_chat(self, messages: list[ChatCompletionMessageParam]) -> str:
         """Return a full chat completion."""
 
-        client, model = self._build_client()
-        try:
-            response = await client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0.2,
-                stream=False,
-            )
-        except Exception as exc:  # pragma: no cover - network and remote behavior vary
-            raise LLMConnectionError(str(exc)) from exc
-
+        response = await self.create_chat_completion(messages)
         return (response.choices[0].message.content or "").strip()
 
     async def test_connection(self) -> dict[str, object]:
