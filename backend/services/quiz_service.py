@@ -216,7 +216,6 @@ Question count: {question_count}
 Source material: {source_material or "N/A"}
 
 Requirements:
-- Return a JSON object with one key: "questions".
 - Include a mix of single_choice, true_false, and short_answer when possible.
 - Each question must include:
   - question_type
@@ -228,15 +227,61 @@ Requirements:
   - points
 - Keep the quiz grounded in the topic or source material.
 """.strip()
-        raw = await self.llm_service.generate_chat(
+        
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "generate_quiz",
+                    "description": "Generates a list of quiz questions.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "questions": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "question_type": {
+                                            "type": "string", 
+                                            "enum": ["single_choice", "true_false", "short_answer"]
+                                        },
+                                        "prompt": {"type": "string"},
+                                        "options": {
+                                            "type": "array", 
+                                            "items": {"type": "string"}
+                                        },
+                                        "correct_answer": {"type": "string"},
+                                        "explanation": {"type": "string"},
+                                        "rubric": {"type": ["string", "null"]},
+                                        "points": {"type": "number"}
+                                    },
+                                    "required": ["question_type", "prompt", "options", "correct_answer", "explanation", "points"]
+                                }
+                            }
+                        },
+                        "required": ["questions"]
+                    }
+                }
+            }
+        ]
+
+        response = await self.llm_service.create_chat_completion(
             [
-                {"role": "system", "content": "You produce valid JSON only."},
+                {"role": "system", "content": "You are a specialized quiz generation assistant."},
                 {"role": "user", "content": prompt},
-            ]
+            ],
+            tools=tools
         )
-        payload = self._extract_json(raw)
+        
+        tool_calls = response.choices[0].message.tool_calls
+        if not tool_calls:
+            raise ValueError("No tool calls returned from LLM for quiz generation.")
+            
+        payload = json.loads(tool_calls[0].function.arguments)
+        
         questions = []
-        for item in payload["questions"][:question_count]:
+        for item in payload.get("questions", [])[:question_count]:
             questions.append(
                 QuizQuestion(
                     id=str(uuid4()),
@@ -339,29 +384,54 @@ Requirements:
             return 0.0, "No answer submitted."
         try:
             prompt = f"""
-Grade this short-answer response. Return JSON only.
+Grade this short-answer response.
 Question: {question.prompt}
 Reference answer: {question.correct_answer}
 Rubric: {question.rubric or question.explanation}
 Student answer: {submitted_answer}
 Maximum score: {question.points}
-
-Return:
-{{
-  "score": number,
-  "feedback": string
-}}
 """.strip()
-            raw = await asyncio.wait_for(
-                self.llm_service.generate_chat(
+            
+            tools = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "grade_answer",
+                        "description": "Provide a score and feedback for a student's answer.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "score": {
+                                    "type": "number",
+                                    "description": "The score to award the student. Must be between 0 and the maximum score."
+                                },
+                                "feedback": {
+                                    "type": "string",
+                                    "description": "Constructive feedback on the student's answer."
+                                }
+                            },
+                            "required": ["score", "feedback"]
+                        }
+                    }
+                }
+            ]
+
+            response = await asyncio.wait_for(
+                self.llm_service.create_chat_completion(
                     [
-                        {"role": "system", "content": "You grade short answers and return valid JSON only."},
+                        {"role": "system", "content": "You are an automated grader for short answers."},
                         {"role": "user", "content": prompt},
-                    ]
+                    ],
+                    tools=tools
                 ),
                 timeout=self.subjective_grading_timeout_seconds,
             )
-            payload = self._extract_json(raw)
+            
+            tool_calls = response.choices[0].message.tool_calls
+            if not tool_calls:
+                raise ValueError("No tool calls returned from LLM for grading.")
+            
+            payload = json.loads(tool_calls[0].function.arguments)
             score = max(0.0, min(question.points, float(payload["score"])))
             return round(score, 2), str(payload["feedback"])
         except (
@@ -410,11 +480,3 @@ Return:
         if weak_areas:
             return f"Recent attempts show recurring weaknesses around: {weak_areas[0]}"
         return "Recent attempts show room for improvement. Revisit missed questions and retry with a shorter quiz."
-
-    def _extract_json(self, raw: str) -> dict:
-        text = raw.strip()
-        if text.startswith("```"):
-            text = text.strip("`")
-            first_brace = text.find("{")
-            text = text[first_brace:]
-        return json.loads(text)
