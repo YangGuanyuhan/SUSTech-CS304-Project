@@ -382,13 +382,6 @@ class QuizService:
                 correct_first = normalized_correct.split()[0] if normalized_correct else ""
                 is_correct = first_word == correct_first
 
-            # For single_choice, check if submitted answer matches any option (case-insensitive)
-            if not is_correct and question.question_type == "single_choice" and question.options:
-                for opt in question.options:
-                    if normalized_submitted == opt.strip().lower():
-                        is_correct = True
-                        break
-
             return QuizAttemptAnswerResult(
                 question_id=question.id,
                 prompt=question.prompt,
