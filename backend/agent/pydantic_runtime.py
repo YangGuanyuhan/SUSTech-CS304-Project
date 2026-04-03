@@ -34,7 +34,12 @@ Tool usage rules:
 5. Only claim an action succeeded after you receive a tool result confirming it.
 6. Use memory tools to save durable user preferences, project facts, and useful follow-up context when appropriate.
 7. If a tool result reports an error, explain that error plainly and suggest the next step.
-
+8. Do NOT guess or hallucinate timestamps or dates. If the user does not explicitly mention a specific time, do not include unverified times when saving memories.
+9. When saving memories, only record what actually happened in this conversation. 
+   Do not infer or assume actions that were not explicitly performed or confirmed by a tool result.
+10. After successfully creating a quiz, do NOT present questions in chat. 
+    Instead, inform the user that the quiz is ready and direct them to the quiz 
+    interface to begin.
 Response style:
 - Be concise and practical.
 - Respond in Markdown when useful.
@@ -257,40 +262,40 @@ class PydanticAIRuntime:
         )
         return run_result, deps
 
-    async def run_stream(
-        self,
-        *,
-        user_input: str | None,
-        session_id: str,
-        workspace_root: str | None,
-        history: list[dict[str, str]] | None = None,
-        message_history: list[Any] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-    ) -> tuple[Any, AgentDeps, Any]:
-        """Run agent with streaming output.
+    # async def run_stream(
+    #     self,
+    #     *,
+    #     user_input: str | None,
+    #     session_id: str,
+    #     workspace_root: str | None,
+    #     history: list[dict[str, str]] | None = None,
+    #     message_history: list[Any] | None = None,
+    #     deferred_tool_results: DeferredToolResults | None = None,
+    # ) -> tuple[Any, AgentDeps, Any]:
+    #     """Run agent with streaming output.
 
-        Returns a tuple of (result, deps, stream_context) where stream_context
-        is an async context manager that provides the stream.
-        """
-        deps = AgentDeps(
-            session=self.session,
-            session_id=session_id,
-            workspace_root=workspace_root,
-            tool_service=self.tool_service,
-        )
-        agent = self._build_agent()
-        final_history = message_history or self._history_to_model_messages(history or [])
+    #     Returns a tuple of (result, deps, stream_context) where stream_context
+    #     is an async context manager that provides the stream.
+    #     """
+    #     deps = AgentDeps(
+    #         session=self.session,
+    #         session_id=session_id,
+    #         workspace_root=workspace_root,
+    #         tool_service=self.tool_service,
+    #     )
+    #     agent = self._build_agent()
+    #     final_history = message_history or self._history_to_model_messages(history or [])
 
-        # Use streaming run - returns an async context manager
-        # We return the context manager itself, caller needs to use 'async with'
-        stream_context = agent.run_stream(
-            user_prompt=user_input,
-            message_history=final_history,
-            deferred_tool_results=deferred_tool_results,
-            deps=deps,
-        )
+    #     # Use streaming run - returns an async context manager
+    #     # We return the context manager itself, caller needs to use 'async with'
+    #     stream_context = agent.run_stream(
+    #         user_prompt=user_input,
+    #         message_history=final_history,
+    #         deferred_tool_results=deferred_tool_results,
+    #         deps=deps,
+    #     )
 
-        return run_result, deps
+    #     return run_result, deps
 
     @staticmethod
     def extract_text_or_requests(run_result: Any) -> str | DeferredToolRequests:
