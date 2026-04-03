@@ -290,18 +290,11 @@ class PydanticAIRuntime:
             deps=deps,
         )
 
-        return None, deps, stream_context
+        return run_result, deps
 
     @staticmethod
     def extract_text_or_requests(run_result: Any) -> str | DeferredToolRequests:
         return run_result.output if hasattr(run_result, "output") else run_result.response
-
-    @staticmethod
-    def extract_stream_text(stream_result: Any) -> str:
-        """Extract text from a StreamedRunResult."""
-        if hasattr(stream_result, "output") and stream_result.output:
-            return stream_result.output
-        return ""
 
     @staticmethod
     def build_deferred_approval_result(
