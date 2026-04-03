@@ -36,7 +36,7 @@ from backend.services.settings_service import SettingsService
 router = APIRouter(prefix="/api")
 
 
-def _chunk_text(text: str, chunk_size: int = 600) -> list[str]:
+def _chunk_text(text: str, chunk_size: int = 2000) -> list[str]:
     if not text:
         return []
     return [text[index : index + chunk_size] for index in range(0, len(text), chunk_size)]
@@ -66,8 +66,8 @@ async def _stream_agent_result(result: dict[str, object], *, session_id: str):
         }
         return
 
-    for chunk in _chunk_text(str(result.get("response", ""))):
-        yield {"event": "message", "data": json.dumps({"chunk": chunk})}
+    # Return full response at once
+    yield {"event": "message", "data": json.dumps({"chunk": str(result.get("response", ""))})}
     yield {
         "event": "done",
         "data": json.dumps(
@@ -174,9 +174,15 @@ async def chat(
     agent = StudentProductivityAgent(session)
 
     async def event_generator():
-        result = await agent.run(request.message, request.session_id, request.workspace_root)
-        async for event in _stream_agent_result(result, session_id=request.session_id):
-            yield event
+        try:
+            result = await agent.run(request.message, request.session_id, request.workspace_root)
+            async for event in _stream_agent_result(result, session_id=request.session_id):
+                yield event
+        except Exception as e:
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": str(e)}),
+            }
 
     return EventSourceResponse(event_generator())
 

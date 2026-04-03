@@ -1,233 +1,202 @@
-"""Agent orchestration with OpenAI-compatible tool calls."""
+"""Agent orchestration backed by PydanticAI."""
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator
 from typing import Any
 
+from pydantic_ai.tools import DeferredToolRequests
 from sqlalchemy.orm import Session
 
+from backend.agent.pydantic_runtime import PydanticAIRuntime
 from backend.models.tooling import AgentTurnResult, ToolTrace
-from backend.services.agent_tool_service import (
-    AgentToolService,
-    ToolExecutionError,
-    get_tool_definitions,
-)
 from backend.services.approval_service import approval_service
-from backend.services.llm_service import LLMConfigurationError, LLMConnectionError, LLMService
 from backend.services.llm_logging_service import llm_logger
 from backend.services.runtime_settings import runtime_settings
 from backend.services.task_service import TaskHistoryService
 
-try:
-    from pydantic_ai import Agent
-except ImportError:  # pragma: no cover - optional dependency during static work
-    Agent = None
-
-
-SYSTEM_PROMPT = """
-You are Student Productivity Agent, a study assistant for SUSTech students.
-You have access to real backend tools. Treat local file access, local command execution,
-web access, and memory operations as available capabilities provided by tools.
-
-Tool usage rules:
-1. When the user asks to read files, list directories, write files, run commands, or visit webpages,
-   prefer the matching tool instead of replying that you cannot access the local machine or the web.
-2. For file tools and command tools, stay within the configured workspace root.
-3. For local file access, local command execution, and webpage access, the backend may require user approval.
-   You should still initiate the tool call when it is needed; the system will handle approval.
-4. Do not say that you are blocked by sandbox or security restrictions unless a tool result explicitly says so.
-5. Only claim an action succeeded after you receive a tool result confirming it.
-6. Use memory tools to save durable user preferences, project facts, and useful follow-up context when appropriate.
-7. If a tool result reports an error, explain that error plainly and suggest the next step.
-
-Response style:
-- Be concise and practical.
-- Respond in Markdown when useful.
-- Do not invent file contents, command output, or webpage content.
-""".strip()
-
 
 class StudentProductivityAgent:
-    """Thin orchestrator that keeps the agent boundary stable."""
+    """Agent facade that preserves the existing API contract."""
 
     def __init__(self, session: Session):
         self.session = session
-        self.agent = Agent(model="test", system_prompt=SYSTEM_PROMPT) if Agent is not None else None
-        self.llm_service = LLMService()
-        self.tool_service = AgentToolService(session)
+        self.runtime = PydanticAIRuntime(session)
 
-    def _serialize_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return json.loads(json.dumps(messages, ensure_ascii=False))
+    async def _build_history(self, session_id: str) -> list[dict[str, str]]:
+        return await TaskHistoryService(self.session).get_recent_messages(session_id, limit=10)
 
-    async def _build_messages(self, message: str, session_id: str, workspace_root: str | None) -> list[dict[str, Any]]:
-        history = await TaskHistoryService(self.session).get_recent_messages(session_id, limit=10)
-        workspace_instruction = (
-            f"Approved workspace root: `{workspace_root}`. "
-            "Local file and command tools must stay inside this root."
-            if workspace_root
-            else "No workspace root is configured yet. Do not use local file or command tools until the user sets one."
-        )
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{workspace_instruction}"}
-        ]
-        messages.extend(history)
-        messages.append({"role": "user", "content": message})
-        return messages
-
-    async def _continue_with_messages(
+    def _approval_result(
         self,
         *,
-        user_input: str,
         session_id: str,
-        messages: list[dict[str, Any]],
-        tools_used: list[str],
-        tool_events: list[ToolTrace],
+        user_input: str,
         workspace_root: str | None,
+        run_result: Any,
+        deferred: DeferredToolRequests,
+        tool_events: list[ToolTrace],
+        tools_used: list[str],
     ) -> AgentTurnResult:
-        while True:
-            llm_logger.log_event(
-                session_id,
-                "llm_request",
-                {
-                    "messages": llm_logger.summarize_messages(messages),
-                    "tools": [tool["function"]["name"] for tool in get_tool_definitions()],
-                    "workspace_root": workspace_root,
-                },
+        if not deferred.approvals:
+            return AgentTurnResult(
+                response="The model requested a deferred tool flow that this server does not support yet.",
+                tool_events=tool_events,
+                tools_used=tools_used,
             )
-            response = await self.llm_service.create_chat_completion(messages, tools=get_tool_definitions())
-            llm_logger.log_event(session_id, "llm_response", llm_logger.summarize_response(response))
-            assistant = response.choices[0].message
-            assistant_message: dict[str, Any] = {"role": "assistant"}
-            if assistant.content:
-                assistant_message["content"] = assistant.content
-            if assistant.tool_calls:
-                assistant_message["tool_calls"] = [
-                    tool_call.model_dump(mode="json", exclude_none=True) for tool_call in assistant.tool_calls
-                ]
-            messages.append(assistant_message)
 
-            if not assistant.tool_calls:
-                return AgentTurnResult(
-                    response=(assistant.content or "").strip(),
-                    tools_used=tools_used,
-                    tool_events=tool_events,
-                )
-
-            for tool_call in assistant.tool_calls:
-                tool_name = tool_call.function.name
-                try:
-                    arguments = json.loads(tool_call.function.arguments or "{}")
-                except json.JSONDecodeError:
-                    arguments = {}
-
-                if self.tool_service.requires_approval(tool_name):
-                    tool_events.append(
-                        ToolTrace(
-                            tool_name=tool_name,
-                            arguments=arguments,
-                            status="awaiting_approval",
-                        )
-                    )
-                    approval_request = approval_service.create(
-                        session_id=session_id,
-                        user_input=user_input,
-                        tool_call_id=tool_call.id,
-                        tool_name=tool_name,
-                        tool_arguments=arguments,
-                        summary=self.tool_service.build_approval_summary(
-                            tool_name,
-                            arguments,
-                            workspace_root=workspace_root,
-                        ),
-                        workspace_root=workspace_root,
-                        messages=self._serialize_messages(messages),
-                        tools_used=list(tools_used),
-                        tool_events=list(tool_events),
-                    )
-                    llm_logger.log_event(
-                        session_id,
-                        "approval_required",
-                        {
-                            "approval_id": approval_request.id,
-                            "tool_name": tool_name,
-                            "arguments": arguments,
-                            "summary": approval_request.summary,
-                        },
-                    )
-                    return AgentTurnResult(
-                        tools_used=tools_used,
-                        tool_events=tool_events,
-                        approval_request=approval_request,
-                    )
-
-                tool_result = await self._execute_tool(
+        # Build list of all tool calls needing approval
+        tool_calls = []
+        for approval_call in deferred.approvals:
+            arguments = self.runtime.parse_tool_arguments(approval_call.args)
+            tool_name = approval_call.tool_name
+            tool_calls.append({
+                "tool_call_id": approval_call.tool_call_id,
+                "tool_name": tool_name,
+                "tool_arguments": arguments,
+                "summary": self.runtime.tool_service.build_approval_summary(
                     tool_name,
                     arguments,
-                    chat_session_id=session_id,
                     workspace_root=workspace_root,
+                ),
+            })
+            # Add to tool events
+            tool_events.append(
+                ToolTrace(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    status="awaiting_approval",
                 )
-                tools_used.append(tool_name)
-                status = "failed" if '"ok": false' in tool_result.lower() else "completed"
-                tool_events.append(
-                    ToolTrace(
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        status=status,
-                        output=tool_result,
-                    )
-                )
+            )
+
+        # Create batch approval request
+        batch_request = approval_service.create_batch(
+            session_id=session_id,
+            user_input=user_input,
+            tool_calls=tool_calls,
+            workspace_root=workspace_root,
+            messages=list(run_result.all_messages()),
+            tools_used=list(tools_used),
+            tool_events=list(tool_events),
+            deferred_metadata=dict(deferred.metadata),
+        )
+
+        # Log all approvals
+        for approval in batch_request.approvals:
+            llm_logger.log_event(
+                session_id,
+                "approval_required",
+                {
+                    "approval_id": approval.id,
+                    "tool_name": approval.tool_name,
+                    "arguments": approval.arguments,
+                    "summary": approval.summary,
+                },
+            )
+
+        return AgentTurnResult(
+            tools_used=tools_used,
+            tool_events=tool_events,
+            approval_request=batch_request,
+        )
+
+    async def _run_turn(
+        self,
+        *,
+        user_input: str | None,
+        session_id: str,
+        workspace_root: str | None,
+        history: list[dict[str, str]] | None = None,
+        message_history: list[Any] | None = None,
+        deferred_tool_results: Any | None = None,
+        prior_tool_events: list[ToolTrace] | None = None,
+        prior_tools_used: list[str] | None = None,
+    ) -> AgentTurnResult:
+        llm_logger.log_event(
+            session_id,
+            "llm_request",
+            {
+                "history": history or [],
+                "user_input": user_input or "",
+                "workspace_root": workspace_root,
+                "runtime": "pydantic_ai",
+            },
+        )
+        run_result, deps = await self.runtime.run(
+            user_input=user_input,
+            session_id=session_id,
+            workspace_root=workspace_root,
+            history=history,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+        )
+        output = self.runtime.extract_text_or_requests(run_result)
+        tool_events = list(prior_tool_events or []) + deps.tool_events
+        tools_used = list(prior_tools_used or []) + deps.tools_used
+
+        if isinstance(output, DeferredToolRequests):
+            llm_logger.log_event(
+                session_id,
+                "llm_response",
+                {
+                    "deferred_approvals": [
+                        {
+                            "tool_name": call.tool_name,
+                            "tool_call_id": call.tool_call_id,
+                            "arguments": self.runtime.parse_tool_arguments(call.args),
+                        }
+                        for call in output.approvals
+                    ],
+                    "deferred_calls": [call.tool_name for call in output.calls],
+                },
+            )
+            return self._approval_result(
+                session_id=session_id,
+                user_input=user_input or "",
+                workspace_root=workspace_root,
+                run_result=run_result,
+                deferred=output,
+                tool_events=tool_events,
+                tools_used=tools_used,
+            )
+
+        response_text = str(output).strip()
+        llm_logger.log_event(
+            session_id,
+            "llm_response",
+            {
+                "content": response_text[:3000] + ("...<truncated>" if len(response_text) > 3000 else ""),
+                "tools_used": tools_used,
+            },
+        )
+        for event in deps.tool_events:
+            if event.output:
                 llm_logger.log_event(
                     session_id,
                     "tool_result",
                     {
-                        "tool_name": tool_name,
-                        "arguments": arguments,
-                        "result": tool_result[:3000] + ("...<truncated>" if len(tool_result) > 3000 else ""),
+                        "tool_name": event.tool_name,
+                        "arguments": event.arguments,
+                        "status": event.status,
+                        "result": event.output[:3000] + ("...<truncated>" if len(event.output) > 3000 else ""),
                     },
                 )
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": tool_result,
-                    }
-                )
-
-    async def _execute_tool(
-        self,
-        tool_name: str,
-        arguments: dict[str, Any],
-        *,
-        chat_session_id: str,
-        workspace_root: str | None,
-    ) -> str:
-        try:
-            return await self.tool_service.execute(
-                tool_name,
-                arguments,
-                chat_session_id=chat_session_id,
-                workspace_root=workspace_root,
-            )
-        except ToolExecutionError as exc:
-            return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
-        except Exception as exc:
-            return json.dumps({"ok": False, "error": f"Tool failed: {exc}"}, ensure_ascii=False)
+        return AgentTurnResult(
+            response=response_text,
+            tools_used=tools_used,
+            tool_events=tool_events,
+        )
 
     async def run(self, message: str, session_id: str, workspace_root: str | None = None) -> dict[str, object]:
         """Generate a response and record task history."""
 
         try:
-            result = await self._continue_with_messages(
+            result = await self._run_turn(
                 user_input=message,
                 session_id=session_id,
-                messages=await self._build_messages(message, session_id, workspace_root),
-                tools_used=[],
-                tool_events=[],
                 workspace_root=workspace_root,
+                history=await self._build_history(session_id),
             )
-        except (LLMConfigurationError, LLMConnectionError) as exc:
+        except Exception as exc:
             llm_config = runtime_settings.get_llm_config()
             result = AgentTurnResult(
                 response=(
@@ -237,8 +206,6 @@ class StudentProductivityAgent:
                 ),
                 tool_events=[],
             )
-        except Exception as exc:
-            result = AgentTurnResult(response=f"LLM request failed: {exc}", tool_events=[])
 
         if result.approval_request is None:
             await TaskHistoryService(self.session).add_history(
@@ -261,77 +228,71 @@ class StudentProductivityAgent:
                 mode="json"
             )
 
-        if approved:
-            tool_result = await self._execute_tool(
-                pending.tool_name,
-                pending.tool_arguments,
-                chat_session_id=pending.session_id,
-                workspace_root=pending.workspace_root,
+        # Build deferred results for all tool calls in the batch
+        deferred_results = None
+        for tool_call in pending.tool_calls:
+            result = self.runtime.build_deferred_approval_result(
+                tool_call["tool_call_id"],
+                approved=approved,
             )
-            pending.tools_used.append(pending.tool_name)
-            status = "failed" if '"ok": false' in tool_result.lower() else "completed"
-        else:
-            tool_result = json.dumps(
-                {"ok": False, "error": f"User denied approval for `{pending.tool_name}`."},
-                ensure_ascii=False,
-            )
-            status = "denied"
-        llm_logger.log_event(
-            pending.session_id,
-            "approval_resolution",
-            {
-                "approval_id": pending.id,
-                "approved": approved,
-                "tool_name": pending.tool_name,
-                "arguments": pending.tool_arguments,
-                "result": tool_result[:3000] + ("...<truncated>" if len(tool_result) > 3000 else ""),
-            },
-        )
+            if deferred_results is None:
+                deferred_results = result
+            else:
+                # Merge additional tool results
+                if hasattr(deferred_results, 'tool_results') and hasattr(result, 'tool_results'):
+                    deferred_results.tool_results.extend(result.tool_results)
 
-        pending.messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": pending.tool_call_id,
-                "content": tool_result,
-            }
-        )
+        if pending.deferred_metadata and deferred_results:
+            deferred_results.metadata.update(pending.deferred_metadata)
+
+        # Update tool events: remove awaiting_approval status for all tools in batch
         pending.tool_events = [
             event
             for event in pending.tool_events
             if not (
-                event.tool_name == pending.tool_name
-                and event.arguments == pending.tool_arguments
+                any(
+                    event.tool_name == tc["tool_name"]
+                    and event.arguments == tc["tool_arguments"]
+                    for tc in pending.tool_calls
+                )
                 and event.status == "awaiting_approval"
             )
         ]
-        pending.tool_events.append(
-            ToolTrace(
-                tool_name=pending.tool_name,
-                arguments=pending.tool_arguments,
-                status=status,
-                output=tool_result,
+
+        if not approved:
+            # Add denied status for all tools in the batch
+            for tool_call in pending.tool_calls:
+                pending.tool_events.append(
+                    ToolTrace(
+                        tool_name=tool_call["tool_name"],
+                        arguments=tool_call["tool_arguments"],
+                        status="denied",
+                        output='{"ok": false, "error": "User denied approval."}',
+                    )
+                )
+
+        # Log approval resolution for each tool
+        for tool_call in pending.tool_calls:
+            llm_logger.log_event(
+                pending.session_id,
+                "approval_resolution",
+                {
+                    "approval_id": pending.id,
+                    "approved": approved,
+                    "tool_name": tool_call["tool_name"],
+                    "arguments": tool_call["tool_arguments"],
+                },
             )
-        )
 
         try:
-            result = await self._continue_with_messages(
-                user_input=pending.user_input,
+            result = await self._run_turn(
+                user_input=None,
                 session_id=pending.session_id,
-                messages=pending.messages,
-                tools_used=pending.tools_used,
-                tool_events=pending.tool_events,
                 workspace_root=pending.workspace_root,
-            )
-        except (LLMConfigurationError, LLMConnectionError) as exc:
-            llm_config = runtime_settings.get_llm_config()
-            result = AgentTurnResult(
-                response=(
-                    f"LLM is not ready yet: {exc}\n"
-                    f"Current runtime config: `{llm_config.provider}` / `{llm_config.model}`.\n"
-                    "Open the settings panel and configure an OpenAI-compatible endpoint."
-                ),
-                tools_used=pending.tools_used,
-                tool_events=pending.tool_events,
+                message_history=pending.messages,
+                deferred_tool_results=deferred_results,
+                prior_tool_events=pending.tool_events,
+                prior_tools_used=pending.tools_used,
             )
         except Exception as exc:
             result = AgentTurnResult(
@@ -366,3 +327,194 @@ class StudentProductivityAgent:
         chunk_size = 600
         for index in range(0, len(response), chunk_size):
             yield response[index : index + chunk_size]
+
+    async def run_stream_full(
+        self,
+        message: str,
+        session_id: str,
+        workspace_root: str | None = None,
+    ) -> AsyncIterator[dict[str, str]]:
+        """Run agent with true streaming output, yielding events for SSE."""
+        import json
+
+        llm_logger.log_event(
+            session_id,
+            "llm_request",
+            {
+                "user_input": message,
+                "workspace_root": workspace_root,
+                "runtime": "pydantic_ai",
+                "streaming": True,
+            },
+        )
+
+        try:
+            # First turn - check if we get a streaming response or need approval
+            result, deps, stream_context = await self.runtime.run_stream(
+                user_input=message,
+                session_id=session_id,
+                workspace_root=workspace_root,
+                history=await self._build_history(session_id),
+            )
+
+            # If stream_context is available, use async with to get the stream
+            if stream_context is not None:
+                async with stream_context as stream_result:
+                    # stream_output() returns incremental text, just forward it
+                    async for msg in stream_result.stream_output():
+                        yield {
+                            "event": "message",
+                            "data": json.dumps({"chunk": msg}),
+                        }
+
+                    # Get final result after streaming completes
+                    final_result = stream_result.get_output()
+                    output = self.runtime.extract_text_or_requests(final_result)
+
+                    # Check if we need approval
+                    if isinstance(output, DeferredToolRequests):
+                        async for event in self._stream_approval_result(
+                            session_id=session_id,
+                            user_input=message,
+                            workspace_root=workspace_root,
+                            run_result=final_result,
+                            deferred=output,
+                            tool_events=deps.tool_events,
+                            tools_used=deps.tools_used,
+                        ):
+                            yield event
+                    else:
+                        # Complete response
+                        yield {
+                            "event": "done",
+                            "data": json.dumps({
+                                "session_id": session_id,
+                                "status": "completed",
+                                "tools_used": deps.tools_used,
+                                "tool_events": [e.model_dump() for e in deps.tool_events],
+                            }),
+                        }
+
+                        # Save to history
+                        await TaskHistoryService(self.session).add_history(
+                            session_id, message, str(output), deps.tools_used
+                        )
+            else:
+                # Fallback to non-streaming if stream_result is None
+                result = await self.run(message, session_id, workspace_root)
+                if result.get("approval_request"):
+                    yield {
+                        "event": "approval_required",
+                        "data": json.dumps({
+                            **result["approval_request"],
+                            "tool_events": result.get("tool_events", []),
+                        }),
+                    }
+                    yield {
+                        "event": "done",
+                        "data": json.dumps({
+                            "session_id": session_id,
+                            "status": "approval_required",
+                            "tool_events": result.get("tool_events", []),
+                        }),
+                    }
+                else:
+                    response = str(result.get("response", ""))
+                    for i in range(0, len(response), 50):
+                        yield {
+                            "event": "message",
+                            "data": json.dumps({"chunk": response[i:i+50]}),
+                        }
+                    yield {
+                        "event": "done",
+                        "data": json.dumps({
+                            "session_id": session_id,
+                            "status": "completed",
+                            "tools_used": result.get("tools_used", []),
+                            "tool_events": result.get("tool_events", []),
+                        }),
+                    }
+
+        except Exception as exc:
+            llm_config = runtime_settings.get_llm_config()
+            error_response = (
+                f"LLM is not ready yet: {exc}\n"
+                f"Current runtime config: `{llm_config.provider}` / `{llm_config.model}`.\n"
+                "Open the settings panel and configure an OpenAI-compatible endpoint."
+            )
+            yield {
+                "event": "message",
+                "data": json.dumps({"chunk": error_response}),
+            }
+            yield {
+                "event": "done",
+                "data": json.dumps({
+                    "session_id": session_id,
+                    "status": "error",
+                    "error": str(exc),
+                }),
+            }
+
+    async def _stream_approval_result(
+        self,
+        *,
+        session_id: str,
+        user_input: str,
+        workspace_root: str | None,
+        run_result: Any,
+        deferred: DeferredToolRequests,
+        tool_events: list[ToolTrace],
+        tools_used: list[str],
+    ) -> AsyncIterator[dict[str, str]]:
+        """Stream approval request events."""
+        import json
+
+        if not deferred.approvals:
+            return
+
+        # Build tool_calls list
+        tool_calls = []
+        for approval_call in deferred.approvals:
+            arguments = self.runtime.parse_tool_arguments(approval_call.args)
+            tool_name = approval_call.tool_name
+            tool_calls.append({
+                "tool_call_id": approval_call.tool_call_id,
+                "tool_name": tool_name,
+                "tool_arguments": arguments,
+                "summary": self.runtime.tool_service.build_approval_summary(
+                    tool_name, arguments, workspace_root=workspace_root
+                ),
+            })
+
+        # Create batch approval request
+        batch_request = approval_service.create_batch(
+            session_id=session_id,
+            user_input=user_input,
+            tool_calls=tool_calls,
+            workspace_root=workspace_root,
+            messages=list(run_result.all_messages()) if hasattr(run_result, 'all_messages') else [],
+            tools_used=tools_used,
+            tool_events=tool_events,
+            deferred_metadata=dict(deferred.metadata),
+        )
+
+        # Send approval event
+        yield {
+            "event": "approval_required",
+            "data": json.dumps({
+                "id": batch_request.id,
+                "session_id": batch_request.session_id,
+                "approvals": [a.model_dump() for a in batch_request.approvals],
+                "combined_summary": batch_request.combined_summary,
+                "tool_events": [e.model_dump() for e in tool_events],
+            }),
+        }
+
+        yield {
+            "event": "done",
+            "data": json.dumps({
+                "session_id": session_id,
+                "status": "approval_required",
+                "tool_events": [e.model_dump() for e in tool_events],
+            }),
+        }

@@ -369,12 +369,26 @@ class AgentToolService:
         command = self._normalize_command(arguments.get("command"), cwd)
         timeout_seconds = int(arguments.get("timeout_seconds", 20))
 
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=str(cwd),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        # Check if we need to use shell (for built-in commands like cd)
+        shell_builtins = {"cd", "pwd", "echo", "export", "source", "alias", "history", "fg", "bg", "jobs", "kill", "exit"}
+        use_shell = command[0] in shell_builtins
+
+        if use_shell:
+            # Use shell for built-in commands
+            cmd_str = " ".join(command) if isinstance(command, list) else command
+            process = await asyncio.create_subprocess_shell(
+                cmd_str,
+                cwd=str(cwd),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        else:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                cwd=str(cwd),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
         except asyncio.TimeoutError as exc:
