@@ -13,6 +13,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from backend.services.datetime_service import DateTimeService
+from backend.services.blackboard_service import DemoBlackboardProvider
 from backend.services.memory_service import MemoryService
 from backend.services.quiz_service import QuizService
 
@@ -205,6 +206,28 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "blackboard_test_api_available",
+                "description": "Check whether Blackboard API endpoint users/me is currently available.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "blackboard_get_calendar_items",
+                "description": "Fetch key assignment-related calendar items from Blackboard.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
     ]
 
 
@@ -275,6 +298,10 @@ class AgentToolService:
             return await self._quiz_history_summary(arguments)
         if tool_name == "get_current_datetime":
             return await self._get_current_datetime()
+        if tool_name == "blackboard_test_api_available":
+            return await self._blackboard_test_api_available()
+        if tool_name == "blackboard_get_calendar_items":
+            return await self._blackboard_get_calendar_items()
         raise ToolExecutionError(f"Unknown tool `{tool_name}`.")
 
     async def _memory_search(self, arguments: dict[str, Any]) -> str:
@@ -462,6 +489,16 @@ class AgentToolService:
     async def _get_current_datetime(self) -> str:
         datetime_info = DateTimeService().get_current_datetime()
         return json.dumps(datetime_info.model_dump(mode="json"), ensure_ascii=False)
+
+    async def _blackboard_test_api_available(self) -> str:
+        provider = DemoBlackboardProvider()
+        available = await provider.test_api_available()
+        return json.dumps({"available": available}, ensure_ascii=False)
+
+    async def _blackboard_get_calendar_items(self) -> str:
+        provider = DemoBlackboardProvider()
+        items = await provider.get_calendar_items()
+        return json.dumps({"items": items}, ensure_ascii=False)
 
     def _workspace_root(self, workspace_root: str | None) -> Path:
         root = Path(workspace_root or "").expanduser()

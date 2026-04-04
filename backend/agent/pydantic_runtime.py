@@ -223,6 +223,14 @@ class PydanticAIRuntime:
         async def get_current_datetime(ctx: RunContext[AgentDeps]) -> str:
             return await _execute_tool(ctx, "get_current_datetime", {})
 
+        @agent.tool(name="blackboard_test_api_available")
+        async def blackboard_test_api_available(ctx: RunContext[AgentDeps]) -> str:
+            return await _execute_tool(ctx, "blackboard_test_api_available", {})
+
+        @agent.tool(name="blackboard_get_calendar_items")
+        async def blackboard_get_calendar_items(ctx: RunContext[AgentDeps]) -> str:
+            return await _execute_tool(ctx, "blackboard_get_calendar_items", {})
+
         return agent
 
     def _history_to_model_messages(self, history: list[dict[str, str]]):
