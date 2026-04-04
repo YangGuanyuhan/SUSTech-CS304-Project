@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     llm_api_key: str = "replace-me"
     llm_base_url: str | None = None
 
-    blackboard_provider: str = "mock"
+    blackboard_student_id: str | None = None
+    blackboard_cas_password: str | None = None
     blackboard_base_url: str = "https://bb.sustech.edu.cn/learn/api/public/v1"
     blackboard_token: str = "replace-me"
 

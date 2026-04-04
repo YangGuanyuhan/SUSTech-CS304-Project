@@ -23,7 +23,7 @@ from backend.api.schemas import (
 from backend.db.database import get_db_session
 from backend.models.common import ApiResponse
 from backend.models.settings import LLMProfile
-from backend.services.blackboard_service import BlackboardService, MockBlackboardProvider
+from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
 from backend.services.approval_service import approval_service
 from backend.services.email_service import EmailService, UnconfirmedSendError
 from backend.services.llm_service import LLMConnectionError, LLMService
@@ -210,7 +210,7 @@ async def handle_chat_approval(
 
 @router.get("/blackboard/courses", response_model=ApiResponse[object])
 async def get_courses(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
-    result = await BlackboardService(session, MockBlackboardProvider()).get_all_courses()
+    result = await BlackboardService(session, DemoBlackboardProvider()).get_all_courses()
     return ApiResponse(success=True, data=result)
 
 
