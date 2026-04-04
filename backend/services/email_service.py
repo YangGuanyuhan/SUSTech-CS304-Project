@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.config import get_settings
-from backend.db import crud
+from backend.db.repositories import EmailDraftRepository
 from backend.db.models import EmailDraftRecord
 from backend.models.email import EmailDraft, SendResult
 
@@ -36,15 +36,11 @@ class EmailService:
     def __init__(self, session: Session):
         self.session = session
         self.settings = get_settings()
+        self.repository = EmailDraftRepository(session)
 
     async def draft_email(self, to: str, subject: str, body_instruction: str) -> EmailDraft:
         body = f"Dear recipient,\n\n{body_instruction}\n\nBest regards,\nSUSTech Student"
-        record = await crud.create_email_draft(
-            self.session,
-            to_addr=to,
-            subject=subject,
-            body=body,
-        )
+        record = self.repository.create(to_addr=to, subject=subject, body=body)
         return _to_draft(record)
 
     async def list_drafts(self) -> list[EmailDraft]:
@@ -55,7 +51,7 @@ class EmailService:
         if not confirmed:
             raise UnconfirmedSendError("Email sending requires explicit user confirmation.")
 
-        draft = await crud.get_email_draft(self.session, draft_id)
+        draft = self.repository.get(draft_id)
         if not draft:
             return SendResult(draft_id=draft_id, status="blocked", detail="Draft not found.")
         if draft.status == "sent":
@@ -75,8 +71,7 @@ class EmailService:
             username=self.settings.smtp_user,
             password=self.settings.smtp_password,
         )
-        await crud.update_email_draft_status(
-            self.session,
+        self.repository.update_status(
             draft_id,
             status="sent",
             sent_at=datetime.now(timezone.utc),

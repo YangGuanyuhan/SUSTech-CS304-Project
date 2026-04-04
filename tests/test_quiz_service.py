@@ -9,7 +9,7 @@ from backend.services.quiz_service import QuizService
 
 async def test_quiz_service_creates_fallback_quiz(db_session):
     service = QuizService(db_session)
-    service.llm_service.generate_chat = AsyncMock(side_effect=LLMConfigurationError("missing"))
+    service.llm_service.create_chat_completion = AsyncMock(side_effect=LLMConfigurationError("missing"))
 
     quiz = await service.create_quiz(
         chat_session_id="chat-quiz",
@@ -24,7 +24,7 @@ async def test_quiz_service_creates_fallback_quiz(db_session):
 
 async def test_quiz_service_grades_attempt_and_returns_summary(db_session):
     service = QuizService(db_session)
-    service.llm_service.generate_chat = AsyncMock(side_effect=LLMConfigurationError("missing"))
+    service.llm_service.create_chat_completion = AsyncMock(side_effect=LLMConfigurationError("missing"))
 
     quiz = await service.create_quiz(
         chat_session_id="chat-quiz",
@@ -49,7 +49,7 @@ async def test_quiz_service_grades_attempt_and_returns_summary(db_session):
 
 async def test_quiz_history_summary_aggregates_attempts(db_session):
     service = QuizService(db_session)
-    service.llm_service.generate_chat = AsyncMock(side_effect=LLMConfigurationError("missing"))
+    service.llm_service.create_chat_completion = AsyncMock(side_effect=LLMConfigurationError("missing"))
 
     quiz = await service.create_quiz(
         chat_session_id="chat-history",

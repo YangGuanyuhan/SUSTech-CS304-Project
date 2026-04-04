@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from statistics import mean
 from uuid import uuid4
@@ -11,7 +12,7 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from backend.config import get_settings
-from backend.db import crud
+from backend.db.repositories import QuizRepository
 from backend.models.quiz import (
     QuizAnswerSubmission,
     QuizAttemptAnswerResult,
@@ -25,6 +26,7 @@ from backend.services.llm_service import LLMConfigurationError, LLMConnectionErr
 
 
 _WORD_RE = re.compile(r"[A-Za-z0-9\u4e00-\u9fff]+")
+logger = logging.getLogger(__name__)
 
 
 class QuizService:
@@ -32,6 +34,7 @@ class QuizService:
 
     def __init__(self, session: Session):
         self.session = session
+        self.repository = QuizRepository(session)
         self.llm_service = LLMService()
         self.subjective_grading_timeout_seconds = float(get_settings().quiz_subjective_grading_timeout)
 
@@ -45,15 +48,13 @@ class QuizService:
         title: str | None = None,
     ) -> QuizSession:
         questions = await self._generate_questions(topic, question_count, source_material)
-        session_record = await crud.create_quiz_session(
-            self.session,
+        session_record = self.repository.create_session(
             chat_session_id=chat_session_id,
             title=title or f"{topic[:48]} Quiz",
             topic=topic,
             source_material=source_material,
         )
-        question_records = await crud.create_quiz_questions(
-            self.session,
+        question_records = self.repository.create_questions(
             quiz_session_id=session_record.id,
             questions=[question.model_dump(mode="json") for question in questions],
         )
@@ -62,7 +63,7 @@ class QuizService:
                 id=record.id,
                 question_type=record.question_type,
                 prompt=record.prompt,
-                options=json.loads(record.options_json),
+                options=record.options,
                 correct_answer=record.correct_answer,
                 explanation=record.explanation,
                 rubric=record.rubric,
@@ -81,10 +82,9 @@ class QuizService:
         )
 
     async def get_quiz(self, quiz_id: str) -> QuizSession | None:
-        session_record = await crud.get_quiz_session(self.session, quiz_id)
+        session_record = self.repository.get_session(quiz_id)
         if session_record is None:
             return None
-        question_records = await crud.list_quiz_questions(self.session, quiz_id)
         return QuizSession(
             id=session_record.id,
             chat_session_id=session_record.chat_session_id,
@@ -96,13 +96,13 @@ class QuizService:
                     id=record.id,
                     question_type=record.question_type,
                     prompt=record.prompt,
-                    options=json.loads(record.options_json),
+                    options=record.options,
                     correct_answer=record.correct_answer,
                     explanation=record.explanation,
                     rubric=record.rubric,
                     points=record.points,
                 )
-                for record in question_records
+                for record in session_record.questions
             ],
             created_at=session_record.created_at,
         )
@@ -123,21 +123,19 @@ class QuizService:
         total_points = round(sum(item.max_score for item in results), 2)
         summary = self._build_attempt_summary(results, score, total_points)
 
-        attempt_record = await crud.create_quiz_attempt(
-            self.session,
+        attempt_record = self.repository.create_attempt(
             quiz_session_id=quiz_id,
             score=score,
             total_points=total_points,
             summary=summary,
         )
-        await crud.create_quiz_answers(
-            self.session,
+        self.repository.create_answers(
             attempt_id=attempt_record.id,
             answers=[
                 {
                     "quiz_question_id": item.question_id,
                     "submitted_answer": item.submitted_answer,
-                    "is_correct": None if item.is_correct is None else str(item.is_correct).lower(),
+                    "is_correct": item.is_correct,
                     "score": item.score,
                     "feedback": item.feedback,
                 }
@@ -156,17 +154,17 @@ class QuizService:
         )
 
     async def get_history_summary(self, limit: int = 5) -> QuizHistorySummary:
-        attempts = await crud.list_recent_quiz_attempts(self.session, limit=limit)
+        attempts = self.repository.list_recent_attempts(limit=limit)
         entries: list[QuizHistoryEntry] = []
         recent_topics: list[str] = []
         weak_areas: list[str] = []
 
         for attempt in attempts:
-            quiz = await crud.get_quiz_session(self.session, attempt.quiz_session_id)
+            quiz = self.repository.get_session(attempt.quiz_session_id)
             if quiz is None:
                 continue
-            answers = await crud.list_quiz_answers_for_attempt(self.session, attempt.id)
-            missed = [answer.feedback for answer in answers if answer.is_correct == "false" and answer.feedback]
+            answers = self.repository.list_answers_for_attempt(attempt.id)
+            missed = [answer.feedback for answer in answers if answer.is_correct is False and answer.feedback]
             weak_areas.extend(missed[:2])
             recent_topics.append(quiz.topic)
             entries.append(
@@ -201,9 +199,7 @@ class QuizService:
         try:
             return await self._generate_questions_with_llm(topic, question_count, source_material)
         except Exception as e:
-            # Log the error for debugging
-            import logging
-            logging.warning(f"Quiz generation failed, using fallback: {e}")
+            logger.warning("Quiz generation failed, using fallback: %s", e)
             return self._build_fallback_quiz(topic, question_count, source_material)
 
     async def _generate_questions_with_llm(

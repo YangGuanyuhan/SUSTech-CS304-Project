@@ -1,8 +1,6 @@
 """Blackboard provider interface and mock implementation."""
 
 from __future__ import annotations
-
-import json
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -97,7 +95,7 @@ class BlackboardService:
                     else Assignment.model_validate(item)
                     if endpoint == "assignments"
                     else Announcement.model_validate(item)
-                    for item in json.loads(cached.data_json)
+                    for item in cached.data
                 ],
                 is_cached=True,
                 cached_at=cached.cached_at,

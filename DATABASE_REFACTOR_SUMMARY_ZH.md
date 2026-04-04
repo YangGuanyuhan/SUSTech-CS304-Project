@@ -501,3 +501,39 @@ uv run pytest tests\test_memory.py tests\test_quiz_service.py tests\test_setting
 - memory embedding 检索
 - email approval history
 - 更完整的数据库迁移和统计能力
+# 数据库重构总结补充更新
+
+## 最新入口位置
+
+- `Database View` 已经不再放在主界面
+- 现在放在设置页 `Configure APIs` 里的 `Developer / Debug` 区域
+- 这样更适合开发调试和课程演示，不会影响普通用户主流程
+
+## 数据库在这个项目里的作用
+
+数据库的作用不是单纯“存点数据”，而是让整个系统具备连续性和状态。
+
+它现在主要负责：
+
+- 保存 task history，让 Agent 能利用最近上下文继续工作
+- 保存 memory，让用户偏好、历史事实和之前结果可以复用
+- 保存 quiz session 和 attempt，让练习历史和成绩分析有依据
+- 保存邮件草稿和设置 profile 等工作流状态
+- 为未来的 conversation backend storage、memory embedding 检索等能力打基础
+
+简单说，没有数据库，这个项目更像一次性聊天页面；有了数据库，它才更像一个真正可持续运行的系统。
+
+## 现在怎么查看数据库概览
+
+### 方式一：前端调试入口
+
+1. 打开前端页面
+2. 点击 `Configure APIs`
+3. 在 `Developer / Debug` 区域点击 `Open Database View`
+
+### 方式二：直接查看后端接口
+
+- `http://127.0.0.1:8000/api/database/overview`
+- `http://127.0.0.1:8000/docs`
+
+其中 `/docs` 是 FastAPI 自动文档页，调试和演示时通常最方便。

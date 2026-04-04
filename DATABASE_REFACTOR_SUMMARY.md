@@ -194,6 +194,7 @@ This endpoint exposes:
 Updated files:
 
 - `frontend/src/App.vue`
+- `frontend/src/components/SettingsPanel.vue`
 - `frontend/src/api/client.js`
 
 New file:
@@ -202,7 +203,7 @@ New file:
 
 What this adds:
 
-- a new `Database View` button in the main UI
+- a `Database View` entry inside the settings panel's `Developer / Debug` area
 - a panel that displays database summary information from the backend
 - a practical demo surface for presenting database improvements
 
@@ -221,6 +222,20 @@ What was done:
 - fixed outdated LLM mock usage in quiz tests
 - added a test for the new database overview service
 - verified that the main refactored database paths still work
+
+## 4.9 What The Database Is For In This Project
+
+The database is what makes this project stateful instead of disposable.
+
+It is used to:
+
+- persist task history so the assistant can recover recent context
+- persist saved memories so useful user facts and prior results can be reused
+- persist quiz sessions and quiz attempts so learning history can be analyzed
+- persist email draft state and saved non-secret settings profiles
+- support future features such as backend conversation storage and stronger memory retrieval
+
+Without the database, the system behaves more like a one-shot chat demo. With it, the app has continuity, history, and inspectable behavior.
 
 ## 5. Why This Refactor Is Better
 
@@ -326,6 +341,7 @@ Possible future additions:
 - `backend/services/settings_service.py`
 - `backend/services/task_service.py`
 - `frontend/src/App.vue`
+- `frontend/src/components/SettingsPanel.vue`
 - `frontend/src/api/client.js`
 - `tests/test_quiz_service.py`
 
@@ -409,11 +425,12 @@ http://127.0.0.1:5173
 
 ### 9.4 Open the database visualization
 
-In the main page:
+In the app:
 
 1. Launch the frontend
 2. Make sure backend is running
-3. Click `Database View`
+3. Click `Configure APIs`
+4. In the `Developer / Debug` section, click `Open Database View`
 4. Inspect:
    - table counts
    - memory categories
@@ -422,7 +439,16 @@ In the main page:
    - latest quiz attempt
    - schema readiness
 
-### 9.5 Generate some data first if needed
+### 9.5 Direct backend inspection without the frontend
+
+Useful URLs:
+
+- `http://127.0.0.1:8000/api/database/overview`
+- `http://127.0.0.1:8000/docs`
+
+The `/docs` page is often enough for debugging or demos, even if the database panel is hidden from normal users.
+
+### 9.6 Generate some data first if needed
 
 If the panel is mostly empty, create data through the app first:
 
@@ -444,6 +470,14 @@ Open:
 
 ```text
 http://127.0.0.1:8000/api/database/overview
+```
+
+### FastAPI docs
+
+Open:
+
+```text
+http://127.0.0.1:8000/docs
 ```
 
 ### PowerShell
@@ -492,7 +526,7 @@ This refactor changed the database layer from a fragile, mixed-style implementat
 - safer typed JSON handling
 - repository-based organization
 - improved service integration
-- a new visible database dashboard for demos
+- a developer/debug database overview surface
 - test coverage for the new overview logic
 
 It also leaves the project in a much better position for the future requirements already described in the project documentation.

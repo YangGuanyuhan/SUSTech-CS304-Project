@@ -44,6 +44,22 @@
       <p v-else class="hint compact">No saved profiles yet.</p>
     </section>
 
+    <section v-if="showDeveloperTools" class="developer-tools">
+      <div class="developer-header">
+        <div>
+          <p class="eyebrow compact-eyebrow">Developer / Debug</p>
+          <strong>Internal Inspection Tools</strong>
+        </div>
+        <button type="button" :disabled="saving" @click="$emit('open-database-overview')">Open Database View</button>
+      </div>
+      <p class="hint compact">
+        This panel is meant for local debugging and coursework demos, not normal end-user workflows.
+      </p>
+      <p class="hint compact">
+        Backend endpoint: <code>/api/database/overview</code>
+      </p>
+    </section>
+
     <form class="grid" @submit.prevent="save">
       <label class="full">
         <span>Profile Name</span>
@@ -93,7 +109,9 @@ import {
   updateLLMSettings
 } from "../api/client";
 
-defineEmits(["close"]);
+defineEmits(["close", "open-database-overview"]);
+
+const showDeveloperTools = import.meta.env.DEV;
 
 const saving = ref(false);
 const message = ref("Load or update the runtime LLM config.");
@@ -326,6 +344,25 @@ h2 {
   padding: 18px;
   border-radius: 22px;
   background: rgba(28, 36, 48, 0.05);
+}
+
+.developer-tools {
+  margin: 0 0 22px;
+  padding: 18px;
+  border-radius: 22px;
+  background: rgba(31, 111, 120, 0.08);
+  border: 1px dashed rgba(31, 111, 120, 0.28);
+}
+
+.developer-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+}
+
+.compact-eyebrow {
+  margin-bottom: 4px;
 }
 
 .profiles-header {

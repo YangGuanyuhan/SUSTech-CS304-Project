@@ -6,7 +6,7 @@ import json
 
 from sqlalchemy.orm import Session
 
-from backend.db import crud
+from backend.db.repositories import UserPreferenceRepository
 from backend.models.settings import LLMProfile
 from backend.services.runtime_settings import RuntimeLLMUpdate, runtime_settings
 from backend.services.secret_store import secret_store
@@ -21,10 +21,11 @@ class SettingsService:
 
     def __init__(self, session: Session):
         self.session = session
+        self.repository = UserPreferenceRepository(session)
 
     async def list_llm_profiles(self) -> list[LLMProfile]:
-        records = await crud.list_user_preferences(self.session, key_prefix=LLM_PROFILE_PREFIX)
-        secret_records = await crud.list_user_preferences(self.session, key_prefix=LLM_PROFILE_SECRET_PREFIX)
+        records = self.repository.list(key_prefix=LLM_PROFILE_PREFIX)
+        secret_records = self.repository.list(key_prefix=LLM_PROFILE_SECRET_PREFIX)
         secret_keys = {item.key for item in secret_records}
         profiles = []
         for record in records:
@@ -45,10 +46,9 @@ class SettingsService:
             },
             ensure_ascii=False,
         )
-        await crud.upsert_user_preference(self.session, key=key, value=value)
+        self.repository.upsert(key=key, value=value)
         if api_key:
-            await crud.upsert_user_preference(
-                self.session,
+            self.repository.upsert(
                 key=f"{LLM_PROFILE_SECRET_PREFIX}{profile.name}",
                 value=secret_store.encrypt(api_key),
             )
@@ -56,8 +56,8 @@ class SettingsService:
         return profile
 
     async def delete_llm_profile(self, name: str) -> bool:
-        deleted = await crud.delete_user_preference(self.session, key=f"{LLM_PROFILE_PREFIX}{name}")
-        await crud.delete_user_preference(self.session, key=f"{LLM_PROFILE_SECRET_PREFIX}{name}")
+        deleted = self.repository.delete(key=f"{LLM_PROFILE_PREFIX}{name}")
+        self.repository.delete(key=f"{LLM_PROFILE_SECRET_PREFIX}{name}")
         return deleted
 
     async def apply_llm_profile(self, name: str) -> LLMProfile | None:
@@ -66,7 +66,7 @@ class SettingsService:
         if profile is None:
             return None
 
-        secret_records = await crud.list_user_preferences(self.session, key_prefix=LLM_PROFILE_SECRET_PREFIX)
+        secret_records = self.repository.list(key_prefix=LLM_PROFILE_SECRET_PREFIX)
         secret_record = next((item for item in secret_records if item.key == f"{LLM_PROFILE_SECRET_PREFIX}{name}"), None)
         api_key = secret_store.decrypt(secret_record.value) if secret_record else None
         config = runtime_settings.update_llm_config(
