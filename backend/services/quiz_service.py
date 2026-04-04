@@ -366,6 +366,21 @@ class QuizService:
 
         return questions[:question_count]
 
+    def _normalize_true_false(self, value: str) -> str | None:
+        token = value.strip().lower().replace("。", "").replace(".", "")
+        true_set = {"true", "正确", "对", "是", "yes", "y", "1"}
+        false_set = {"false", "错误", "错", "否", "不对", "no", "n", "0"}
+        if token in true_set:
+            return "true"
+        if token in false_set:
+            return "false"
+        first = token.split()[0] if token else ""
+        if first in true_set:
+            return "true"
+        if first in false_set:
+            return "false"
+        return None
+
     async def _grade_question(self, question: QuizQuestion, submitted_answer: str) -> QuizAttemptAnswerResult:
         if question.question_type in {"single_choice", "true_false"}:
             normalized_submitted = submitted_answer.strip().lower()
@@ -373,10 +388,15 @@ class QuizService:
 
             # For true_false, also consider the first word (user might type "true" or "true.")
             is_correct = normalized_submitted == normalized_correct
-            if not is_correct and question.question_type == "true_false":
-                first_word = normalized_submitted.split()[0] if normalized_submitted else ""
-                correct_first = normalized_correct.split()[0] if normalized_correct else ""
-                is_correct = first_word == correct_first
+            if question.question_type == "true_false":
+                normalized_bool_submitted = self._normalize_true_false(submitted_answer)
+                normalized_bool_correct = self._normalize_true_false(question.correct_answer)
+                if normalized_bool_submitted is not None and normalized_bool_correct is not None:
+                    is_correct = normalized_bool_submitted == normalized_bool_correct
+                elif not is_correct:
+                    first_word = normalized_submitted.split()[0] if normalized_submitted else ""
+                    correct_first = normalized_correct.split()[0] if normalized_correct else ""
+                    is_correct = first_word == correct_first
 
             return QuizAttemptAnswerResult(
                 question_id=question.id,
@@ -416,6 +436,13 @@ Reference answer: {question.correct_answer}
 Rubric: {question.rubric or question.explanation}
 Student answer: {submitted_answer}
 Maximum score: {question.points}
+
+Scoring guidance:
+- Be fair and criterion-based, not length-based.
+- The grading criteria evaluate only the core concept. No extra details or elaboration are required; the answer is accepted as it is and will not be penalized for limited details.
+- Use the full range [0, {question.points}] and reserve near-zero scores only for clearly wrong or irrelevant answers.
+- If the answer is essentially equivalent to the reference core meaning, award high credit.
+- If the student answer clearly matches the reference's core principle, score should generally be at least 80% of max.
 """.strip()
             
             tools = [
