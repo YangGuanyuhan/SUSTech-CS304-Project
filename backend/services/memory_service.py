@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from backend.db import crud
+from backend.db.repositories import MemoryRepository
 from backend.models.memory import Memory
 
 
@@ -15,10 +14,10 @@ def _to_memory(record: Any) -> Memory:
     return Memory(
         id=record.id,
         key=record.key,
-        value=json.loads(record.value_json),
+        value=record.value,
         category=record.category,
         created_at=record.created_at,
-        tags=json.loads(record.tags_json),
+        tags=record.tags or [],
     )
 
 
@@ -27,10 +26,10 @@ class MemoryService:
 
     def __init__(self, session: Session):
         self.session = session
+        self.repository = MemoryRepository(session)
 
     async def save_memory(self, key: str, value: Any, category: str, tags: list[str] | None = None) -> Memory:
-        record = await crud.create_memory(
-            self.session,
+        record = self.repository.create(
             key=key,
             value=value,
             category=category,
@@ -39,15 +38,15 @@ class MemoryService:
         return _to_memory(record)
 
     async def list_memories(self, category: str | None = None) -> list[Memory]:
-        records = await crud.list_memories(self.session, category=category)
+        records = self.repository.list(category=category)
         return [_to_memory(record) for record in records]
 
     async def get_relevant_memories(self, query: str, limit: int = 5) -> list[Memory]:
-        records = await crud.list_memories(self.session)
+        records = self.repository.list()
         lowered_terms = [term for term in query.lower().split() if term]
         ranked = []
         for record in records:
-            haystack = f"{record.key} {record.category} {record.value_json} {record.tags_json}".lower()
+            haystack = f"{record.key} {record.category} {record.value} {' '.join(record.tags or [])}".lower()
             score = sum(1 for term in lowered_terms if term in haystack)
             if score:
                 ranked.append((score, record))
@@ -55,7 +54,7 @@ class MemoryService:
         return [_to_memory(record) for _, record in ranked[:limit]]
 
     async def delete_memory(self, memory_id: str) -> bool:
-        return await crud.delete_memory(self.session, memory_id)
+        return self.repository.delete(memory_id)
 
     async def delete_memories_by_query(self, natural_language_query: str) -> int:
         memories = await self.list_memories()

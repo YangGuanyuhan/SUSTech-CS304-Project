@@ -25,6 +25,7 @@ from backend.models.common import ApiResponse
 from backend.models.settings import LLMProfile
 from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
 from backend.services.approval_service import approval_service
+from backend.services.database_insights_service import DatabaseInsightsService
 from backend.services.email_service import EmailService, UnconfirmedSendError
 from backend.services.llm_service import LLMConnectionError, LLMService
 from backend.services.memory_service import MemoryService
@@ -212,6 +213,12 @@ async def handle_chat_approval(
 async def get_courses(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
     result = await BlackboardService(session, DemoBlackboardProvider()).get_all_courses()
     return ApiResponse(success=True, data=result)
+
+
+@router.get("/database/overview", response_model=ApiResponse[object])
+async def get_database_overview(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    overview = await DatabaseInsightsService(session).get_overview()
+    return ApiResponse(success=True, data=overview)
 
 
 @router.get("/memory", response_model=ApiResponse[object])

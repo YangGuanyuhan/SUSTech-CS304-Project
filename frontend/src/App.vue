@@ -25,7 +25,10 @@
 
     <div v-if="settingsOpen" class="overlay" @click.self="settingsOpen = false">
       <div class="overlay-panel">
-        <SettingsPanel @close="settingsOpen = false" />
+        <SettingsPanel
+          @close="settingsOpen = false"
+          @open-database-overview="databaseOpen = true"
+        />
       </div>
     </div>
 
@@ -34,12 +37,19 @@
         <QuizHistoryPanel @close="quizHistoryOpen = false" />
       </div>
     </div>
+
+    <div v-if="databaseOpen" class="overlay" @click.self="databaseOpen = false">
+      <div class="overlay-panel">
+        <DatabaseOverviewPanel @close="databaseOpen = false" />
+      </div>
+    </div>
   </main>
 </template>
 
 <script setup>
 import { onMounted, ref } from "vue";
 import ChatWindow from "./components/ChatWindow.vue";
+import DatabaseOverviewPanel from "./components/DatabaseOverviewPanel.vue";
 import QuizHistoryPanel from "./components/QuizHistoryPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import { getHealth } from "./api/client";
@@ -48,6 +58,7 @@ const status = ref("Unknown");
 const checking = ref(false);
 const settingsOpen = ref(false);
 const quizHistoryOpen = ref(false);
+const databaseOpen = ref(false);
 
 async function checkHealth() {
   checking.value = true;

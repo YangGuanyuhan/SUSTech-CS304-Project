@@ -75,6 +75,11 @@ export async function getCourses() {
   return parseJson(response);
 }
 
+export async function getDatabaseOverview() {
+  const response = await fetch(`${API_BASE}/database/overview`);
+  return parseJson(response);
+}
+
 export async function createEmailDraft(payload) {
   const response = await fetch(`${API_BASE}/email/draft`, {
     method: "POST",
@@ -154,6 +159,9 @@ async function consumeSSE(response, handlers) {
       }
 
       const parsed = JSON.parse(data);
+      if (eventName === "error") {
+        throw new Error(parsed.error || "Chat stream failed.");
+      }
       if (eventName === "message") {
         handlers.onChunk?.(parsed.chunk);
       }
@@ -178,6 +186,9 @@ async function consumeSSE(response, handlers) {
     }
     if (data) {
       const parsed = JSON.parse(data);
+      if (eventName === "error") {
+        throw new Error(parsed.error || "Chat stream failed.");
+      }
       if (eventName === "message") handlers.onChunk?.(parsed.chunk);
       if (eventName === "approval_required") handlers.onApprovalRequired?.(parsed);
       if (eventName === "done") handlers.onDone?.(parsed);
