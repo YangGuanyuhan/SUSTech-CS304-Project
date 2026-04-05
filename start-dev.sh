@@ -27,7 +27,12 @@ trap cleanup EXIT INT TERM
 echo "Starting backend on http://$BACKEND_HOST:$BACKEND_PORT ..."
 (
   cd "$ROOT_DIR"
-  python3 -m uvicorn backend.main:app --host "$BACKEND_HOST" --port "$BACKEND_PORT"
+  if command -v uv >/dev/null 2>&1; then
+    uv run uvicorn backend.main:app --host "$BACKEND_HOST" --port "$BACKEND_PORT"
+  else
+    echo "Warning: uv not found, falling back to system python3"
+    python3 -m uvicorn backend.main:app --host "$BACKEND_HOST" --port "$BACKEND_PORT"
+  fi
 ) &
 BACKEND_PID=$!
 

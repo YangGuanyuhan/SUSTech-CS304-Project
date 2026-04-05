@@ -430,19 +430,20 @@ class QuizService:
             return 0.0, "No answer submitted."
         try:
             prompt = f"""
-Grade this short-answer response.
+You are a lenient and fair teaching assistant grading a short-answer quiz.
 Question: {question.prompt}
 Reference answer: {question.correct_answer}
 Rubric: {question.rubric or question.explanation}
 Student answer: {submitted_answer}
 Maximum score: {question.points}
 
-Scoring guidance:
-- Be fair and criterion-based, not length-based.
-- The grading criteria evaluate only the core concept. No extra details or elaboration are required; the answer is accepted as it is and will not be penalized for limited details.
-- Use the full range [0, {question.points}] and reserve near-zero scores only for clearly wrong or irrelevant answers.
-- If the answer is essentially equivalent to the reference core meaning, award high credit.
-- If the student answer clearly matches the reference's core principle, score should generally be at least 80% of max.
+STRICT SCORING GUIDANCE (YOU MUST FOLLOW THESE RULES):
+1. NO EXTERNAL CRITERIA: Evaluate the student's answer STRICTLY against the Reference answer and Rubric. DO NOT invent new requirements. If the question or rubric does not explicitly ask for examples, dates, or specific terminology, DO NOT penalize the student for omitting them.
+2. FULL CREDIT DEFAULT: If the student's answer captures the core meaning or fundamental principle of the Reference answer, you MUST award the maximum score ({question.points}). Do not deduct points just because the answer is brief or lacks elaboration.
+3. PENALIZE ONLY FOR ERRORS: Deduct points ONLY if the student's answer contains direct factual errors, contradicts the reference, or completely misses the core concept.
+4. SYNONYMS ARE ACCEPTABLE: Accept answers formulated in the student's own words as long as the underlying logic is correct. 
+
+Remember: Your goal is to verify if the student understands the basic concept, not to evaluate their essay-writing skills.
 """.strip()
             
             tools = [
