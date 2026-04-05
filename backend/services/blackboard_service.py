@@ -195,10 +195,58 @@ class DemoBlackboardProvider(BlackboardProvider):
         return extracted
 
     async def get_all_courses(self) -> list[Course]:
-        return [
-            Course(id="cs305", name="Software Engineering", code="CS305"),
-            Course(id="cs310", name="Operating Systems", code="CS310"),
-        ]
+        _, _, base_url = self._get_credentials()
+        api_url = f"{base_url.rstrip('/')}/users/me/courses"
+        params = {
+            "expand": "course",
+            "fields": "courseId,course.courseId,course.name",
+        }
+
+        if self._cas_session is None:
+            logged_in = await self.bypass_cas_login()
+            if not logged_in:
+                return []
+
+        try:
+            response = self._cas_session.get(api_url, params=params, timeout=60)
+        except requests.Timeout:
+            return []
+
+        if response.status_code == 401 or not response.ok:
+            return []
+
+        try:
+            payload = response.json()
+        except ValueError:
+            return []
+
+        items = payload.get("results", [])
+        if not isinstance(items, list):
+            return []
+
+        courses: list[Course] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            member_course_id = item.get("courseId")
+            course_payload = item.get("course")
+            if not isinstance(course_payload, dict):
+                continue
+
+            course_name = course_payload.get("name")
+            course_id = course_payload.get("courseId")
+            if not member_course_id or not course_name:
+                continue
+
+            courses.append(
+                Course(
+                    course_id=str(member_course_id),
+                    blackboard_course_id=str(course_id) if course_id else None,
+                    name=str(course_name),
+                )
+            )
+
+        return courses
 
     async def get_assignments(self, course_id: str) -> list[Assignment]:
         due_at = datetime.now(timezone.utc) + timedelta(days=7)

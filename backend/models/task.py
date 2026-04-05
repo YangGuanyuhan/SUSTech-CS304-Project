@@ -8,9 +8,9 @@ from pydantic import BaseModel, Field
 
 
 class Course(BaseModel):
-    id: str
+    course_id: str
     name: str
-    code: str
+    blackboard_course_id: str | None = None
 
 
 class Assignment(BaseModel):

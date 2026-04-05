@@ -1,11 +1,51 @@
 from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
 
 
-async def test_blackboard_courses_are_returned(db_session):
-    service = BlackboardService(db_session, DemoBlackboardProvider())
+async def test_blackboard_courses_are_returned(db_session, monkeypatch):
+    from backend.services import blackboard_service
+
+    class Settings:
+        blackboard_base_url = "https://bb.sustech.edu.cn/learn/api/public/v1"
+        blackboard_student_id = "123456"
+        blackboard_cas_password = "secret"
+
+    class FakeCoursesResponse:
+        status_code = 200
+        ok = True
+
+        def json(self):
+            return {
+                "results": [
+                    {
+                        "courseId": "_101_1",
+                        "course": {"courseId": "CS304-2026", "name": "Software Engineering"},
+                    },
+                    {
+                        "courseId": "_102_1",
+                        "course": {"courseId": "CS305-2026", "name": "Operating Systems"},
+                    },
+                ]
+            }
+
+    class FakeSession:
+        def __init__(self):
+            self.headers = {}
+
+        def get(self, *_args, **_kwargs):
+            return FakeCoursesResponse()
+
+    monkeypatch.setattr(blackboard_service, "get_settings", lambda: Settings())
+    provider = DemoBlackboardProvider()
+    provider._cas_session = FakeSession()
+
+    service = BlackboardService(db_session, provider)
     result = await service.get_all_courses()
+
     assert result.is_cached is False
-    assert len(result.data) >= 1
+    assert len(result.data) == 2
+    assert result.data[0].course_id == "_101_1"
+    assert result.data[0].blackboard_course_id == "CS304-2026"
+    assert result.data[0].name == "Software Engineering"
 
 
 async def test_blackboard_uses_cache_on_failure(db_session):

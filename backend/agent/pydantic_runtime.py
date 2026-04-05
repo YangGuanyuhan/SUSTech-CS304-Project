@@ -323,6 +323,10 @@ class PydanticAIRuntime:
         async def get_current_datetime(ctx: RunContext[AgentDeps]) -> str:
             return await _execute_tool(ctx, "get_current_datetime", {})
 
+        @agent.tool(name="blackboard_get_all_courses")
+        async def blackboard_get_all_courses(ctx: RunContext[AgentDeps]) -> str:
+            return await _execute_tool(ctx, "blackboard_get_all_courses", {})
+
         @agent.tool(name="blackboard_test_api_available")
         async def blackboard_test_api_available(ctx: RunContext[AgentDeps]) -> str:
             return await _execute_tool(ctx, "blackboard_test_api_available", {})
