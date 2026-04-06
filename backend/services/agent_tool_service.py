@@ -427,8 +427,10 @@ class AgentToolService:
             "command": command,
             "cwd": str(cwd),
             "returncode": process.returncode,
+            "ok": process.returncode == 0,
             "stdout": stdout.decode("utf-8", errors="ignore")[:12000],
             "stderr": stderr.decode("utf-8", errors="ignore")[:12000],
+            "error": None if process.returncode == 0 else "Command exited with non-zero status.",
         }
         return json.dumps(payload, ensure_ascii=False)
 
