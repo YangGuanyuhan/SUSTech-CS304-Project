@@ -75,12 +75,87 @@ export async function getCourses() {
   return parseJson(response);
 }
 
+export async function getBlackboardSettings() {
+  const response = await fetch(`${API_BASE}/settings/blackboard`);
+  return parseJson(response);
+}
+
+export async function updateBlackboardSettings(payload) {
+  const response = await fetch(`${API_BASE}/settings/blackboard`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function testBlackboardSettings(payload) {
+  const response = await fetch(`${API_BASE}/settings/blackboard/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function getBBProfiles() {
+  const response = await fetch(`${API_BASE}/settings/blackboard/profiles`);
+  return parseJson(response);
+}
+
+export async function saveBBProfile(payload) {
+  const response = await fetch(`${API_BASE}/settings/blackboard/profiles`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function deleteBBProfile(name) {
+  const response = await fetch(`${API_BASE}/settings/blackboard/profiles/${encodeURIComponent(name)}`, {
+    method: "DELETE"
+  });
+  return parseJson(response);
+}
+
+export async function applyBBProfile(name) {
+  const response = await fetch(`${API_BASE}/settings/blackboard/profiles/${encodeURIComponent(name)}/apply`, {
+    method: "POST"
+  });
+  return parseJson(response);
+}
+
+export async function getDatabaseOverview() {
+  const response = await fetch(`${API_BASE}/database/overview`);
+  return parseJson(response);
+}
+
 export async function createEmailDraft(payload) {
   const response = await fetch(`${API_BASE}/email/draft`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
+  return parseJson(response);
+}
+
+export async function getQuiz(quizId) {
+  const response = await fetch(`${API_BASE}/quiz/${encodeURIComponent(quizId)}`);
+  return parseJson(response);
+}
+
+export async function submitQuizAttempt(quizId, payload) {
+  const response = await fetch(`${API_BASE}/quiz/${encodeURIComponent(quizId)}/attempts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function getQuizHistory(limit = 5) {
+  const response = await fetch(`${API_BASE}/quiz/history?limit=${encodeURIComponent(limit)}`);
   return parseJson(response);
 }
 
@@ -135,6 +210,9 @@ async function consumeSSE(response, handlers) {
       }
 
       const parsed = JSON.parse(data);
+      if (eventName === "error") {
+        throw new Error(parsed.error || "Chat stream failed.");
+      }
       if (eventName === "message") {
         handlers.onChunk?.(parsed.chunk);
       }
@@ -159,6 +237,9 @@ async function consumeSSE(response, handlers) {
     }
     if (data) {
       const parsed = JSON.parse(data);
+      if (eventName === "error") {
+        throw new Error(parsed.error || "Chat stream failed.");
+      }
       if (eventName === "message") handlers.onChunk?.(parsed.chunk);
       if (eventName === "approval_required") handlers.onApprovalRequired?.(parsed);
       if (eventName === "done") handlers.onDone?.(parsed);

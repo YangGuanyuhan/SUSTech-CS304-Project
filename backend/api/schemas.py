@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from backend.models.quiz import QuizAnswerSubmission
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -51,3 +53,21 @@ class LLMProfileRequest(BaseModel):
     model: str
     base_url: str | None = None
     api_key: str | None = None
+
+
+class BlackboardProfileRequest(BaseModel):
+    name: str
+    student_id: str
+    base_url: str | None = None
+    password: str | None = None
+
+
+class QuizAttemptRequest(BaseModel):
+    answers: list[QuizAnswerSubmission]
+
+
+class BlackboardSettingsRequest(BaseModel):
+    student_id: str | None = None
+    password: str | None = None
+    base_url: str | None = None
+    replace_password: bool = False

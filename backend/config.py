@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     llm_api_key: str = "replace-me"
     llm_base_url: str | None = None
 
-    blackboard_provider: str = "mock"
+    blackboard_student_id: str | None = None
+    blackboard_cas_password: str | None = None
     blackboard_base_url: str = "https://bb.sustech.edu.cn/learn/api/public/v1"
     blackboard_token: str = "replace-me"
 
@@ -34,6 +35,7 @@ class Settings(BaseSettings):
     search_timeout: int = 30
     api_timeout: int = 60
     task_timeout: int = 120
+    quiz_subjective_grading_timeout: int = 30
     llm_log_dir: str = "./data/llm-logs"
     allowed_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]

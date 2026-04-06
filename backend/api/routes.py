@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from backend.agent.core import StudentProductivityAgent
 from backend.api.schemas import (
+    BlackboardProfileRequest,
+    BlackboardSettingsRequest,
     ChatApprovalRequest,
     ChatRequest,
     EmailConfirmRequest,
@@ -18,23 +20,26 @@ from backend.api.schemas import (
     LLMProfileRequest,
     LLMSettingsRequest,
     MemoryDeleteByQueryRequest,
+    QuizAttemptRequest,
 )
 from backend.db.database import get_db_session
 from backend.models.common import ApiResponse
-from backend.models.settings import LLMProfile
-from backend.services.blackboard_service import BlackboardService, MockBlackboardProvider
+from backend.models.settings import BlackboardProfile, LLMProfile
+from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
 from backend.services.approval_service import approval_service
+from backend.services.database_insights_service import DatabaseInsightsService
 from backend.services.email_service import EmailService, UnconfirmedSendError
 from backend.services.llm_service import LLMConnectionError, LLMService
 from backend.services.memory_service import MemoryService
-from backend.services.runtime_settings import RuntimeLLMUpdate, runtime_settings
+from backend.services.quiz_service import QuizService
+from backend.services.runtime_settings import RuntimeBlackboardUpdate, RuntimeLLMUpdate, runtime_settings
 from backend.services.settings_service import SettingsService
 
 
 router = APIRouter(prefix="/api")
 
 
-def _chunk_text(text: str, chunk_size: int = 600) -> list[str]:
+def _chunk_text(text: str, chunk_size: int = 2000) -> list[str]:
     if not text:
         return []
     return [text[index : index + chunk_size] for index in range(0, len(text), chunk_size)]
@@ -43,15 +48,39 @@ def _chunk_text(text: str, chunk_size: int = 600) -> list[str]:
 async def _stream_agent_result(result: dict[str, object], *, session_id: str):
     approval_request = result.get("approval_request")
     if approval_request is not None:
-        yield {"event": "approval_required", "data": json.dumps(approval_request)}
-        yield {"event": "done", "data": json.dumps({"session_id": session_id, "status": "approval_required"})}
+        yield {
+            "event": "approval_required",
+            "data": json.dumps(
+                {
+                    **approval_request,
+                    "tool_events": result.get("tool_events", []),
+                }
+            ),
+        }
+        yield {
+            "event": "done",
+            "data": json.dumps(
+                {
+                    "session_id": session_id,
+                    "status": "approval_required",
+                    "tool_events": result.get("tool_events", []),
+                }
+            ),
+        }
         return
 
-    for chunk in _chunk_text(str(result.get("response", ""))):
-        yield {"event": "message", "data": json.dumps({"chunk": chunk})}
+    # Return full response at once
+    yield {"event": "message", "data": json.dumps({"chunk": str(result.get("response", ""))})}
     yield {
         "event": "done",
-        "data": json.dumps({"session_id": session_id, "status": "completed", "tools_used": result.get("tools_used", [])}),
+        "data": json.dumps(
+            {
+                "session_id": session_id,
+                "status": "completed",
+                "tools_used": result.get("tools_used", []),
+                "tool_events": result.get("tool_events", []),
+            }
+        ),
     }
 
 
@@ -140,6 +169,102 @@ async def apply_llm_profile(name: str, session: Session = Depends(get_db_session
     return ApiResponse(success=True, data=profile)
 
 
+# Blackboard Profile Settings
+@router.get("/settings/blackboard/profiles", response_model=ApiResponse[object])
+async def list_bb_profiles(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    profiles = await SettingsService(session).list_bb_profiles()
+    return ApiResponse(success=True, data=profiles)
+
+
+@router.put("/settings/blackboard/profiles", response_model=ApiResponse[object])
+async def save_bb_profile(
+    request: BlackboardProfileRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    profile = await SettingsService(session).save_bb_profile(
+        BlackboardProfile(
+            name=request.name,
+            student_id=request.student_id,
+            base_url=request.base_url,
+        ),
+        password=request.password,
+    )
+    return ApiResponse(success=True, data=profile)
+
+
+@router.delete("/settings/blackboard/profiles/{name}", response_model=ApiResponse[dict[str, bool]])
+async def delete_bb_profile(name: str, session: Session = Depends(get_db_session)) -> ApiResponse[dict[str, bool]]:
+    deleted = await SettingsService(session).delete_bb_profile(name)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return ApiResponse(success=True, data={"deleted": True})
+
+
+@router.post("/settings/blackboard/profiles/{name}/apply", response_model=ApiResponse[object])
+async def apply_bb_profile(name: str, session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    profile = await SettingsService(session).apply_bb_profile(name)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return ApiResponse(success=True, data=profile)
+
+
+# Blackboard Settings
+@router.get("/settings/blackboard", response_model=ApiResponse[object])
+async def get_blackboard_settings() -> ApiResponse[object]:
+    return ApiResponse(success=True, data=runtime_settings.get_blackboard_config())
+
+
+@router.put("/settings/blackboard", response_model=ApiResponse[object])
+async def update_blackboard_settings(request: BlackboardSettingsRequest) -> ApiResponse[object]:
+    config = runtime_settings.update_blackboard_config(
+        RuntimeBlackboardUpdate.model_validate(request.model_dump())
+    )
+    return ApiResponse(success=True, data=config)
+
+
+@router.post("/settings/blackboard/test", response_model=ApiResponse[object])
+async def test_blackboard_settings(request: BlackboardSettingsRequest) -> ApiResponse[object]:
+    """Test Blackboard connection with provided credentials."""
+    from backend.services.blackboard_service import BlackboardService
+
+    # Get student_id: from request > runtime > settings
+    if request.student_id:
+        student_id = request.student_id
+    else:
+        bb_config = runtime_settings.get_blackboard_config()
+        student_id = bb_config.student_id
+
+    # Get password: from request > runtime
+    if request.replace_password and request.password:
+        password = request.password
+    elif request.password:
+        password = request.password
+    else:
+        password = runtime_settings.get_secret_blackboard_password()
+
+    # Get base_url: from request > runtime > settings
+    if request.base_url:
+        base_url = request.base_url
+    else:
+        bb_config = runtime_settings.get_blackboard_config()
+        base_url = bb_config.base_url
+        if not base_url:
+            settings = get_settings()
+            base_url = settings.blackboard_base_url
+
+    if not student_id or not password:
+        return ApiResponse(success=False, data={"error": f"Missing credentials - student_id: {bool(student_id)}, password: {bool(password)}"})
+
+    try:
+        logged_in = await BlackboardService.test_connection(student_id, password, base_url)
+        return ApiResponse(
+            success=logged_in,
+            data={"logged_in": logged_in, "message": "Connection successful" if logged_in else "Connection failed"}
+        )
+    except Exception as e:
+        return ApiResponse(success=False, data={"error": str(e)})
+
+
 @router.post("/chat")
 async def chat(
     request: ChatRequest,
@@ -148,9 +273,15 @@ async def chat(
     agent = StudentProductivityAgent(session)
 
     async def event_generator():
-        result = await agent.run(request.message, request.session_id, request.workspace_root)
-        async for event in _stream_agent_result(result, session_id=request.session_id):
-            yield event
+        try:
+            result = await agent.run(request.message, request.session_id, request.workspace_root)
+            async for event in _stream_agent_result(result, session_id=request.session_id):
+                yield event
+        except Exception as e:
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": str(e)}),
+            }
 
     return EventSourceResponse(event_generator())
 
@@ -178,8 +309,14 @@ async def handle_chat_approval(
 
 @router.get("/blackboard/courses", response_model=ApiResponse[object])
 async def get_courses(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
-    result = await BlackboardService(session, MockBlackboardProvider()).get_all_courses()
+    result = await BlackboardService(session, DemoBlackboardProvider()).get_all_courses()
     return ApiResponse(success=True, data=result)
+
+
+@router.get("/database/overview", response_model=ApiResponse[object])
+async def get_database_overview(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    overview = await DatabaseInsightsService(session).get_overview()
+    return ApiResponse(success=True, data=overview)
 
 
 @router.get("/memory", response_model=ApiResponse[object])
@@ -206,6 +343,36 @@ async def delete_memory_by_query(
 ) -> ApiResponse[dict[str, int]]:
     deleted = await MemoryService(session).delete_memories_by_query(request.query)
     return ApiResponse(success=True, data={"deleted": deleted})
+
+
+@router.get("/quiz/history", response_model=ApiResponse[object])
+async def get_quiz_history(
+    limit: int = Query(default=5, ge=1, le=20),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    history = await QuizService(session).get_history_summary(limit=limit)
+    return ApiResponse(success=True, data=history)
+
+
+@router.get("/quiz/{quiz_id}", response_model=ApiResponse[object])
+async def get_quiz(quiz_id: str, session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    quiz = await QuizService(session).get_quiz(quiz_id)
+    if quiz is None:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    return ApiResponse(success=True, data=quiz)
+
+
+@router.post("/quiz/{quiz_id}/attempts", response_model=ApiResponse[object])
+async def submit_quiz_attempt(
+    quiz_id: str,
+    request: QuizAttemptRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    try:
+        result = await QuizService(session).submit_attempt(quiz_id, request.answers)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=result)
 
 
 @router.post("/email/draft", response_model=ApiResponse[object])

@@ -1,0 +1,333 @@
+"""PydanticAI-backed runtime that preserves the existing API contract."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from typing import Any
+
+from httpx import AsyncClient
+from pydantic_ai import Agent, DeferredToolResults, RunContext
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.tools import DeferredToolRequests, ToolApproved, ToolDenied
+from sqlalchemy.orm import Session
+
+from backend.models.tooling import ToolTrace
+from backend.services.agent_tool_service import AgentToolService
+from backend.services.runtime_settings import runtime_settings
+
+
+SYSTEM_PROMPT = """
+You are Student Productivity Agent, a study assistant for SUSTech students.
+You have access to real backend tools. Treat local file access, local command execution,
+web access, and memory operations as available capabilities provided by tools.
+
+Tool usage rules:
+1. When the user asks to read files, list directories, write files, run commands, or visit webpages,
+   prefer the matching tool instead of replying that you cannot access the local machine or the web.
+2. For file tools and command tools, stay within the configured workspace root.
+3. For local file access, local command execution, and webpage access, the backend may require user approval.
+   You should still initiate the tool call when it is needed; the system will handle approval.
+4. Do not say that you are blocked by sandbox or security restrictions unless a tool result explicitly says so.
+5. Only claim an action succeeded after you receive a tool result confirming it.
+6. Use memory tools to save durable user preferences, project facts, and useful follow-up context when appropriate.
+7. If a tool result reports an error, explain that error plainly and suggest the next step.
+8. Do NOT guess or hallucinate timestamps or dates. If the user does not explicitly mention a specific time, do not include unverified times when saving memories.
+9. When saving memories, only record what actually happened in this conversation. 
+   Do not infer or assume actions that were not explicitly performed or confirmed by a tool result.
+10. After successfully creating a quiz, do NOT present questions in chat. 
+    Instead, inform the user that the quiz is ready and direct them to the quiz 
+    interface to begin.
+Response style:
+- Be concise and practical.
+- Respond in Markdown when useful.
+- Do not invent file contents, command output, or webpage content.
+""".strip()
+
+
+@dataclass
+class AgentDeps:
+    """Per-run dependencies and mutable execution state."""
+
+    session: Session
+    session_id: str
+    workspace_root: str | None
+    tool_service: AgentToolService
+    tool_events: list[ToolTrace] = field(default_factory=list)
+    tools_used: list[str] = field(default_factory=list)
+
+
+class PydanticAIRuntime:
+    """Bridge current app protocols onto PydanticAI."""
+
+    def __init__(self, session: Session):
+        self.session = session
+        self.tool_service = AgentToolService(session)
+
+    def _build_model(self) -> OpenAIModel:
+        config = runtime_settings.get_llm_config()
+        api_key = runtime_settings.get_secret_api_key()
+        if config.provider.strip().lower() != "openai":
+            raise ValueError("Only OpenAI-compatible providers are supported right now.")
+        if not api_key:
+            raise ValueError("No API key is configured. Open the LLM settings panel first.")
+
+        provider = OpenAIProvider(
+            base_url=config.base_url or None,
+            api_key=api_key,
+            http_client=AsyncClient(trust_env=False),
+        )
+        return OpenAIModel(config.model, provider=provider)
+
+    def _build_agent(self) -> Agent[AgentDeps, str | DeferredToolRequests]:
+        agent = Agent[AgentDeps, str | DeferredToolRequests](
+            model=self._build_model(),
+            deps_type=AgentDeps,
+            output_type=str | DeferredToolRequests,
+            system_prompt=SYSTEM_PROMPT,
+            retries=1,
+            defer_model_check=True,
+        )
+
+        @agent.system_prompt(dynamic=True)
+        def workspace_instruction(ctx: RunContext[AgentDeps]) -> str:
+            if ctx.deps.workspace_root:
+                return (
+                    f"Approved workspace root: `{ctx.deps.workspace_root}`. "
+                    "Local file and command tools must stay inside this root."
+                )
+            return (
+                "No workspace root is configured yet. "
+                "Do not use local file or command tools until the user sets one."
+            )
+
+        def _normalize_result(tool_name: str, arguments: dict[str, Any], output: str) -> str:
+            status = "failed" if '"ok": false' in output.lower() else "completed"
+            ctx = _tool_context["ctx"]
+            ctx.deps.tool_events.append(
+                ToolTrace(tool_name=tool_name, arguments=arguments, status=status, output=output)
+            )
+            ctx.deps.tools_used.append(tool_name)
+            return output
+
+        async def _execute_tool(
+            ctx: RunContext[AgentDeps],
+            tool_name: str,
+            arguments: dict[str, Any],
+        ) -> str:
+            _tool_context["ctx"] = ctx
+            output = await ctx.deps.tool_service.execute(
+                tool_name,
+                arguments,
+                chat_session_id=ctx.deps.session_id,
+                workspace_root=ctx.deps.workspace_root,
+            )
+            return _normalize_result(tool_name, arguments, output)
+
+        _tool_context: dict[str, RunContext[AgentDeps]] = {}
+
+        @agent.tool(name="memory_search")
+        async def memory_search(ctx: RunContext[AgentDeps], query: str, limit: int = 5) -> str:
+            return await _execute_tool(ctx, "memory_search", {"query": query, "limit": limit})
+
+        @agent.tool(name="memory_save")
+        async def memory_save(
+            ctx: RunContext[AgentDeps],
+            key: str,
+            value: Any,
+            category: str = "general",
+            tags: list[str] | None = None,
+        ) -> str:
+            return await _execute_tool(
+                ctx,
+                "memory_save",
+                {"key": key, "value": value, "category": category, "tags": tags or []},
+            )
+
+        @agent.tool(name="memory_delete")
+        async def memory_delete(ctx: RunContext[AgentDeps], query: str) -> str:
+            return await _execute_tool(ctx, "memory_delete", {"query": query})
+
+        @agent.tool(name="list_local_files", requires_approval=True)
+        async def list_local_files(
+            ctx: RunContext[AgentDeps],
+            path: str = ".",
+            recursive: bool = False,
+            max_entries: int = 50,
+        ) -> str:
+            return await _execute_tool(
+                ctx,
+                "list_local_files",
+                {"path": path, "recursive": recursive, "max_entries": max_entries},
+            )
+
+        @agent.tool(name="read_local_file", requires_approval=True)
+        async def read_local_file(ctx: RunContext[AgentDeps], path: str, max_chars: int = 12000) -> str:
+            return await _execute_tool(ctx, "read_local_file", {"path": path, "max_chars": max_chars})
+
+        @agent.tool(name="write_local_file", requires_approval=True)
+        async def write_local_file(
+            ctx: RunContext[AgentDeps],
+            path: str,
+            content: str,
+            append: bool = False,
+        ) -> str:
+            return await _execute_tool(
+                ctx,
+                "write_local_file",
+                {"path": path, "content": content, "append": append},
+            )
+
+        @agent.tool(name="run_local_command", requires_approval=True)
+        async def run_local_command(
+            ctx: RunContext[AgentDeps],
+            command: list[str] | str,
+            timeout_seconds: int = 20,
+        ) -> str:
+            return await _execute_tool(
+                ctx,
+                "run_local_command",
+                {"command": command, "timeout_seconds": timeout_seconds},
+            )
+
+        @agent.tool(name="fetch_webpage", requires_approval=True)
+        async def fetch_webpage(ctx: RunContext[AgentDeps], url: str, max_chars: int = 12000) -> str:
+            return await _execute_tool(ctx, "fetch_webpage", {"url": url, "max_chars": max_chars})
+
+        @agent.tool(name="create_quiz")
+        async def create_quiz(
+            ctx: RunContext[AgentDeps],
+            topic: str,
+            question_count: int = 5,
+            source_material: str | None = None,
+            title: str | None = None,
+        ) -> str:
+            return await _execute_tool(
+                ctx,
+                "create_quiz",
+                {
+                    "topic": topic,
+                    "question_count": question_count,
+                    "source_material": source_material,
+                    "title": title,
+                },
+            )
+
+        @agent.tool(name="quiz_history_summary")
+        async def quiz_history_summary(ctx: RunContext[AgentDeps], limit: int = 5) -> str:
+            return await _execute_tool(ctx, "quiz_history_summary", {"limit": limit})
+
+        @agent.tool(name="get_current_datetime")
+        async def get_current_datetime(ctx: RunContext[AgentDeps]) -> str:
+            return await _execute_tool(ctx, "get_current_datetime", {})
+
+        @agent.tool(name="blackboard_test_api_available")
+        async def blackboard_test_api_available(ctx: RunContext[AgentDeps]) -> str:
+            return await _execute_tool(ctx, "blackboard_test_api_available", {})
+
+        @agent.tool(name="blackboard_get_calendar_items")
+        async def blackboard_get_calendar_items(ctx: RunContext[AgentDeps]) -> str:
+            return await _execute_tool(ctx, "blackboard_get_calendar_items", {})
+
+        return agent
+
+    def _history_to_model_messages(self, history: list[dict[str, str]]):
+        messages: list[ModelRequest | ModelResponse] = []
+        for item in history:
+            role = item.get("role")
+            content = item.get("content", "")
+            if role == "user":
+                messages.append(ModelRequest(parts=[UserPromptPart(content)]))
+            elif role == "assistant":
+                messages.append(ModelResponse(parts=[TextPart(content)]))
+        return messages
+
+    async def run(
+        self,
+        *,
+        user_input: str | None,
+        session_id: str,
+        workspace_root: str | None,
+        history: list[dict[str, str]] | None = None,
+        message_history: list[Any] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+    ):
+        deps = AgentDeps(
+            session=self.session,
+            session_id=session_id,
+            workspace_root=workspace_root,
+            tool_service=self.tool_service,
+        )
+        agent = self._build_agent()
+        final_history = message_history or self._history_to_model_messages(history or [])
+        run_result = await agent.run(
+            user_prompt=user_input,
+            message_history=final_history,
+            deferred_tool_results=deferred_tool_results,
+            deps=deps,
+        )
+        return run_result, deps
+
+    # async def run_stream(
+    #     self,
+    #     *,
+    #     user_input: str | None,
+    #     session_id: str,
+    #     workspace_root: str | None,
+    #     history: list[dict[str, str]] | None = None,
+    #     message_history: list[Any] | None = None,
+    #     deferred_tool_results: DeferredToolResults | None = None,
+    # ) -> tuple[Any, AgentDeps, Any]:
+    #     """Run agent with streaming output.
+
+    #     Returns a tuple of (result, deps, stream_context) where stream_context
+    #     is an async context manager that provides the stream.
+    #     """
+    #     deps = AgentDeps(
+    #         session=self.session,
+    #         session_id=session_id,
+    #         workspace_root=workspace_root,
+    #         tool_service=self.tool_service,
+    #     )
+    #     agent = self._build_agent()
+    #     final_history = message_history or self._history_to_model_messages(history or [])
+
+    #     # Use streaming run - returns an async context manager
+    #     # We return the context manager itself, caller needs to use 'async with'
+    #     stream_context = agent.run_stream(
+    #         user_prompt=user_input,
+    #         message_history=final_history,
+    #         deferred_tool_results=deferred_tool_results,
+    #         deps=deps,
+    #     )
+
+    #     return run_result, deps
+
+    @staticmethod
+    def extract_text_or_requests(run_result: Any) -> str | DeferredToolRequests:
+        return run_result.output if hasattr(run_result, "output") else run_result.response
+
+    @staticmethod
+    def build_deferred_approval_result(
+        tool_call_id: str,
+        *,
+        approved: bool,
+    ) -> DeferredToolResults:
+        if approved:
+            return DeferredToolResults(approvals={tool_call_id: ToolApproved()})
+        return DeferredToolResults(
+            approvals={tool_call_id: ToolDenied(message="The tool call was denied by the user.")}
+        )
+
+    @staticmethod
+    def parse_tool_arguments(args: dict[str, Any] | str | None) -> dict[str, Any]:
+        if isinstance(args, dict):
+            return args
+        if isinstance(args, str):
+            try:
+                return json.loads(args)
+            except json.JSONDecodeError:
+                return {"raw": args}
+        return {}

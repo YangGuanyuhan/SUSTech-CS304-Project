@@ -5,13 +5,17 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
 import httpx
 from sqlalchemy.orm import Session
 
+from backend.services.datetime_service import DateTimeService
+from backend.services.blackboard_service import DemoBlackboardProvider
 from backend.services.memory_service import MemoryService
+from backend.services.quiz_service import QuizService
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -161,6 +165,69 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "create_quiz",
+                "description": "Create a quiz session for the user and return structured quiz questions.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "topic": {"type": "string"},
+                        "question_count": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
+                        "source_material": {"type": "string"},
+                        "title": {"type": "string"},
+                    },
+                    "required": ["topic"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "quiz_history_summary",
+                "description": "Summarize the user's recent quiz attempts for personalized study guidance.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_current_datetime",
+                "description": "Get current date and time with structured fields including timezone and UTC offset.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "blackboard_test_api_available",
+                "description": "Check whether Blackboard API endpoint users/me is currently available.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "blackboard_get_calendar_items",
+                "description": "Fetch key assignment-related calendar items from Blackboard.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
     ]
 
 
@@ -174,6 +241,7 @@ class AgentToolService:
     def __init__(self, session: Session):
         self.session = session
         self.memory_service = MemoryService(session)
+        self.quiz_service = QuizService(session)
 
     def requires_approval(self, tool_name: str) -> bool:
         return tool_name in _APPROVAL_REQUIRED_TOOLS
@@ -193,7 +261,8 @@ class AgentToolService:
             mode = "append to" if arguments.get("append") else "write"
             return f"{mode.capitalize()} local file `{arguments.get('path', '')}` in workspace `{workspace_root or '<unset>'}`."
         if tool_name == "run_local_command":
-            command = " ".join(arguments.get("command", []))
+            raw_command = arguments.get("command", [])
+            command = raw_command if isinstance(raw_command, str) else " ".join(raw_command)
             return f"Run local command `{command}` in workspace `{workspace_root or '<unset>'}`."
         if tool_name == "fetch_webpage":
             return f"Visit webpage `{arguments.get('url', '')}` and extract content."
@@ -204,6 +273,7 @@ class AgentToolService:
         tool_name: str,
         arguments: dict[str, Any],
         *,
+        chat_session_id: str,
         workspace_root: str | None,
     ) -> str:
         if tool_name == "memory_search":
@@ -222,6 +292,16 @@ class AgentToolService:
             return await self._run_local_command(arguments, workspace_root)
         if tool_name == "fetch_webpage":
             return await self._fetch_webpage(arguments)
+        if tool_name == "create_quiz":
+            return await self._create_quiz(arguments, chat_session_id=chat_session_id)
+        if tool_name == "quiz_history_summary":
+            return await self._quiz_history_summary(arguments)
+        if tool_name == "get_current_datetime":
+            return await self._get_current_datetime()
+        if tool_name == "blackboard_test_api_available":
+            return await self._blackboard_test_api_available()
+        if tool_name == "blackboard_get_calendar_items":
+            return await self._blackboard_get_calendar_items()
         raise ToolExecutionError(f"Unknown tool `{tool_name}`.")
 
     async def _memory_search(self, arguments: dict[str, Any]) -> str:
@@ -313,17 +393,29 @@ class AgentToolService:
 
     async def _run_local_command(self, arguments: dict[str, Any], workspace_root: str | None) -> str:
         cwd = self._workspace_root(workspace_root)
-        command = arguments.get("command")
+        command = self._normalize_command(arguments.get("command"), cwd)
         timeout_seconds = int(arguments.get("timeout_seconds", 20))
-        if not isinstance(command, list) or not command or not all(isinstance(item, str) for item in command):
-            raise ToolExecutionError("`command` must be a non-empty string array.")
 
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=str(cwd),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        # Check if we need to use shell (for built-in commands like cd)
+        shell_builtins = {"cd", "pwd", "echo", "export", "source", "alias", "history", "fg", "bg", "jobs", "kill", "exit"}
+        use_shell = command[0] in shell_builtins
+
+        if use_shell:
+            # Use shell for built-in commands
+            cmd_str = " ".join(command) if isinstance(command, list) else command
+            process = await asyncio.create_subprocess_shell(
+                cmd_str,
+                cwd=str(cwd),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        else:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                cwd=str(cwd),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
         except asyncio.TimeoutError as exc:
@@ -339,6 +431,23 @@ class AgentToolService:
             "stderr": stderr.decode("utf-8", errors="ignore")[:12000],
         }
         return json.dumps(payload, ensure_ascii=False)
+
+    def _normalize_command(self, raw_command: Any, cwd: Path) -> list[str]:
+        if isinstance(raw_command, str):
+            command = shlex.split(raw_command)
+        elif isinstance(raw_command, list) and raw_command and all(isinstance(item, str) for item in raw_command):
+            command = list(raw_command)
+        else:
+            raise ToolExecutionError("`command` must be a non-empty string or string array.")
+
+        first = command[0]
+        candidate = cwd / first
+        if candidate.is_file():
+            if candidate.suffix == ".py":
+                return ["python3", first, *command[1:]]
+            if candidate.suffix == ".sh" and not candidate.stat().st_mode & 0o111:
+                return ["bash", first, *command[1:]]
+        return command
 
     async def _fetch_webpage(self, arguments: dict[str, Any]) -> str:
         url = str(arguments.get("url", "")).strip()
@@ -359,6 +468,58 @@ class AgentToolService:
             "content": text[:max_chars],
         }
         return json.dumps(payload, ensure_ascii=False)
+
+    async def _create_quiz(self, arguments: dict[str, Any], *, chat_session_id: str) -> str:
+        topic = str(arguments.get("topic", "")).strip()
+        if not topic:
+            raise ToolExecutionError("`topic` is required for create_quiz.")
+        quiz = await self.quiz_service.create_quiz(
+            chat_session_id=chat_session_id,
+            topic=topic,
+            question_count=int(arguments.get("question_count", 5)),
+            source_material=arguments.get("source_material"),
+            title=arguments.get("title"),
+        )
+        return json.dumps({"quiz_session": quiz.model_dump(mode="json")}, ensure_ascii=False)
+
+    async def _quiz_history_summary(self, arguments: dict[str, Any]) -> str:
+        history = await self.quiz_service.get_history_summary(limit=int(arguments.get("limit", 5)))
+        return json.dumps({"history": history.model_dump(mode="json")}, ensure_ascii=False)
+
+    async def _get_current_datetime(self) -> str:
+        datetime_info = DateTimeService().get_current_datetime()
+        return json.dumps(datetime_info.model_dump(mode="json"), ensure_ascii=False)
+
+    async def _blackboard_test_api_available(self) -> str:
+        import logging
+        logger = logging.getLogger(__name__)
+
+        from backend.services.runtime_settings import runtime_settings
+        bb_config = runtime_settings.get_blackboard_config()
+        password = runtime_settings.get_secret_blackboard_password()
+
+        logger.info(f"BB config: student_id={bb_config.student_id}, base_url={bb_config.base_url}, password={'set' if password else 'None'}")
+
+        provider = DemoBlackboardProvider(
+            student_id=bb_config.student_id,
+            password=password,
+            base_url=bb_config.base_url
+        )
+        available = await provider.test_api_available()
+        logger.info(f"BB test_api_available result: {available}")
+        return json.dumps({"available": available}, ensure_ascii=False)
+
+    async def _blackboard_get_calendar_items(self) -> str:
+        from backend.services.runtime_settings import runtime_settings
+        bb_config = runtime_settings.get_blackboard_config()
+        password = runtime_settings.get_secret_blackboard_password()
+        provider = DemoBlackboardProvider(
+            student_id=bb_config.student_id,
+            password=password,
+            base_url=bb_config.base_url
+        )
+        items = await provider.get_calendar_items()
+        return json.dumps({"items": items}, ensure_ascii=False)
 
     def _workspace_root(self, workspace_root: str | None) -> Path:
         root = Path(workspace_root or "").expanduser()
