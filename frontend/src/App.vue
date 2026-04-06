@@ -23,7 +23,7 @@
             </svg>
             <span>对话</span>
           </button>
-          <button class="tab-item">
+          <button class="tab-item" @click="quizHistoryOpen = true">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="10"/>
               <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
@@ -31,14 +31,14 @@
             </svg>
             <span>测验</span>
           </button>
-          <button class="tab-item">
+          <button class="tab-item" @click="quizHistoryOpen = true">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
               <polyline points="13 2 13 9 20 9"/>
             </svg>
             <span>文件</span>
           </button>
-          <button class="tab-item">
+          <button class="tab-item" @click="quizHistoryOpen = true">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
               <line x1="3" y1="9" x2="21" y2="9"/>
@@ -57,7 +57,15 @@
 
         <!-- Conversation List -->
         <div class="conv-section">
-          <p class="section-title">历史对话</p>
+          <div class="conv-header">
+            <p class="section-title">历史对话</p>
+            <button class="new-chat-btn" @click="createConversation" title="新建对话">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+            </button>
+          </div>
           <div class="conv-list">
             <article
               v-for="conversation in sortedConversations"
@@ -247,7 +255,6 @@
       </div>
     </section>
 
-    <!-- Overlays -->
     <div v-if="settingsOpen" class="overlay" @click.self="settingsOpen = false">
       <div class="overlay-panel">
         <SettingsPanel
@@ -805,6 +812,32 @@ body {
   margin: 0;
 }
 
+.conv-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 8px;
+}
+
+.new-chat-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent-orange);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.new-chat-btn:hover {
+  background: #EA580C;
+  transform: scale(1.05);
+}
+
 .conv-list {
   display: flex;
   flex-direction: column;
@@ -1023,23 +1056,31 @@ body {
 /* Chat Container */
 .chat-container {
   flex: 1;
-  padding: 32px 64px;
+  padding: 20px 32px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 16px;
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 /* Message Row */
 .message-row {
   display: flex;
   gap: 16px;
-  max-width: 900px;
+  max-width: 800px;
+  width: 100%;
 }
 
 .message-row.user {
   flex-direction: row-reverse;
   margin-left: auto;
+}
+
+.message-row.assistant {
+  margin-right: auto;
 }
 
 .avatar {
@@ -1063,10 +1104,12 @@ body {
 }
 
 .message-bubble {
-  padding: 20px 24px;
-  border-radius: 24px;
+  padding: 16px 20px;
+  border-radius: 20px;
   background: var(--bg-card);
   box-shadow: 0 4px 16px var(--shadow-elevated);
+  max-width: 100%;
+  width: fit-content;
 }
 
 .message-row.user .message-bubble {

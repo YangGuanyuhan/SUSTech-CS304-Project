@@ -55,5 +55,19 @@ class LLMProfileRequest(BaseModel):
     api_key: str | None = None
 
 
+class BlackboardProfileRequest(BaseModel):
+    name: str
+    student_id: str
+    base_url: str | None = None
+    password: str | None = None
+
+
 class QuizAttemptRequest(BaseModel):
     answers: list[QuizAnswerSubmission]
+
+
+class BlackboardSettingsRequest(BaseModel):
+    student_id: str | None = None
+    password: str | None = None
+    base_url: str | None = None
+    replace_password: bool = False

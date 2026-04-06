@@ -101,6 +101,78 @@
       </div>
     </form>
 
+    <!-- Blackboard Profiles -->
+    <section class="profiles">
+      <div class="profiles-header">
+        <strong>已保存的 Blackboard 配置</strong>
+        <button type="button" :disabled="saving" @click="saveBBProfile">保存当前配置</button>
+      </div>
+      <p class="hint compact">
+        保存的配置仅持久化非敏感字段：学号和 Base URL。密码加密存储。
+      </p>
+      <div v-if="bbProfiles.length" class="profile-list">
+        <article v-for="profile in bbProfiles" :key="profile.name" class="profile-item">
+          <div class="profile-info">
+            <strong>{{ profile.name }}</strong>
+            <p>{{ profile.student_id }}</p>
+            <small>{{ profile.base_url || '使用默认 Base URL' }}</small>
+          </div>
+          <div class="profile-actions">
+            <button type="button" class="apply-btn" :disabled="saving" @click="useBBProfile(profile)">应用</button>
+            <button type="button" class="delete-btn" :disabled="saving" @click="removeBBProfile(profile.name)">删除</button>
+          </div>
+        </article>
+      </div>
+      <p v-else class="hint compact">暂无保存的配置。</p>
+    </section>
+
+    <!-- Blackboard Settings -->
+    <section class="blackboard-section">
+      <div class="section-header">
+        <div class="section-title-area">
+          <p class="eyebrow">Blackboard 配置</p>
+          <h3>南方科技大学 Blackboard 登录</h3>
+        </div>
+        <div class="header-badge">
+          <span class="badge" :class="{ ready: bbState.password_configured }">
+            {{ bbState.password_configured ? '已配置' : '未配置' }}
+          </span>
+        </div>
+      </div>
+      <p class="hint">
+        输入你的校园网账号和密码，用于访问 Blackboard 课程系统。密码仅保存在服务器内存中，重启后需要重新输入。
+      </p>
+
+      <form class="bb-form" @submit.prevent="saveBlackboard">
+        <label class="full">
+          <span>配置名称</span>
+          <input v-model="bbForm.profile_name" placeholder="例如: bb-main" autocomplete="off" />
+        </label>
+        <label class="full">
+          <span>学号</span>
+          <input v-model="bbForm.student_id" placeholder="你的学号" autocomplete="off" />
+        </label>
+        <label class="full">
+          <span>CAS 密码</span>
+          <input
+            v-model="bbForm.password"
+            type="password"
+            placeholder="留空以保持当前密码"
+            autocomplete="new-password"
+          />
+        </label>
+        <label class="full">
+          <span>Base URL（可选）</span>
+          <input v-model="bbForm.base_url" placeholder="https://bb.sustech.edu.cn" autocomplete="off" />
+        </label>
+        <div class="actions full">
+          <button type="button" class="secondary" :disabled="saving" @click="refreshBlackboard">刷新</button>
+          <button type="button" class="secondary" :disabled="saving" @click="testBlackboard">测试连接</button>
+          <button type="submit" :disabled="saving">{{ saving ? '保存中...' : '保存配置' }}</button>
+        </div>
+      </form>
+    </section>
+
     <p class="result" :class="{ error: messageType === 'error' }">{{ message }}</p>
   </section>
 </template>
@@ -108,12 +180,19 @@
 <script setup>
 import { onMounted, reactive, ref } from "vue";
 import {
+  applyBBProfile,
   applyLLMProfile,
+  deleteBBProfile,
   deleteLLMProfile,
+  getBBProfiles,
+  getBlackboardSettings,
   getLLMProfiles,
   getLLMSettings,
+  saveBBProfile as saveBBProfileAPI,
   saveLLMProfile,
+  testBlackboardSettings,
   testLLMSettings,
+  updateBlackboardSettings,
   updateLLMSettings
 } from "../api/client";
 
@@ -125,18 +204,39 @@ const saving = ref(false);
 const message = ref("加载或更新运行时 LLM 配置。");
 const messageType = ref("info");
 const profiles = ref([]);
+const bbProfiles = ref([]);
+
+// LLM State
 const state = reactive({
   provider: "openai",
   model: "gpt-4o-mini",
   base_url: "",
   api_key_configured: false
 });
+
+// Blackboard State
+const bbState = reactive({
+  student_id: "",
+  base_url: "",
+  password_configured: false
+});
+
+// LLM Form
 const form = reactive({
   profile_name: "",
   provider: "openai",
   model: "gpt-4o-mini",
   base_url: "",
   api_key: ""
+});
+
+// Blackboard Form
+const bbForm = reactive({
+  profile_name: "",
+  student_id: "",
+  password: "",
+  base_url: "",
+  replace_password: false
 });
 
 function applyState(payload) {
@@ -148,6 +248,75 @@ function applyState(payload) {
   form.model = payload.model;
   form.base_url = payload.base_url ?? "";
   form.api_key = "";
+}
+
+function applyBBState(payload) {
+  bbState.student_id = payload.student_id ?? "";
+  bbState.base_url = payload.base_url ?? "";
+  bbState.password_configured = Boolean(payload.password_configured);
+  bbForm.student_id = payload.student_id ?? "";
+  bbForm.base_url = payload.base_url ?? "";
+  bbForm.password = "";
+  bbForm.replace_password = false;
+}
+
+async function refreshBlackboard() {
+  saving.value = true;
+  try {
+    const response = await getBlackboardSettings();
+    applyBBState(response.data);
+    message.value = "Blackboard 配置已加载。";
+    messageType.value = "info";
+  } catch (error) {
+    message.value = `加载 Blackboard 配置失败: ${error.message}`;
+    messageType.value = "error";
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function saveBlackboard() {
+  saving.value = true;
+  try {
+    const response = await updateBlackboardSettings({
+      student_id: bbForm.student_id,
+      password: bbForm.password || null,
+      base_url: bbForm.base_url || null,
+      replace_password: bbForm.replace_password
+    });
+    applyBBState(response.data);
+    message.value = "Blackboard 配置已保存。密码仅存储在服务器内存中。";
+    messageType.value = "info";
+  } catch (error) {
+    message.value = `保存失败: ${error.message}`;
+    messageType.value = "error";
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function testBlackboard() {
+  saving.value = true;
+  try {
+    const response = await testBlackboardSettings({
+      student_id: bbForm.student_id,
+      password: bbForm.password || null,
+      base_url: bbForm.base_url || null,
+      replace_password: bbForm.replace_password
+    });
+    if (response.success) {
+      message.value = "Blackboard 连接测试成功！";
+      messageType.value = "info";
+    } else {
+      message.value = `连接测试失败: ${response.data?.error || "未知错误"}`;
+      messageType.value = "error";
+    }
+  } catch (error) {
+    message.value = `测试失败: ${error.message}`;
+    messageType.value = "error";
+  } finally {
+    saving.value = false;
+  }
 }
 
 function applyProfile(profile) {
@@ -241,6 +410,74 @@ async function removeProfile(name) {
   }
 }
 
+async function refreshBBProfiles() {
+  const response = await getBBProfiles();
+  bbProfiles.value = response.data ?? [];
+}
+
+async function useBBProfile(profile) {
+  saving.value = true;
+  try {
+    bbForm.profile_name = profile.name;
+    bbForm.student_id = profile.student_id;
+    bbForm.base_url = profile.base_url ?? "";
+    bbForm.password = "";
+    const response = await applyBBProfile(profile.name);
+    applyBBState(response.data);
+    message.value = `配置 "${profile.name}" 已应用到运行时。`;
+    messageType.value = "info";
+  } catch (error) {
+    message.value = `应用失败: ${error.message}`;
+    messageType.value = "error";
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function saveBBProfile() {
+  if (!bbForm.profile_name.trim()) {
+    message.value = "请输入配置名称后再保存。";
+    messageType.value = "error";
+    return;
+  }
+
+  saving.value = true;
+  try {
+    await saveBBProfileAPI({
+      name: bbForm.profile_name.trim(),
+      student_id: bbForm.student_id,
+      base_url: bbForm.base_url || null,
+      password: bbForm.password || null
+    });
+    await refreshBBProfiles();
+    message.value = `Blackboard 配置 "${bbForm.profile_name.trim()}" 已保存。${bbForm.password ? '密码已加密保存。' : '密码未更改。'}`;
+    messageType.value = "info";
+  } catch (error) {
+    message.value = `保存配置失败: ${error.message}`;
+    messageType.value = "error";
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function removeBBProfile(name) {
+  saving.value = true;
+  try {
+    await deleteBBProfile(name);
+    await refreshBBProfiles();
+    message.value = `配置 "${name}" 已删除。`;
+    messageType.value = "info";
+    if (bbForm.profile_name === name) {
+      bbForm.profile_name = "";
+    }
+  } catch (error) {
+    message.value = `删除失败: ${error.message}`;
+    messageType.value = "error";
+  } finally {
+    saving.value = false;
+  }
+}
+
 async function save() {
   saving.value = true;
   try {
@@ -283,6 +520,8 @@ async function testConnection() {
 
 onMounted(() => {
   refresh();
+  refreshBlackboard();
+  refreshBBProfiles();
 });
 </script>
 
@@ -577,6 +816,60 @@ input:focus, select:focus {
 .delete-btn:hover {
   background: #dc2626;
   color: white;
+}
+
+/* Blackboard Section */
+.blackboard-section {
+  margin: 24px 0 0;
+  padding: 24px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(31, 111, 120, 0.06), rgba(249, 115, 22, 0.06));
+  border: 1px solid var(--border-light);
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.section-title-area h3 {
+  margin: 4px 0 0;
+  font-family: var(--font-heading);
+  font-size: 18px;
+  color: var(--text-primary);
+}
+
+.header-badge {
+  display: flex;
+  align-items: center;
+}
+
+.blackboard-section .hint {
+  margin: 0 0 20px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.bb-form {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+.blackboard-section .badge {
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.blackboard-section .badge.ready {
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
 }
 
 .result {

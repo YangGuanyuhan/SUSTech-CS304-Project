@@ -75,6 +75,57 @@ export async function getCourses() {
   return parseJson(response);
 }
 
+export async function getBlackboardSettings() {
+  const response = await fetch(`${API_BASE}/settings/blackboard`);
+  return parseJson(response);
+}
+
+export async function updateBlackboardSettings(payload) {
+  const response = await fetch(`${API_BASE}/settings/blackboard`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function testBlackboardSettings(payload) {
+  const response = await fetch(`${API_BASE}/settings/blackboard/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function getBBProfiles() {
+  const response = await fetch(`${API_BASE}/settings/blackboard/profiles`);
+  return parseJson(response);
+}
+
+export async function saveBBProfile(payload) {
+  const response = await fetch(`${API_BASE}/settings/blackboard/profiles`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function deleteBBProfile(name) {
+  const response = await fetch(`${API_BASE}/settings/blackboard/profiles/${encodeURIComponent(name)}`, {
+    method: "DELETE"
+  });
+  return parseJson(response);
+}
+
+export async function applyBBProfile(name) {
+  const response = await fetch(`${API_BASE}/settings/blackboard/profiles/${encodeURIComponent(name)}/apply`, {
+    method: "POST"
+  });
+  return parseJson(response);
+}
+
 export async function getDatabaseOverview() {
   const response = await fetch(`${API_BASE}/database/overview`);
   return parseJson(response);
