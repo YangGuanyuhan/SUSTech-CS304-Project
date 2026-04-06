@@ -1,95 +1,103 @@
 <template>
-  <section class="settings-card">
-    <header>
-      <div>
-        <p class="eyebrow">Runtime Settings</p>
-        <h2>LLM Backend</h2>
+  <section class="settings-panel">
+    <header class="settings-header">
+      <div class="header-title">
+        <p class="eyebrow">运行设置</p>
+        <h2>LLM 后端配置</h2>
       </div>
       <div class="header-actions">
         <span class="badge" :class="{ ready: state.api_key_configured }">
-          {{ state.api_key_configured ? "Key loaded" : "Key missing" }}
+          {{ state.api_key_configured ? '已加载密钥' : '缺少密钥' }}
         </span>
-        <button type="button" class="close-btn" @click="$emit('close')">Close</button>
+        <button type="button" class="close-btn" @click="$emit('close')">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+          关闭
+        </button>
       </div>
     </header>
 
     <p class="hint">
-      API key is sent only to the backend and stored in server memory for this process. It is never
-      returned to the browser and disappears after restart.
+      API 密钥仅发送到后端并存储在服务器内存中。不会返回给浏览器，重启后消失。
     </p>
 
+    <!-- Saved Profiles -->
     <section class="profiles">
       <div class="profiles-header">
-        <strong>Saved API Profiles</strong>
-        <button type="button" :disabled="saving" @click="saveProfile">Save Current Profile</button>
+        <strong>已保存的配置</strong>
+        <button type="button" :disabled="saving" @click="saveProfile">保存当前配置</button>
       </div>
       <p class="hint compact">
-        Saved profiles persist only non-secret fields: provider, model, and base URL. API key is not
-        stored, so you still decide when to inject a secret into the running backend.
+        保存的配置仅持久化非敏感字段：提供商、模型和 Base URL。API 密钥不会存储。
       </p>
       <div v-if="profiles.length" class="profile-list">
         <article v-for="profile in profiles" :key="profile.name" class="profile-item">
-          <div>
+          <div class="profile-info">
             <strong>{{ profile.name }}</strong>
             <p>{{ profile.provider }} / {{ profile.model }}</p>
-            <small>{{ profile.base_url || "OpenAI default base URL" }}</small>
-            <small>{{ profile.api_key_configured ? "Encrypted key saved locally" : "No saved key" }}</small>
+            <small>{{ profile.base_url || '使用默认 Base URL' }}</small>
           </div>
           <div class="profile-actions">
-            <button type="button" :disabled="saving" @click="useProfile(profile)">Apply</button>
-            <button type="button" :disabled="saving" @click="removeProfile(profile.name)">Delete</button>
+            <button type="button" class="apply-btn" :disabled="saving" @click="useProfile(profile)">应用</button>
+            <button type="button" class="delete-btn" :disabled="saving" @click="removeProfile(profile.name)">删除</button>
           </div>
         </article>
       </div>
-      <p v-else class="hint compact">No saved profiles yet.</p>
+      <p v-else class="hint compact">暂无保存的配置。</p>
     </section>
 
+    <!-- Developer Tools -->
     <section v-if="showDeveloperTools" class="developer-tools">
       <div class="developer-header">
         <div>
-          <p class="eyebrow compact-eyebrow">Developer / Debug</p>
-          <strong>Internal Inspection Tools</strong>
+          <p class="eyebrow compact-eyebrow">开发者工具</p>
+          <strong>内部调试面板</strong>
         </div>
-        <button type="button" :disabled="saving" @click="$emit('open-database-overview')">Open Database View</button>
+        <button type="button" :disabled="saving" @click="$emit('open-database-overview')">打开数据库视图</button>
       </div>
       <p class="hint compact">
-        This panel is meant for local debugging and coursework demos, not normal end-user workflows.
-      </p>
-      <p class="hint compact">
-        Backend endpoint: <code>/api/database/overview</code>
+        此面板用于本地调试和课程演示，不适用于常规最终用户工作流程。
       </p>
     </section>
 
-    <form class="grid" @submit.prevent="save">
+    <!-- Form -->
+    <form class="config-form" @submit.prevent="save">
       <label class="full">
-        <span>Profile Name</span>
-        <input v-model="form.profile_name" placeholder="e.g. openai-main or deepseek-gateway" autocomplete="off" />
+        <span>配置名称</span>
+        <input v-model="form.profile_name" placeholder="例如: openai-main 或 deepseek-gateway" autocomplete="off" />
       </label>
       <label>
-        <span>Provider</span>
-        <input v-model="form.provider" autocomplete="off" />
+        <span>提供商</span>
+        <select v-model="form.provider">
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="deepseek">DeepSeek</option>
+          <option value="azure">Azure OpenAI</option>
+        </select>
       </label>
       <label>
-        <span>Model</span>
-        <input v-model="form.model" autocomplete="off" />
+        <span>模型</span>
+        <input v-model="form.model" placeholder="例如: gpt-4o-mini" autocomplete="off" />
       </label>
       <label class="full">
         <span>Base URL</span>
         <input v-model="form.base_url" placeholder="https://api.openai.com/v1" autocomplete="off" />
       </label>
       <label class="full">
-        <span>API Key</span>
+        <span>API 密钥</span>
         <input
           v-model="form.api_key"
           type="password"
-          placeholder="Leave blank to keep current key"
+          placeholder="留空以保持当前密钥"
           autocomplete="new-password"
         />
       </label>
       <div class="actions full">
-        <button type="button" :disabled="saving" @click="refresh">Refresh</button>
-        <button type="button" :disabled="saving" @click="testConnection">Test Connection</button>
-        <button type="submit" :disabled="saving">{{ saving ? "Saving..." : "Save Runtime Config" }}</button>
+        <button type="button" class="secondary" :disabled="saving" @click="refresh">刷新</button>
+        <button type="button" class="secondary" :disabled="saving" @click="testConnection">测试连接</button>
+        <button type="submit" :disabled="saving">{{ saving ? '保存中...' : '保存配置' }}</button>
       </div>
     </form>
 
@@ -114,7 +122,7 @@ defineEmits(["close", "open-database-overview"]);
 const showDeveloperTools = import.meta.env.DEV;
 
 const saving = ref(false);
-const message = ref("Load or update the runtime LLM config.");
+const message = ref("加载或更新运行时 LLM 配置。");
 const messageType = ref("info");
 const profiles = ref([]);
 const state = reactive({
@@ -147,7 +155,7 @@ function applyProfile(profile) {
   form.provider = profile.provider;
   form.model = profile.model;
   form.base_url = profile.base_url ?? "";
-  message.value = `Loaded profile "${profile.name}". API key still needs to be set for this runtime if not already present.`;
+  message.value = `已加载配置 "${profile.name}"。如未设置密钥，请为此运行时设置 API 密钥。`;
   messageType.value = "info";
 }
 
@@ -157,10 +165,10 @@ async function useProfile(profile) {
     applyProfile(profile);
     const response = await applyLLMProfile(profile.name);
     applyState(response.data);
-    message.value = `Profile "${profile.name}" applied to the runtime configuration.`;
+    message.value = `配置 "${profile.name}" 已应用到运行时。`;
     messageType.value = "info";
   } catch (error) {
-    message.value = `Apply failed: ${error.message}`;
+    message.value = `应用失败: ${error.message}`;
     messageType.value = "error";
   } finally {
     saving.value = false;
@@ -178,10 +186,10 @@ async function refresh() {
     const [settingsResponse] = await Promise.all([getLLMSettings(), refreshProfiles()]);
     const response = settingsResponse;
     applyState(response.data);
-    message.value = "Runtime config loaded from backend.";
+    message.value = "已从后端加载运行时配置。";
     messageType.value = "info";
   } catch (error) {
-    message.value = `Failed to load runtime config: ${error.message}`;
+    message.value = `加载运行时配置失败: ${error.message}`;
     messageType.value = "error";
   } finally {
     saving.value = false;
@@ -190,7 +198,7 @@ async function refresh() {
 
 async function saveProfile() {
   if (!form.profile_name.trim()) {
-    message.value = "Please enter a profile name before saving.";
+    message.value = "请输入配置名称后再保存。";
     messageType.value = "error";
     return;
   }
@@ -205,10 +213,10 @@ async function saveProfile() {
       api_key: form.api_key || null
     });
     await refreshProfiles();
-    message.value = `Profile "${form.profile_name.trim()}" saved. ${form.api_key ? "API key was encrypted and saved locally." : "API key was not changed."}`;
+    message.value = `配置 "${form.profile_name.trim()}" 已保存。${form.api_key ? 'API 密钥已加密保存。' : 'API 密钥未更改。'}`;
     messageType.value = "info";
   } catch (error) {
-    message.value = `Profile save failed: ${error.message}`;
+    message.value = `保存配置失败: ${error.message}`;
     messageType.value = "error";
   } finally {
     saving.value = false;
@@ -220,13 +228,13 @@ async function removeProfile(name) {
   try {
     await deleteLLMProfile(name);
     await refreshProfiles();
-    message.value = `Profile "${name}" deleted.`;
+    message.value = `配置 "${name}" 已删除。`;
     messageType.value = "info";
     if (form.profile_name === name) {
       form.profile_name = "";
     }
   } catch (error) {
-    message.value = `Delete failed: ${error.message}`;
+    message.value = `删除失败: ${error.message}`;
     messageType.value = "error";
   } finally {
     saving.value = false;
@@ -243,10 +251,10 @@ async function save() {
       api_key: form.api_key || null
     });
     applyState(response.data);
-    message.value = "Runtime config saved. API key remains server-side only.";
+    message.value = "运行时配置已保存。API 密钥仅保留在服务器端。";
     messageType.value = "info";
   } catch (error) {
-    message.value = `Save failed: ${error.message}`;
+    message.value = `保存失败: ${error.message}`;
     messageType.value = "error";
   } finally {
     saving.value = false;
@@ -263,10 +271,10 @@ async function testConnection() {
       api_key: form.api_key || null
     });
     const result = response.data;
-    message.value = `Connection ok in ${result.latency_ms} ms. Preview: ${result.preview}`;
+    message.value = `连接正常，耗时 ${result.latency_ms}ms。预览: ${result.preview}`;
     messageType.value = "info";
   } catch (error) {
-    message.value = `Connection test failed: ${error.message}`;
+    message.value = `连接测试失败: ${error.message}`;
     messageType.value = "error";
   } finally {
     saving.value = false;
@@ -279,21 +287,29 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.settings-card {
-  max-width: 960px;
-  margin: 0 auto 24px;
-  padding: 24px;
+.settings-panel {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 28px;
   border-radius: 28px;
-  background: rgba(255, 255, 255, 0.72);
-  box-shadow: 0 20px 50px rgba(28, 36, 48, 0.08);
-  backdrop-filter: blur(12px);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 20px 50px rgba(28, 36, 48, 0.12);
+  backdrop-filter: blur(20px);
 }
 
-header {
+.settings-header {
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  align-items: start;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.header-title h2 {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 24px;
+  color: var(--text-primary);
 }
 
 .header-actions {
@@ -302,56 +318,108 @@ header {
   align-items: center;
 }
 
-h2 {
-  margin: 0;
-  font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
-}
-
 .eyebrow {
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
-  font-size: 0.78rem;
-  color: var(--accent);
+  letter-spacing: 0.12em;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-orange);
 }
 
 .badge {
-  padding: 8px 12px;
+  padding: 6px 14px;
   border-radius: 999px;
-  background: rgba(201, 61, 74, 0.14);
-  color: #9b2833;
-  font-weight: 700;
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .badge.ready {
-  background: rgba(31, 111, 120, 0.14);
-  color: #1f6f78;
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
 }
 
 .hint {
-  color: var(--muted);
-  max-width: 70ch;
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 0 0 20px;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-
+/* Profiles Section */
 .profiles {
-  margin: 16px 0 22px;
-  padding: 18px;
-  border-radius: 22px;
-  background: rgba(28, 36, 48, 0.05);
+  margin: 0 0 24px;
+  padding: 20px;
+  border-radius: 20px;
+  background: var(--bg-main);
 }
 
+.profiles-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.profiles-header strong {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.profile-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.profile-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: white;
+  border: 1px solid var(--border-light);
+}
+
+.profile-info strong {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.profile-info p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.profile-info small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.profile-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.compact {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+/* Developer Tools */
 .developer-tools {
-  margin: 0 0 22px;
+  margin: 0 0 24px;
   padding: 18px;
-  border-radius: 22px;
-  background: rgba(31, 111, 120, 0.08);
-  border: 1px dashed rgba(31, 111, 120, 0.28);
+  border-radius: 20px;
+  background: rgba(31, 111, 120, 0.06);
+  border: 1px dashed rgba(31, 111, 120, 0.24);
 }
 
 .developer-header {
@@ -365,42 +433,11 @@ h2 {
   margin-bottom: 4px;
 }
 
-.profiles-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: center;
-}
-
-.profile-list {
+/* Form */
+.config-form {
   display: grid;
-  gap: 12px;
-  margin-top: 12px;
-}
-
-.profile-item {
-  display: flex;
-  justify-content: space-between;
+  grid-template-columns: 1fr 1fr;
   gap: 16px;
-  align-items: center;
-  padding: 14px 16px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.88);
-}
-
-.profile-item p,
-.profile-item small {
-  margin: 4px 0 0;
-  display: block;
-}
-
-.profile-actions {
-  display: flex;
-  gap: 10px;
-}
-
-.compact {
-  margin: 8px 0 0;
 }
 
 label {
@@ -409,17 +446,28 @@ label {
 }
 
 label span {
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
-input {
+input, select {
   box-sizing: border-box;
   width: 100%;
   padding: 14px 16px;
-  border-radius: 18px;
-  border: 1px solid rgba(28, 36, 48, 0.14);
-  background: rgba(255, 255, 255, 0.9);
-  font: inherit;
+  border-radius: 14px;
+  border: 1px solid var(--border-light);
+  background: white;
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+input:focus, select:focus {
+  outline: none;
+  border-color: var(--accent-orange);
+  box-shadow: 0 0 0 4px var(--accent-orange-subtle);
 }
 
 .full {
@@ -430,38 +478,134 @@ input {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+  margin-top: 8px;
 }
 
-button {
-  border: 0;
+.actions button {
+  padding: 12px 20px;
+  border: none;
   border-radius: 999px;
-  padding: 12px 18px;
-  background: var(--accent);
-  color: white;
-  font-weight: 700;
+  font-weight: 600;
+  font-size: 13px;
   cursor: pointer;
+  transition: all 0.2s ease;
 }
 
-button[type="button"] {
-  background: rgba(28, 36, 48, 0.78);
+.actions button[type="submit"] {
+  background: var(--accent-orange);
+  color: white;
+}
+
+.actions button[type="submit"]:hover {
+  background: #EA580C;
+}
+
+.actions button.secondary {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.actions button.secondary:hover {
+  background: var(--border-subtle);
+}
+
+.actions button:disabled {
+  opacity: 0.6;
+  cursor: wait;
 }
 
 .close-btn {
-  background: rgba(28, 36, 48, 0.92);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(28, 36, 48, 0.08);
+  color: var(--text-primary);
+  font-weight: 500;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.close-btn:hover {
+  background: rgba(28, 36, 48, 0.12);
+}
+
+.profiles button[type="button"] {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent-orange);
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.profiles button[type="button"]:hover {
+  background: #EA580C;
+}
+
+.profile-item button {
+  padding: 8px 14px;
+  border: none;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.apply-btn {
+  background: var(--accent-orange-subtle);
+  color: var(--accent-orange);
+}
+
+.apply-btn:hover {
+  background: var(--accent-orange);
+  color: white;
+}
+
+.delete-btn {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+}
+
+.delete-btn:hover {
+  background: #dc2626;
+  color: white;
 }
 
 .result {
-  margin: 16px 0 0;
-  color: #1f6f78;
+  margin: 20px 0 0;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(34, 197, 94, 0.1);
+  color: #16a34a;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .result.error {
-  color: #9b2833;
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
 }
 
 @media (max-width: 700px) {
-  .grid {
+  .config-form {
     grid-template-columns: 1fr;
+  }
+
+  .settings-header {
+    flex-direction: column;
+  }
+
+  .header-actions {
+    width: 100%;
+    justify-content: flex-end;
   }
 }
 </style>
