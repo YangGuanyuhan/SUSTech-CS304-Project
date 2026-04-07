@@ -491,12 +491,33 @@ class AgentToolService:
         return json.dumps(datetime_info.model_dump(mode="json"), ensure_ascii=False)
 
     async def _blackboard_test_api_available(self) -> str:
-        provider = DemoBlackboardProvider()
+        import logging
+        logger = logging.getLogger(__name__)
+
+        from backend.services.runtime_settings import runtime_settings
+        bb_config = runtime_settings.get_blackboard_config()
+        password = runtime_settings.get_secret_blackboard_password()
+
+        logger.info(f"BB config: student_id={bb_config.student_id}, base_url={bb_config.base_url}, password={'set' if password else 'None'}")
+
+        provider = DemoBlackboardProvider(
+            student_id=bb_config.student_id,
+            password=password,
+            base_url=bb_config.base_url
+        )
         available = await provider.test_api_available()
+        logger.info(f"BB test_api_available result: {available}")
         return json.dumps({"available": available}, ensure_ascii=False)
 
     async def _blackboard_get_calendar_items(self) -> str:
-        provider = DemoBlackboardProvider()
+        from backend.services.runtime_settings import runtime_settings
+        bb_config = runtime_settings.get_blackboard_config()
+        password = runtime_settings.get_secret_blackboard_password()
+        provider = DemoBlackboardProvider(
+            student_id=bb_config.student_id,
+            password=password,
+            base_url=bb_config.base_url
+        )
         items = await provider.get_calendar_items()
         return json.dumps({"items": items}, ensure_ascii=False)
 

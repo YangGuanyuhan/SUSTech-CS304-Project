@@ -2,59 +2,123 @@
   <section class="history-panel">
     <header class="history-header">
       <div>
-        <p class="eyebrow">Quiz History</p>
-        <h2>Practice Review</h2>
-        <p>Recent attempts, weak areas, and personalized study analysis.</p>
+        <p class="eyebrow">测验历史</p>
+        <h2>练习回顾</h2>
+        <p>最近的尝试、薄弱环节和个性化学习分析。</p>
       </div>
       <div class="history-actions">
-        <button :disabled="loading" @click="refreshHistory">
-          {{ loading ? "Loading..." : "Refresh" }}
+        <button class="refresh-btn" :disabled="loading" @click="refreshHistory">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M23 4v6h-6"/>
+            <path d="M1 20v-6h6"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+          {{ loading ? '加载中...' : '刷新' }}
         </button>
-        <button class="secondary" @click="$emit('close')">Close</button>
+        <button class="close-btn" @click="$emit('close')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+          关闭
+        </button>
       </div>
     </header>
 
-    <section v-if="error" class="history-empty">
-      <strong>Failed to load quiz history</strong>
-      <p>{{ error }}</p>
+    <!-- Error State -->
+    <section v-if="error" class="history-empty error">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="8" x2="12" y2="12"/>
+        <line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+      <div>
+        <strong>加载测验历史失败</strong>
+        <p>{{ error }}</p>
+      </div>
     </section>
 
+    <!-- Empty State -->
     <section v-else-if="!history || history.total_attempts === 0" class="history-empty">
-      <strong>No quiz attempts yet</strong>
-      <p>Generate a quiz in chat and submit at least one attempt to build a practice history.</p>
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+      <strong>暂无测验记录</strong>
+      <p>在聊天中生成测验并提交至少一次，以建立练习历史。</p>
     </section>
 
+    <!-- History Content -->
     <template v-else>
+      <!-- Summary Cards -->
       <section class="history-summary">
         <article class="summary-card">
-          <span>Total Attempts</span>
-          <strong>{{ history.total_attempts }}</strong>
+          <div class="summary-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 20V10"/>
+              <path d="M18 20V4"/>
+              <path d="M6 20v-4"/>
+            </svg>
+          </div>
+          <div class="summary-content">
+            <span>总尝试次数</span>
+            <strong>{{ history.total_attempts }}</strong>
+          </div>
         </article>
         <article class="summary-card">
-          <span>Average Score</span>
-          <strong>{{ history.average_score }}%</strong>
+          <div class="summary-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+              <polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+          </div>
+          <div class="summary-content">
+            <span>平均分数</span>
+            <strong>{{ history.average_score }}%</strong>
+          </div>
         </article>
-        <article class="summary-card summary-analysis">
-          <span>Personalized Analysis</span>
-          <p>{{ history.personalized_analysis }}</p>
+        <article class="summary-card analysis">
+          <div class="summary-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+              <line x1="12" y1="22.08" x2="12" y2="12"/>
+            </svg>
+          </div>
+          <div class="summary-content">
+            <span>个性化分析</span>
+            <p>{{ history.personalized_analysis }}</p>
+          </div>
         </article>
       </section>
 
+      <!-- Attempt List -->
       <section class="attempt-list">
+        <h3 class="list-title">最近尝试</h3>
         <article v-for="attempt in history.attempts" :key="attempt.attempt_id" class="attempt-card">
           <div class="attempt-head">
-            <div>
+            <div class="attempt-info">
               <strong>{{ attempt.title }}</strong>
               <p>{{ attempt.topic }}</p>
             </div>
             <div class="attempt-score">
-              <span>{{ attempt.score }} / {{ attempt.total_points }}</span>
+              <span class="score-value">{{ attempt.score }}</span>
+              <span class="score-divider">/</span>
+              <span class="score-total">{{ attempt.total_points }}</span>
               <small>{{ formatTime(attempt.submitted_at) }}</small>
             </div>
           </div>
 
           <div v-if="attempt.weak_areas?.length" class="weak-area-list">
-            <span>Weak areas</span>
+            <span class="weak-label">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+              薄弱环节
+            </span>
             <ul>
               <li v-for="(item, index) in attempt.weak_areas" :key="`${attempt.attempt_id}-${index}`">
                 {{ item }}
@@ -107,23 +171,33 @@ onMounted(() => {
 <style scoped>
 .history-panel {
   display: grid;
-  gap: 20px;
+  gap: 24px;
   padding: 28px;
   border-radius: 28px;
   background: rgba(255, 255, 255, 0.96);
   box-shadow: 0 24px 60px rgba(28, 36, 48, 0.18);
+  max-width: 900px;
+  margin: 0 auto;
 }
 
 .history-header {
   display: flex;
   justify-content: space-between;
   gap: 18px;
-  align-items: start;
+  align-items: flex-start;
 }
 
-.history-header h2,
+.history-header h2 {
+  margin: 4px 0 4px;
+  font-family: var(--font-heading);
+  font-size: 24px;
+  color: var(--text-primary);
+}
+
 .history-header p {
   margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
 }
 
 .history-actions {
@@ -131,53 +205,106 @@ onMounted(() => {
   gap: 10px;
 }
 
-.history-actions button {
+.refresh-btn, .close-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   border: 0;
   border-radius: 999px;
-  padding: 10px 16px;
-  background: var(--accent);
-  color: white;
-  font-weight: 700;
+  padding: 10px 18px;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
+  transition: all 0.2s ease;
 }
 
-.history-actions button.secondary {
-  background: rgba(28, 36, 48, 0.12);
-  color: var(--ink);
+.refresh-btn {
+  background: var(--accent-orange);
+  color: white;
 }
 
+.refresh-btn:hover {
+  background: #EA580C;
+}
+
+.refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.close-btn {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.close-btn:hover {
+  background: var(--border-subtle);
+}
+
+/* Summary Cards */
 .history-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
 }
 
 .summary-card {
-  display: grid;
-  gap: 8px;
-  padding: 18px;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 20px;
   border-radius: 20px;
-  background: rgba(31, 111, 120, 0.08);
+  background: var(--bg-main);
 }
 
-.summary-card span {
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-
-.summary-card strong {
-  font-size: 1.6rem;
-}
-
-.summary-analysis {
+.summary-card.analysis {
   grid-column: span 1;
 }
 
-.summary-analysis p {
-  margin: 0;
-  line-height: 1.6;
+.summary-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: var(--accent-orange-subtle);
+  color: var(--accent-orange);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.summary-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.summary-content span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.summary-content strong {
+  font-size: 1.8rem;
+  font-family: var(--font-heading);
+  color: var(--text-primary);
+}
+
+.summary-content p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* Attempt List */
+.list-title {
+  margin: 0 0 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .attempt-list {
@@ -187,69 +314,145 @@ onMounted(() => {
 
 .attempt-card {
   display: grid;
-  gap: 12px;
-  padding: 18px;
-  border-radius: 20px;
-  background: rgba(243, 239, 229, 0.78);
+  gap: 14px;
+  padding: 20px;
+  border-radius: 18px;
+  background: white;
+  border: 1px solid var(--border-light);
 }
 
 .attempt-head {
   display: flex;
   justify-content: space-between;
-  gap: 14px;
-  align-items: start;
+  gap: 16px;
+  align-items: flex-start;
 }
 
-.attempt-head strong,
-.attempt-head p {
+.attempt-info strong {
+  display: block;
+  font-size: 15px;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.attempt-info p {
   margin: 0;
-}
-
-.attempt-head p {
-  color: var(--muted);
+  font-size: 13px;
+  color: var(--text-muted);
 }
 
 .attempt-score {
-  display: grid;
-  justify-items: end;
+  display: flex;
+  align-items: baseline;
   gap: 4px;
+  text-align: right;
 }
 
-.attempt-score span {
+.score-value {
+  font-size: 1.5rem;
+  font-family: var(--font-heading);
   font-weight: 700;
+  color: var(--accent-orange);
+}
+
+.score-divider {
+  font-size: 1rem;
+  color: var(--text-muted);
+}
+
+.score-total {
+  font-size: 1rem;
+  color: var(--text-muted);
 }
 
 .attempt-score small {
-  color: var(--muted);
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
+/* Weak Areas */
 .weak-area-list {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-light);
 }
 
-.weak-area-list span {
-  font-size: 0.82rem;
-  font-weight: 700;
-  color: var(--muted);
+.weak-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #d97706;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .weak-area-list ul {
-  margin: 0;
-  padding-left: 20px;
-}
-
-.history-empty {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  padding: 20px;
-  border-radius: 20px;
-  background: rgba(243, 239, 229, 0.72);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.history-empty p,
+.weak-area-list li {
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(217, 119, 6, 0.1);
+  font-size: 12px;
+  color: #b45309;
+}
+
+/* Empty State */
+.history-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 48px;
+  border-radius: 20px;
+  background: var(--bg-main);
+  text-align: center;
+}
+
+.history-empty svg {
+  color: var(--text-muted);
+}
+
 .history-empty strong {
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+.history-empty p {
   margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 320px;
+}
+
+.history-empty.error {
+  flex-direction: row;
+  justify-content: flex-start;
+  padding: 20px;
+  background: rgba(239, 68, 68, 0.08);
+  text-align: left;
+}
+
+.history-empty.error svg {
+  color: #dc2626;
+  flex-shrink: 0;
+}
+
+.history-empty.error strong {
+  color: #dc2626;
 }
 
 @media (max-width: 820px) {
@@ -257,13 +460,20 @@ onMounted(() => {
     grid-template-columns: 1fr;
   }
 
-  .history-header,
+  .history-header {
+    flex-direction: column;
+  }
+
+  .history-actions {
+    width: 100%;
+  }
+
   .attempt-head {
     flex-direction: column;
   }
 
   .attempt-score {
-    justify-items: start;
+    text-align: left;
   }
 }
 </style>

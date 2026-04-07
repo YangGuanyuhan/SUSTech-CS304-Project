@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from backend.agent.core import StudentProductivityAgent
 from backend.api.schemas import (
+    BlackboardProfileRequest,
+    BlackboardSettingsRequest,
     ChatApprovalRequest,
     ChatRequest,
     EmailConfirmRequest,
@@ -22,7 +24,7 @@ from backend.api.schemas import (
 )
 from backend.db.database import get_db_session
 from backend.models.common import ApiResponse
-from backend.models.settings import LLMProfile
+from backend.models.settings import BlackboardProfile, LLMProfile
 from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
 from backend.services.approval_service import approval_service
 from backend.services.database_insights_service import DatabaseInsightsService
@@ -30,7 +32,7 @@ from backend.services.email_service import EmailService, UnconfirmedSendError
 from backend.services.llm_service import LLMConnectionError, LLMService
 from backend.services.memory_service import MemoryService
 from backend.services.quiz_service import QuizService
-from backend.services.runtime_settings import RuntimeLLMUpdate, runtime_settings
+from backend.services.runtime_settings import RuntimeBlackboardUpdate, RuntimeLLMUpdate, runtime_settings
 from backend.services.settings_service import SettingsService
 
 
@@ -165,6 +167,102 @@ async def apply_llm_profile(name: str, session: Session = Depends(get_db_session
     if profile is None:
         raise HTTPException(status_code=404, detail="Profile not found")
     return ApiResponse(success=True, data=profile)
+
+
+# Blackboard Profile Settings
+@router.get("/settings/blackboard/profiles", response_model=ApiResponse[object])
+async def list_bb_profiles(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    profiles = await SettingsService(session).list_bb_profiles()
+    return ApiResponse(success=True, data=profiles)
+
+
+@router.put("/settings/blackboard/profiles", response_model=ApiResponse[object])
+async def save_bb_profile(
+    request: BlackboardProfileRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    profile = await SettingsService(session).save_bb_profile(
+        BlackboardProfile(
+            name=request.name,
+            student_id=request.student_id,
+            base_url=request.base_url,
+        ),
+        password=request.password,
+    )
+    return ApiResponse(success=True, data=profile)
+
+
+@router.delete("/settings/blackboard/profiles/{name}", response_model=ApiResponse[dict[str, bool]])
+async def delete_bb_profile(name: str, session: Session = Depends(get_db_session)) -> ApiResponse[dict[str, bool]]:
+    deleted = await SettingsService(session).delete_bb_profile(name)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return ApiResponse(success=True, data={"deleted": True})
+
+
+@router.post("/settings/blackboard/profiles/{name}/apply", response_model=ApiResponse[object])
+async def apply_bb_profile(name: str, session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    profile = await SettingsService(session).apply_bb_profile(name)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return ApiResponse(success=True, data=profile)
+
+
+# Blackboard Settings
+@router.get("/settings/blackboard", response_model=ApiResponse[object])
+async def get_blackboard_settings() -> ApiResponse[object]:
+    return ApiResponse(success=True, data=runtime_settings.get_blackboard_config())
+
+
+@router.put("/settings/blackboard", response_model=ApiResponse[object])
+async def update_blackboard_settings(request: BlackboardSettingsRequest) -> ApiResponse[object]:
+    config = runtime_settings.update_blackboard_config(
+        RuntimeBlackboardUpdate.model_validate(request.model_dump())
+    )
+    return ApiResponse(success=True, data=config)
+
+
+@router.post("/settings/blackboard/test", response_model=ApiResponse[object])
+async def test_blackboard_settings(request: BlackboardSettingsRequest) -> ApiResponse[object]:
+    """Test Blackboard connection with provided credentials."""
+    from backend.services.blackboard_service import BlackboardService
+
+    # Get student_id: from request > runtime > settings
+    if request.student_id:
+        student_id = request.student_id
+    else:
+        bb_config = runtime_settings.get_blackboard_config()
+        student_id = bb_config.student_id
+
+    # Get password: from request > runtime
+    if request.replace_password and request.password:
+        password = request.password
+    elif request.password:
+        password = request.password
+    else:
+        password = runtime_settings.get_secret_blackboard_password()
+
+    # Get base_url: from request > runtime > settings
+    if request.base_url:
+        base_url = request.base_url
+    else:
+        bb_config = runtime_settings.get_blackboard_config()
+        base_url = bb_config.base_url
+        if not base_url:
+            settings = get_settings()
+            base_url = settings.blackboard_base_url
+
+    if not student_id or not password:
+        return ApiResponse(success=False, data={"error": f"Missing credentials - student_id: {bool(student_id)}, password: {bool(password)}"})
+
+    try:
+        logged_in = await BlackboardService.test_connection(student_id, password, base_url)
+        return ApiResponse(
+            success=logged_in,
+            data={"logged_in": logged_in, "message": "Connection successful" if logged_in else "Connection failed"}
+        )
+    except Exception as e:
+        return ApiResponse(success=False, data={"error": str(e)})
 
 
 @router.post("/chat")

@@ -45,14 +45,43 @@ class BlackboardProvider(ABC):
 class DemoBlackboardProvider(BlackboardProvider):
     """Demo Blackboard provider used for V1 development."""
 
-    def __init__(self):
+    def __init__(self, student_id: str | None = None, password: str | None = None, base_url: str | None = None):
         self._cas_session = None
-    
+        self._student_id = student_id
+        self._password = password
+        self._base_url = base_url
+
+    def _get_credentials(self):
+        """Get credentials from runtime settings or fall back to config."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        from backend.services.runtime_settings import runtime_settings
+
+        # Try runtime settings first (from UI configuration)
+        runtime_bb_config = runtime_settings.get_blackboard_config()
+        runtime_password = runtime_settings.get_secret_blackboard_password()
+
+        student_id = self._student_id or runtime_bb_config.student_id
+        password = self._password or runtime_password
+
+        # Fall back to config settings if not in runtime
+        if not student_id or not password:
+            settings = get_settings()
+            student_id = student_id or settings.blackboard_student_id
+            password = password or settings.blackboard_cas_password
+
+        base_url = self._base_url or runtime_bb_config.base_url
+        if not base_url:
+            settings = get_settings()
+            base_url = self._base_url or settings.blackboard_base_url
+
+        logger.info(f"_get_credentials: student_id={student_id}, base_url={base_url}, password_set={bool(password)}")
+        return student_id, password, base_url
+
     async def bypass_cas_login(self) -> bool:
         # Perform CAS login and cache the authenticated session for later API calls.
-        settings = get_settings()
-        username = settings.blackboard_student_id
-        password = settings.blackboard_cas_password
+        username, password, base_url = self._get_credentials()
 
         if not username or not password:
             return False
@@ -69,8 +98,9 @@ class DemoBlackboardProvider(BlackboardProvider):
         )
 
         try:
-            base_url = "https://bb.sustech.edu.cn/"
-            response = session.get(base_url, timeout=60)
+            # Always use root URL for CAS login, not the API URL
+            login_url = "https://bb.sustech.edu.cn/"
+            response = session.get(login_url, timeout=60)
 
             if "cas.sustech.edu.cn" in response.url:
                 soup = BeautifulSoup(response.text, "html.parser")
@@ -101,8 +131,8 @@ class DemoBlackboardProvider(BlackboardProvider):
 
     async def test_api_available(self) -> bool:
         # Probe Blackboard users/me endpoint and return availability as a boolean.
-        settings = get_settings()
-        api_url = f"{settings.blackboard_base_url.rstrip('/')}/users/me"
+        _, _, base_url = self._get_credentials()
+        api_url = f"{base_url.rstrip('/')}/users/me"
 
         if self._cas_session is None:
             logged_in = await self.bypass_cas_login()
@@ -120,8 +150,8 @@ class DemoBlackboardProvider(BlackboardProvider):
         return response.ok
 
     async def get_calendar_items(self) -> list[dict[str, object]]:
-        settings = get_settings()
-        api_url = f"{settings.blackboard_base_url.rstrip('/')}/calendars/items"
+        _, _, base_url = self._get_credentials()
+        api_url = f"{base_url.rstrip('/')}/calendars/items"
 
         if self._cas_session is None:
             logged_in = await self.bypass_cas_login()
@@ -251,3 +281,53 @@ class BlackboardService:
 
     async def download_file(self, file_id: str, save_path: str) -> DownloadResult:
         return await self.provider.download_file(file_id, save_path)
+
+    @staticmethod
+    async def test_connection(student_id: str, password: str, base_url: str = "https://bb.sustech.edu.cn/") -> bool:
+        """Test Blackboard connection with provided credentials."""
+        import aiohttp
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info(f"Testing Blackboard connection for student: {student_id}, base_url: {base_url}")
+
+        session = aiohttp.ClientSession(
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                )
+            }
+        )
+        try:
+            async with session.get(base_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                logger.info(f"Initial response URL: {response.url}, status: {response.status}")
+                if "cas.sustech.edu.cn" in str(response.url):
+                    from bs4 import BeautifulSoup
+
+                    soup = BeautifulSoup(await response.text(), "html.parser")
+                    execution_input = soup.find("input", {"name": "execution"})
+                    if execution_input is None:
+                        logger.warning("No execution input found in CAS form")
+                        return False
+
+                    execution = execution_input.get("value")
+                    login_data = {
+                        "username": student_id,
+                        "password": password,
+                        "execution": execution,
+                        "_eventId": "submit",
+                        "geolocation": "",
+                    }
+
+                    async with session.post(str(response.url), data=login_data, timeout=aiohttp.ClientTimeout(total=60)) as login_response:
+                        logger.info(f"Login response URL: {login_response.url}, status: {login_response.status}")
+                        success = "cas.sustech.edu.cn" not in str(login_response.url)
+                        return success
+                return True
+        except Exception as e:
+            logger.error(f"Blackboard connection test failed: {e}")
+            return False
+        finally:
+            await session.close()
