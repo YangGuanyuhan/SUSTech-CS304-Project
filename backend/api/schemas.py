@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 from backend.models.quiz import QuizAnswerSubmission
@@ -71,3 +73,32 @@ class BlackboardSettingsRequest(BaseModel):
     password: str | None = None
     base_url: str | None = None
     replace_password: bool = False
+
+
+class CalendarEventCreateRequest(BaseModel):
+    title: str
+    start_at: datetime
+    end_at: datetime
+    description: str | None = None
+    location: str | None = None
+    all_day: bool = False
+    timezone: str = "UTC"
+    weekly_repeat: bool = False
+    status: str = "not_started"
+
+
+class CalendarEventUpdateRequest(BaseModel):
+    title: str | None = None
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    description: str | None = None
+    location: str | None = None
+    all_day: bool | None = None
+    timezone: str | None = None
+    weekly_repeat: bool | None = None
+    status: str | None = None
+
+
+class CalendarEventMoveRequest(BaseModel):
+    start_at: datetime
+    end_at: datetime

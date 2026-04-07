@@ -6,14 +6,17 @@ import asyncio
 import json
 import re
 import shlex
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import httpx
 from sqlalchemy.orm import Session
 
+from backend.models.calendar import CalendarEventCreate, CalendarEventMove, CalendarEventUpdate
 from backend.services.datetime_service import DateTimeService
 from backend.services.blackboard_service import DemoBlackboardProvider
+from backend.services.calendar_service import CalendarService
 from backend.services.memory_service import MemoryService
 from backend.services.quiz_service import QuizService
 
@@ -168,6 +171,126 @@ def get_tool_definitions() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "calendar_list_events",
+                "description": "List calendar events in a time range, including Blackboard and local events.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "start": {"type": "string", "description": "ISO datetime start of the range."},
+                        "end": {"type": "string", "description": "ISO datetime end of the range."},
+                        "include_blackboard": {"type": "boolean", "default": True},
+                    },
+                    "required": ["start", "end"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "calendar_create_event",
+                "description": "Create a local calendar event. Supports optional weekly recurrence.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "start_at": {"type": "string", "description": "ISO datetime for event start."},
+                        "end_at": {"type": "string", "description": "ISO datetime for event end."},
+                        "description": {"type": "string"},
+                        "location": {"type": "string"},
+                        "all_day": {"type": "boolean", "default": False},
+                        "timezone": {"type": "string", "default": "UTC"},
+                        "weekly_repeat": {"type": "boolean", "default": False},
+                        "status": {
+                            "type": "string",
+                            "enum": ["not_started", "pending", "completed"],
+                            "default": "not_started",
+                        },
+                    },
+                    "required": ["title", "start_at", "end_at"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "calendar_update_event",
+                "description": "Update a local calendar event by event id.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "event_id": {"type": "string"},
+                        "title": {"type": "string"},
+                        "start_at": {"type": "string"},
+                        "end_at": {"type": "string"},
+                        "description": {"type": "string"},
+                        "location": {"type": "string"},
+                        "all_day": {"type": "boolean"},
+                        "timezone": {"type": "string"},
+                        "weekly_repeat": {"type": "boolean"},
+                        "status": {"type": "string", "enum": ["not_started", "pending", "completed"]},
+                    },
+                    "required": ["event_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "calendar_move_event",
+                "description": "Move a local calendar event to a new start and end time.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "event_id": {"type": "string"},
+                        "start_at": {"type": "string"},
+                        "end_at": {"type": "string"},
+                    },
+                    "required": ["event_id", "start_at", "end_at"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "calendar_delete_event",
+                "description": "Delete a local calendar event by event id.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "event_id": {"type": "string"},
+                    },
+                    "required": ["event_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "calendar_sync_blackboard",
+                "description": "Sync Blackboard calendar items into the unified calendar.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "calendar_clone_blackboard_event",
+                "description": "Copy a read-only Blackboard calendar event into a local editable event.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "event_id": {"type": "string"},
+                    },
+                    "required": ["event_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "create_quiz",
                 "description": "Create a quiz session for the user and return structured quiz questions.",
                 "parameters": {
@@ -240,6 +363,7 @@ class AgentToolService:
 
     def __init__(self, session: Session):
         self.session = session
+        self.calendar_service = CalendarService(session)
         self.memory_service = MemoryService(session)
         self.quiz_service = QuizService(session)
 
@@ -292,6 +416,20 @@ class AgentToolService:
             return await self._run_local_command(arguments, workspace_root)
         if tool_name == "fetch_webpage":
             return await self._fetch_webpage(arguments)
+        if tool_name == "calendar_list_events":
+            return await self._calendar_list_events(arguments)
+        if tool_name == "calendar_create_event":
+            return await self._calendar_create_event(arguments)
+        if tool_name == "calendar_update_event":
+            return await self._calendar_update_event(arguments)
+        if tool_name == "calendar_move_event":
+            return await self._calendar_move_event(arguments)
+        if tool_name == "calendar_delete_event":
+            return await self._calendar_delete_event(arguments)
+        if tool_name == "calendar_sync_blackboard":
+            return await self._calendar_sync_blackboard()
+        if tool_name == "calendar_clone_blackboard_event":
+            return await self._calendar_clone_blackboard_event(arguments)
         if tool_name == "create_quiz":
             return await self._create_quiz(arguments, chat_session_id=chat_session_id)
         if tool_name == "quiz_history_summary":
@@ -486,6 +624,98 @@ class AgentToolService:
         history = await self.quiz_service.get_history_summary(limit=int(arguments.get("limit", 5)))
         return json.dumps({"history": history.model_dump(mode="json")}, ensure_ascii=False)
 
+    async def _calendar_list_events(self, arguments: dict[str, Any]) -> str:
+        start = self._require_iso_datetime(arguments.get("start"), field_name="start")
+        end = self._require_iso_datetime(arguments.get("end"), field_name="end")
+        events = await self.calendar_service.list_events(
+            start=start,
+            end=end,
+            include_blackboard=bool(arguments.get("include_blackboard", True)),
+        )
+        return json.dumps(events.model_dump(mode="json"), ensure_ascii=False)
+
+    async def _calendar_create_event(self, arguments: dict[str, Any]) -> str:
+        title = str(arguments.get("title", "")).strip()
+        if not title:
+            raise ToolExecutionError("`title` is required for calendar_create_event.")
+        event = await self.calendar_service.create_event(
+            CalendarEventCreate(
+                title=title,
+                start_at=self._require_iso_datetime(arguments.get("start_at"), field_name="start_at"),
+                end_at=self._require_iso_datetime(arguments.get("end_at"), field_name="end_at"),
+                description=self._optional_string(arguments.get("description")),
+                location=self._optional_string(arguments.get("location")),
+                all_day=bool(arguments.get("all_day", False)),
+                timezone=str(arguments.get("timezone", "UTC")),
+                weekly_repeat=bool(arguments.get("weekly_repeat", False)),
+                status=self._normalize_status(arguments.get("status", "not_started")),
+            )
+        )
+        return json.dumps(event.model_dump(mode="json"), ensure_ascii=False)
+
+    async def _calendar_update_event(self, arguments: dict[str, Any]) -> str:
+        event_id = str(arguments.get("event_id", "")).strip()
+        if not event_id:
+            raise ToolExecutionError("`event_id` is required for calendar_update_event.")
+        try:
+            event = await self.calendar_service.update_event(
+                event_id,
+                CalendarEventUpdate(
+                    title=self._optional_string(arguments.get("title")),
+                    start_at=self._optional_iso_datetime(arguments.get("start_at")),
+                    end_at=self._optional_iso_datetime(arguments.get("end_at")),
+                    description=self._optional_string(arguments.get("description")),
+                    location=self._optional_string(arguments.get("location")),
+                    all_day=arguments.get("all_day"),
+                    timezone=self._optional_string(arguments.get("timezone")),
+                    weekly_repeat=arguments.get("weekly_repeat"),
+                    status=self._normalize_optional_status(arguments.get("status")),
+                ),
+            )
+        except ValueError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        return json.dumps(event.model_dump(mode="json"), ensure_ascii=False)
+
+    async def _calendar_move_event(self, arguments: dict[str, Any]) -> str:
+        event_id = str(arguments.get("event_id", "")).strip()
+        if not event_id:
+            raise ToolExecutionError("`event_id` is required for calendar_move_event.")
+        try:
+            event = await self.calendar_service.move_event(
+                event_id,
+                CalendarEventMove(
+                    start_at=self._require_iso_datetime(arguments.get("start_at"), field_name="start_at"),
+                    end_at=self._require_iso_datetime(arguments.get("end_at"), field_name="end_at"),
+                ),
+            )
+        except ValueError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        return json.dumps(event.model_dump(mode="json"), ensure_ascii=False)
+
+    async def _calendar_delete_event(self, arguments: dict[str, Any]) -> str:
+        event_id = str(arguments.get("event_id", "")).strip()
+        if not event_id:
+            raise ToolExecutionError("`event_id` is required for calendar_delete_event.")
+        try:
+            deleted = await self.calendar_service.delete_event(event_id)
+        except ValueError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        return json.dumps({"deleted": deleted, "event_id": event_id}, ensure_ascii=False)
+
+    async def _calendar_sync_blackboard(self) -> str:
+        result = await self.calendar_service.sync_blackboard()
+        return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
+
+    async def _calendar_clone_blackboard_event(self, arguments: dict[str, Any]) -> str:
+        event_id = str(arguments.get("event_id", "")).strip()
+        if not event_id:
+            raise ToolExecutionError("`event_id` is required for calendar_clone_blackboard_event.")
+        try:
+            event = await self.calendar_service.clone_blackboard_event(event_id)
+        except ValueError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        return json.dumps(event.model_dump(mode="json"), ensure_ascii=False)
+
     async def _get_current_datetime(self) -> str:
         datetime_info = DateTimeService().get_current_datetime()
         return json.dumps(datetime_info.model_dump(mode="json"), ensure_ascii=False)
@@ -541,3 +771,52 @@ class AgentToolService:
         except ValueError as exc:
             raise ToolExecutionError("Requested path escapes the configured workspace root.") from exc
         return candidate
+
+    def _optional_string(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    def _require_iso_datetime(self, value: Any, *, field_name: str) -> datetime:
+        if not isinstance(value, str) or not value.strip():
+            raise ToolExecutionError(f"`{field_name}` must be a non-empty ISO datetime string.")
+        return self._parse_iso_datetime(value, field_name=field_name)
+
+    def _optional_iso_datetime(self, value: Any) -> datetime | None:
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise ToolExecutionError("Optional datetime fields must be ISO datetime strings when provided.")
+        return self._parse_iso_datetime(value, field_name="datetime")
+
+    def _parse_iso_datetime(self, value: str, *, field_name: str) -> datetime:
+        normalized = value.strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError as exc:
+            raise ToolExecutionError(f"`{field_name}` must be a valid ISO datetime string.") from exc
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    def _normalize_status(self, value: Any) -> str:
+        if value is None:
+            return "not_started"
+        normalized = str(value).strip().lower()
+        aliases = {
+            "not_started": "not_started",
+            "not-started": "not_started",
+            "pending": "pending",
+            "completed": "completed",
+            "complete": "completed",
+            "done": "completed",
+        }
+        if normalized not in aliases:
+            raise ToolExecutionError("`status` must be one of: not_started, pending, completed.")
+        return aliases[normalized]
+
+    def _normalize_optional_status(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        return self._normalize_status(value)

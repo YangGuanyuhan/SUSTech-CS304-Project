@@ -40,6 +40,8 @@ Tool usage rules:
 10. After successfully creating a quiz, do NOT present questions in chat. 
     Instead, inform the user that the quiz is ready and direct them to the quiz 
     interface to begin.
+11. Use calendar tools for scheduling requests, event lookup, reminders, or timetable management.
+12. Blackboard calendar events are read-only. If the user wants to modify one, first copy it into a local event.
 Response style:
 - Be concise and practical.
 - Respond in Markdown when useful.
@@ -149,6 +151,104 @@ class PydanticAIRuntime:
         @agent.tool(name="memory_delete")
         async def memory_delete(ctx: RunContext[AgentDeps], query: str) -> str:
             return await _execute_tool(ctx, "memory_delete", {"query": query})
+
+        @agent.tool(name="calendar_list_events")
+        async def calendar_list_events(
+            ctx: RunContext[AgentDeps],
+            start: str,
+            end: str,
+            include_blackboard: bool = True,
+        ) -> str:
+            return await _execute_tool(
+                ctx,
+                "calendar_list_events",
+                {"start": start, "end": end, "include_blackboard": include_blackboard},
+            )
+
+        @agent.tool(name="calendar_create_event")
+        async def calendar_create_event(
+            ctx: RunContext[AgentDeps],
+            title: str,
+            start_at: str,
+            end_at: str,
+            description: str | None = None,
+            location: str | None = None,
+            all_day: bool = False,
+            timezone: str = "UTC",
+            weekly_repeat: bool = False,
+            status: str = "not_started",
+        ) -> str:
+            return await _execute_tool(
+                ctx,
+                "calendar_create_event",
+                {
+                    "title": title,
+                    "start_at": start_at,
+                    "end_at": end_at,
+                    "description": description,
+                    "location": location,
+                    "all_day": all_day,
+                    "timezone": timezone,
+                    "weekly_repeat": weekly_repeat,
+                    "status": status,
+                },
+            )
+
+        @agent.tool(name="calendar_update_event")
+        async def calendar_update_event(
+            ctx: RunContext[AgentDeps],
+            event_id: str,
+            title: str | None = None,
+            start_at: str | None = None,
+            end_at: str | None = None,
+            description: str | None = None,
+            location: str | None = None,
+            all_day: bool | None = None,
+            timezone: str | None = None,
+            weekly_repeat: bool | None = None,
+            status: str | None = None,
+        ) -> str:
+            return await _execute_tool(
+                ctx,
+                "calendar_update_event",
+                {
+                    "event_id": event_id,
+                    "title": title,
+                    "start_at": start_at,
+                    "end_at": end_at,
+                    "description": description,
+                    "location": location,
+                    "all_day": all_day,
+                    "timezone": timezone,
+                    "weekly_repeat": weekly_repeat,
+                    "status": status,
+                },
+            )
+
+        @agent.tool(name="calendar_move_event")
+        async def calendar_move_event(
+            ctx: RunContext[AgentDeps],
+            event_id: str,
+            start_at: str,
+            end_at: str,
+        ) -> str:
+            return await _execute_tool(
+                ctx,
+                "calendar_move_event",
+                {"event_id": event_id, "start_at": start_at, "end_at": end_at},
+            )
+
+        @agent.tool(name="calendar_delete_event")
+        async def calendar_delete_event(ctx: RunContext[AgentDeps], event_id: str) -> str:
+            return await _execute_tool(ctx, "calendar_delete_event", {"event_id": event_id})
+
+        @agent.tool(name="calendar_sync_blackboard")
+        async def calendar_sync_blackboard(ctx: RunContext[AgentDeps]) -> str:
+            return await _execute_tool(ctx, "calendar_sync_blackboard", {})
+
+        @agent.tool(name="calendar_clone_blackboard_event")
+        async def calendar_clone_blackboard_event(ctx: RunContext[AgentDeps], event_id: str) -> str:
+            return await _execute_tool(ctx, "calendar_clone_blackboard_event", {"event_id": event_id})
 
         @agent.tool(name="list_local_files", requires_approval=True)
         async def list_local_files(
