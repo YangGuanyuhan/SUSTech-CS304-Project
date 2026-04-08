@@ -10,8 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.routes import router
 from backend.config import get_settings
-from backend.db.database import engine
-from backend.db.models import Base
+from backend.db.database import initialize_database
 
 # Configure logging
 logging.basicConfig(
@@ -23,7 +22,7 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    Base.metadata.create_all(bind=engine)
+    initialize_database()
     app.state.settings = settings
     yield
 

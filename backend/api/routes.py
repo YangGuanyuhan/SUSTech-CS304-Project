@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sse_starlette.sse import EventSourceResponse
@@ -12,6 +13,9 @@ from backend.agent.core import StudentProductivityAgent
 from backend.api.schemas import (
     BlackboardProfileRequest,
     BlackboardSettingsRequest,
+    CalendarEventCreateRequest,
+    CalendarEventMoveRequest,
+    CalendarEventUpdateRequest,
     ChatApprovalRequest,
     ChatRequest,
     EmailConfirmRequest,
@@ -23,9 +27,11 @@ from backend.api.schemas import (
     QuizAttemptRequest,
 )
 from backend.db.database import get_db_session
+from backend.models.calendar import CalendarEventCreate, CalendarEventMove, CalendarEventUpdate
 from backend.models.common import ApiResponse
 from backend.models.settings import BlackboardProfile, LLMProfile
 from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
+from backend.services.calendar_service import CalendarService
 from backend.services.approval_service import approval_service
 from backend.services.database_insights_service import DatabaseInsightsService
 from backend.services.email_service import EmailService, UnconfirmedSendError
@@ -310,6 +316,99 @@ async def handle_chat_approval(
 @router.get("/blackboard/courses", response_model=ApiResponse[object])
 async def get_courses(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
     result = await BlackboardService(session, DemoBlackboardProvider()).get_all_courses()
+    return ApiResponse(success=True, data=result)
+
+
+@router.get("/calendar/events", response_model=ApiResponse[object])
+async def get_calendar_events(
+    start: datetime = Query(...),
+    end: datetime = Query(...),
+    include_blackboard: bool = Query(default=True),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    result = await CalendarService(session).list_events(
+        start=start,
+        end=end,
+        include_blackboard=include_blackboard,
+    )
+    return ApiResponse(success=True, data=result)
+
+
+@router.post("/calendar/events", response_model=ApiResponse[object])
+async def create_calendar_event(
+    request: CalendarEventCreateRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    try:
+        event = await CalendarService(session).create_event(CalendarEventCreate.model_validate(request.model_dump()))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=event)
+
+
+@router.patch("/calendar/events/{event_id}", response_model=ApiResponse[object])
+async def update_calendar_event(
+    event_id: str,
+    request: CalendarEventUpdateRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    try:
+        event = await CalendarService(session).update_event(
+            event_id,
+            CalendarEventUpdate.model_validate(request.model_dump()),
+        )
+    except ValueError as exc:
+        status_code = 404 if "not found" in str(exc).lower() else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=event)
+
+
+@router.post("/calendar/events/{event_id}/move", response_model=ApiResponse[object])
+async def move_calendar_event(
+    event_id: str,
+    request: CalendarEventMoveRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    try:
+        event = await CalendarService(session).move_event(
+            event_id,
+            CalendarEventMove.model_validate(request.model_dump()),
+        )
+    except ValueError as exc:
+        status_code = 404 if "not found" in str(exc).lower() else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=event)
+
+
+@router.delete("/calendar/events/{event_id}", response_model=ApiResponse[dict[str, bool]])
+async def delete_calendar_event(
+    event_id: str,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[dict[str, bool]]:
+    try:
+        deleted = await CalendarService(session).delete_event(event_id)
+    except ValueError as exc:
+        status_code = 404 if "not found" in str(exc).lower() else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return ApiResponse(success=True, data={"deleted": deleted})
+
+
+@router.post("/calendar/events/{event_id}/clone", response_model=ApiResponse[object])
+async def clone_calendar_event(
+    event_id: str,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    try:
+        event = await CalendarService(session).clone_blackboard_event(event_id)
+    except ValueError as exc:
+        status_code = 404 if "not found" in str(exc).lower() else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=event)
+
+
+@router.post("/calendar/sync/blackboard", response_model=ApiResponse[object])
+async def sync_blackboard_calendar(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    result = await CalendarService(session).sync_blackboard()
     return ApiResponse(success=True, data=result)
 
 

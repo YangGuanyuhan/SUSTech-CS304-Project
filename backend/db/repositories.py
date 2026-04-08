@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from backend.db.models import (
     BlackboardCacheRecord,
+    CalendarEventRecord,
     EmailDraftRecord,
     MemoryRecord,
     QuizAnswerRecord,
@@ -197,6 +198,101 @@ class UserPreferenceRepository(Repository):
         result = self.session.execute(stmt)
         self.session.commit()
         return result.rowcount > 0
+
+
+class CalendarRepository(Repository):
+    def create(
+        self,
+        *,
+        title: str,
+        start_at: datetime,
+        end_at: datetime,
+        description: str | None = None,
+        location: str | None = None,
+        all_day: bool = False,
+        timezone: str = "UTC",
+        source: str = "local",
+        status: str = "not_started",
+        source_event_id: str | None = None,
+        source_payload: dict[str, Any] | None = None,
+        is_read_only: bool = False,
+        recurrence_rule: dict[str, Any] | None = None,
+        owner_id: str = "local-user",
+    ) -> CalendarEventRecord:
+        return self._persist(
+            CalendarEventRecord(
+                owner_id=owner_id,
+                title=title,
+                description=description,
+                location=location,
+                start_at=start_at,
+                end_at=end_at,
+                all_day=all_day,
+                timezone=timezone,
+                source=source,
+                status=status,
+                source_event_id=source_event_id,
+                source_payload=source_payload,
+                is_read_only=is_read_only,
+                recurrence_rule=recurrence_rule,
+            )
+        )
+
+    def get(self, event_id: str, *, owner_id: str = "local-user") -> CalendarEventRecord | None:
+        stmt = select(CalendarEventRecord).where(
+            CalendarEventRecord.id == event_id,
+            CalendarEventRecord.owner_id == owner_id,
+        )
+        return self.session.execute(stmt).scalar_one_or_none()
+
+    def find_by_source_event(
+        self,
+        *,
+        source: str,
+        source_event_id: str,
+        owner_id: str = "local-user",
+    ) -> CalendarEventRecord | None:
+        stmt = select(CalendarEventRecord).where(
+            CalendarEventRecord.owner_id == owner_id,
+            CalendarEventRecord.source == source,
+            CalendarEventRecord.source_event_id == source_event_id,
+        )
+        return self.session.execute(stmt).scalar_one_or_none()
+
+    def list_candidates(
+        self,
+        *,
+        range_start: datetime,
+        range_end: datetime,
+        include_blackboard: bool = True,
+        owner_id: str = "local-user",
+    ) -> list[CalendarEventRecord]:
+        recurring_clause = CalendarEventRecord.recurrence_rule.is_not(None)
+        overlap_clause = (
+            (CalendarEventRecord.start_at <= range_end) &
+            (CalendarEventRecord.end_at >= range_start)
+        )
+        stmt = select(CalendarEventRecord).where(
+            CalendarEventRecord.owner_id == owner_id,
+            (
+                ((CalendarEventRecord.start_at <= range_end) & recurring_clause)
+                | overlap_clause
+            ),
+        )
+        if not include_blackboard:
+            stmt = stmt.where(CalendarEventRecord.source != "blackboard")
+        stmt = stmt.order_by(CalendarEventRecord.start_at.asc(), CalendarEventRecord.title.asc())
+        return list(self.session.execute(stmt).scalars())
+
+    def update(self, record: CalendarEventRecord) -> CalendarEventRecord:
+        self.session.add(record)
+        self.session.commit()
+        self.session.refresh(record)
+        return record
+
+    def delete(self, record: CalendarEventRecord) -> None:
+        self.session.delete(record)
+        self.session.commit()
 
 
 class QuizRepository(Repository):

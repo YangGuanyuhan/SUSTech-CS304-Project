@@ -17,7 +17,7 @@
 
         <!-- Tab Navigation -->
         <nav class="tab-nav">
-          <button class="tab-item active">
+          <button :class="['tab-item', { active: activeView === 'chat' }]" @click="activeView = 'chat'">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>
@@ -38,13 +38,13 @@
             </svg>
             <span>文件</span>
           </button>
-          <button class="tab-item" @click="quizHistoryOpen = true">
+          <button :class="['tab-item', { active: activeView === 'calendar' }]" @click="activeView = 'calendar'">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
               <line x1="3" y1="9" x2="21" y2="9"/>
               <line x1="9" y1="21" x2="9" y2="9"/>
             </svg>
-            <span>课表</span>
+            <span>日程</span>
           </button>
           <button class="tab-item" @click="settingsOpen = true">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -130,6 +130,7 @@
 
     <!-- Main Content -->
     <section class="main-content">
+      <template v-if="activeView === 'chat'">
       <!-- Header -->
       <header class="header">
         <div class="header-left">
@@ -253,6 +254,9 @@
           <span>{{ loading ? '发送中...' : '发送' }}</span>
         </button>
       </div>
+      </template>
+
+      <CalendarPanel v-else />
     </section>
 
     <div v-if="settingsOpen" class="overlay" @click.self="settingsOpen = false">
@@ -281,6 +285,7 @@
 <script setup>
 import MarkdownIt from "markdown-it";
 import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
+import CalendarPanel from "./components/CalendarPanel.vue";
 import QuizPanel from "./components/QuizPanel.vue";
 import DatabaseOverviewPanel from "./components/DatabaseOverviewPanel.vue";
 import QuizHistoryPanel from "./components/QuizHistoryPanel.vue";
@@ -345,6 +350,7 @@ const checking = ref(false);
 const settingsOpen = ref(false);
 const quizHistoryOpen = ref(false);
 const databaseOpen = ref(false);
+const activeView = ref("chat");
 
 const conversations = ref(restoreConversations());
 const activeConversationId = ref(

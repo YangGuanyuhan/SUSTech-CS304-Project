@@ -75,6 +75,64 @@ export async function getCourses() {
   return parseJson(response);
 }
 
+export async function getCalendarEvents({ start, end, includeBlackboard = true }) {
+  const query = new URLSearchParams({
+    start,
+    end,
+    include_blackboard: String(includeBlackboard)
+  });
+  const response = await fetch(`${API_BASE}/calendar/events?${query.toString()}`);
+  return parseJson(response);
+}
+
+export async function createCalendarEvent(payload) {
+  const response = await fetch(`${API_BASE}/calendar/events`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function updateCalendarEvent(eventId, payload) {
+  const response = await fetch(`${API_BASE}/calendar/events/${encodeURIComponent(eventId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function moveCalendarEvent(eventId, payload) {
+  const response = await fetch(`${API_BASE}/calendar/events/${encodeURIComponent(eventId)}/move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function deleteCalendarEvent(eventId) {
+  const response = await fetch(`${API_BASE}/calendar/events/${encodeURIComponent(eventId)}`, {
+    method: "DELETE"
+  });
+  return parseJson(response);
+}
+
+export async function cloneCalendarEvent(eventId) {
+  const response = await fetch(`${API_BASE}/calendar/events/${encodeURIComponent(eventId)}/clone`, {
+    method: "POST"
+  });
+  return parseJson(response);
+}
+
+export async function syncBlackboardCalendar() {
+  const response = await fetch(`${API_BASE}/calendar/sync/blackboard`, {
+    method: "POST"
+  });
+  return parseJson(response);
+}
+
 export async function getBlackboardSettings() {
   const response = await fetch(`${API_BASE}/settings/blackboard`);
   return parseJson(response);

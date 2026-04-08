@@ -99,6 +99,33 @@ class UserPreferenceRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
+class CalendarEventRecord(Base):
+    __tablename__ = "calendar_events"
+    __table_args__ = (
+        Index("ix_calendar_events_owner_start_end", "owner_id", "start_at", "end_at"),
+        Index("ix_calendar_events_owner_source_start", "owner_id", "source", "start_at"),
+        UniqueConstraint("owner_id", "source", "source_event_id", name="uq_calendar_events_owner_source_event"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    owner_id: Mapped[str] = mapped_column(String(64), default="local-user", index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    all_day: Mapped[bool] = mapped_column(Boolean, default=False)
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC")
+    source: Mapped[str] = mapped_column(String(32), default="local", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="not_started", index=True)
+    source_event_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_payload: Mapped[Any | None] = mapped_column(JSONText, nullable=True)
+    is_read_only: Mapped[bool] = mapped_column(Boolean, default=False)
+    recurrence_rule: Mapped[Any | None] = mapped_column(JSONText, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
 class QuizSessionRecord(TimestampMixin, Base):
     __tablename__ = "quiz_sessions"
     __table_args__ = (
