@@ -1111,7 +1111,7 @@ body {
 .message-row.assistant {
   margin-right: auto;
   margin-left: -60px;
-  max-width: calc(95% + 60px);
+  max-width: calc(100% + 60px - var(--send-btn-width) - 16px);
 }
 
 .avatar {
@@ -1141,6 +1141,7 @@ body {
   box-shadow: 0 4px 16px var(--shadow-elevated);
   max-width: 100%;
   width: fit-content;
+  min-width: 0;
 }
 
 .message-row.user .message-bubble {
