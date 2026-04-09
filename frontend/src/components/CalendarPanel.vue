@@ -293,6 +293,8 @@ import {
   updateCalendarEvent
 } from "../api/client";
 
+const emit = defineEmits(["close"]);
+
 const weekdays = ["一", "二", "三", "四", "五", "六", "日"];
 const weekdaysMini = ["一", "二", "三", "四", "五", "六", "日"];
 const viewLabels = { day: "日", month: "月", year: "年" };
@@ -718,12 +720,15 @@ function statusClass(status) {
 .calendar-panel {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
   gap: 20px;
   height: 100%;
   padding: 28px;
   background:
     radial-gradient(circle at top right, rgba(44, 122, 123, 0.12), transparent 28%),
     linear-gradient(180deg, #fcfdfd 0%, #f4f8f8 100%);
+  overflow: hidden;
 }
 
 .calendar-header,
@@ -855,7 +860,11 @@ function statusClass(status) {
 
 .calendar-surface {
   padding: 20px;
+  flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
 }
 
 .weekday-row,
@@ -873,11 +882,14 @@ function statusClass(status) {
 }
 
 .month-grid {
+  flex: 1;
   gap: 10px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .month-cell {
-  min-height: 128px;
+  min-height: 100px;
   display: flex;
   flex-direction: column;
   padding: 12px;
@@ -1127,10 +1139,13 @@ function statusClass(status) {
   padding: 24px;
   background: rgba(15, 23, 42, 0.36);
   backdrop-filter: blur(6px);
+  z-index: 1000;
 }
 
 .calendar-modal {
   width: min(720px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
   padding: 24px;
 }
 

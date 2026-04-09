@@ -284,7 +284,7 @@
 
 <script setup>
 import MarkdownIt from "markdown-it";
-import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import CalendarPanel from "./components/CalendarPanel.vue";
 import QuizPanel from "./components/QuizPanel.vue";
 import DatabaseOverviewPanel from "./components/DatabaseOverviewPanel.vue";
@@ -365,6 +365,15 @@ let activeTimer = null;
 const sortedConversations = computed(() =>
   [...conversations.value].sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0))
 );
+
+function scrollToBottom() {
+  nextTick(() => {
+    const mainContent = document.querySelector(".main-content");
+    if (mainContent) {
+      mainContent.scrollTop = mainContent.scrollHeight;
+    }
+  });
+}
 
 const activeConversation = computed(() => {
   const conversation =
@@ -454,6 +463,7 @@ function createConversation() {
 function selectConversation(id) {
   activeConversationId.value = id;
   persistConversations();
+  scrollToBottom();
 }
 
 function deleteConversation(id) {
@@ -502,6 +512,7 @@ function appendMessage(role, content) {
     })
   );
   activeConversation.value.updatedAt = Date.now();
+  scrollToBottom();
 }
 
 async function loadCourses() {
@@ -545,6 +556,7 @@ async function submitMessage() {
   draft.value = "";
   loading.value = true;
   const stopTimer = startTimer(assistantMessage);
+  scrollToBottom();
 
   try {
     await streamChat(
@@ -559,15 +571,18 @@ async function submitMessage() {
             assistantMessage.content = "";
           }
           assistantMessage.content += chunk;
+          scrollToBottom();
         },
         onApprovalRequired(approval) {
           assistantMessage.content = "工具调用正在等待你的审批。";
           assistantMessage.toolEvents = approval.tool_events || [];
           conversation.pendingApproval = approval;
+          scrollToBottom();
         },
         onDone(payload) {
           assistantMessage.content = assistantMessage.content.trim();
           assistantMessage.toolEvents = payload.tool_events || assistantMessage.toolEvents || [];
+          scrollToBottom();
         }
       }
     );
@@ -597,6 +612,7 @@ async function resolveApproval(approved) {
   conversation.updatedAt = Date.now();
   loading.value = true;
   const stopTimer = startTimer(assistantMessage);
+  scrollToBottom();
 
   try {
     await streamApprovalDecision(
@@ -614,15 +630,18 @@ async function resolveApproval(approved) {
             assistantMessage.content = "";
           }
           assistantMessage.content += chunk;
+          scrollToBottom();
         },
         onApprovalRequired(nextApproval) {
           assistantMessage.content = "另一个操作正在等待你的审批。";
           assistantMessage.toolEvents = nextApproval.tool_events || [];
           conversation.pendingApproval = nextApproval;
+          scrollToBottom();
         },
         onDone(payload) {
           assistantMessage.content = assistantMessage.content.trim();
           assistantMessage.toolEvents = payload.tool_events || assistantMessage.toolEvents || [];
+          scrollToBottom();
         }
       }
     );
@@ -718,7 +737,8 @@ body {
 .app-shell {
   display: grid;
   grid-template-columns: 280px 1fr;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 /* Sidebar */
@@ -972,8 +992,9 @@ body {
 .main-content {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
   background: var(--bg-main);
+  overflow-y: auto;
 }
 
 /* Header */
@@ -1063,7 +1084,6 @@ body {
 .chat-container {
   flex: 1;
   padding: 20px 32px;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -1344,6 +1364,9 @@ body {
   padding: 20px 64px 32px;
   background: var(--bg-card);
   border-top: 1px solid var(--border-subtle);
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
 }
 
 .composer {
