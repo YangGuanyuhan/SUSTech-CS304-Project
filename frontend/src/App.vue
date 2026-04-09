@@ -1082,31 +1082,35 @@ body {
 
 /* Chat Container */
 .chat-container {
+  --send-btn-width: 118px;
   flex: 1;
-  padding: 20px 32px;
+  padding: 20px 64px 20px 80px;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  max-width: 900px;
-  margin: 0 auto;
-  width: 100%;
+  max-width: none;
+  margin: 0;
+  width: auto;
 }
 
 /* Message Row */
 .message-row {
   display: flex;
   gap: 16px;
-  max-width: 800px;
-  width: 100%;
+  max-width: 95%;
+  width: auto;
 }
 
 .message-row.user {
   flex-direction: row-reverse;
   margin-left: auto;
+  margin-right: calc(var(--send-btn-width) + 16px - 60px);
 }
 
 .message-row.assistant {
   margin-right: auto;
+  margin-left: -60px;
+  max-width: calc(95% + 60px);
 }
 
 .avatar {
@@ -1148,7 +1152,8 @@ body {
 
 .message-meta {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 8px;
   align-items: center;
   margin-bottom: 8px;
 }
@@ -1229,7 +1234,7 @@ body {
 
 .tool-event-summary {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
   gap: 12px;
   padding: 14px 16px;
@@ -1361,7 +1366,7 @@ body {
 .composer-wrapper {
   display: flex;
   gap: 16px;
-  padding: 20px 64px 32px;
+  padding: 20px 64px 32px 80px;
   background: var(--bg-card);
   border-top: 1px solid var(--border-subtle);
   position: sticky;
@@ -1406,6 +1411,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: var(--send-btn-width);
   padding: 16px 28px;
   border: none;
   border-radius: 999px;
@@ -1416,6 +1422,7 @@ body {
   cursor: pointer;
   transition: all 0.2s ease;
   align-self: flex-end;
+  justify-content: center;
 }
 
 .send-btn:hover {
@@ -1485,6 +1492,17 @@ body {
 
   .chat-container {
     padding: 24px 24px;
+    margin: 0 auto;
+  }
+
+  .message-row.assistant {
+    margin-left: 0;
+    max-width: 100%;
+  }
+
+  .message-row.user {
+    margin-right: 0;
+    max-width: 100%;
   }
 
   .composer-wrapper {
