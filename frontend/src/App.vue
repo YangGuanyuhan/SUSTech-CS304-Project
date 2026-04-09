@@ -239,6 +239,7 @@
             v-model="draft"
             rows="4"
             placeholder="输入消息... (Shift + Enter 换行)"
+            @keydown.enter.exact.prevent="submitMessage"
           />
           <p class="composer-hint">Shift + Enter 换行，Enter 发送</p>
         </div>
