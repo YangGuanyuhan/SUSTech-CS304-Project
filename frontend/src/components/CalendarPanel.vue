@@ -347,7 +347,7 @@ const rangeLabel = computed(() => {
 
 const dayEvents = computed(() =>
   events.value
-    .filter((event) => isSameDate(new Date(event.start_at), currentDate.value))
+    .filter((event) => eventIntersectsDate(event, currentDate.value))
     .sort((left, right) => new Date(left.start_at) - new Date(right.start_at))
 );
 
@@ -433,11 +433,11 @@ function buildMonthCells(date) {
 }
 
 function eventsForDate(date) {
-  return events.value.filter((event) => isSameDate(new Date(event.start_at), date));
+  return events.value.filter((event) => eventIntersectsDate(event, date));
 }
 
 function hourEvents(hour) {
-  return dayEvents.value.filter((event) => new Date(event.start_at).getHours() === hour);
+  return dayEvents.value.filter((event) => eventIntersectsHour(event, currentDate.value, hour));
 }
 
 function shiftRange(delta) {
@@ -601,7 +601,12 @@ async function handleDateDrop(targetDate) {
   const sourceEnd = dragState.value.endAt;
   const durationMs = sourceEnd.getTime() - sourceStart.getTime();
   const nextStart = new Date(targetDate);
-  nextStart.setHours(sourceStart.getHours(), sourceStart.getMinutes(), sourceStart.getSeconds(), 0);
+  nextStart.setHours(
+    sourceStart.getHours(),
+    sourceStart.getMinutes(),
+    sourceStart.getSeconds(),
+    sourceStart.getMilliseconds()
+  );
   const nextEnd = new Date(nextStart.getTime() + durationMs);
   await moveDraggedEvent(nextStart, nextEnd);
 }
@@ -612,7 +617,12 @@ async function handleHourDrop(hour) {
   const sourceEnd = dragState.value.endAt;
   const durationMs = sourceEnd.getTime() - sourceStart.getTime();
   const nextStart = new Date(currentDate.value);
-  nextStart.setHours(hour, sourceStart.getMinutes(), 0, 0);
+  nextStart.setHours(
+    hour,
+    sourceStart.getMinutes(),
+    sourceStart.getSeconds(),
+    sourceStart.getMilliseconds()
+  );
   const nextEnd = new Date(nextStart.getTime() + durationMs);
   await moveDraggedEvent(nextStart, nextEnd);
 }
@@ -664,6 +674,30 @@ function isSameDate(left, right) {
   return left.getFullYear() === right.getFullYear()
     && left.getMonth() === right.getMonth()
     && left.getDate() === right.getDate();
+}
+
+function eventIntersectsDate(event, date) {
+  const rangeStart = startOfDay(date);
+  const rangeEnd = addDays(rangeStart, 1);
+  return eventIntersectsRange(event, rangeStart, rangeEnd);
+}
+
+function eventIntersectsHour(event, date, hour) {
+  const rangeStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), hour, 0, 0, 0);
+  const rangeEnd = new Date(rangeStart.getTime() + 60 * 60 * 1000);
+  return eventIntersectsRange(event, rangeStart, rangeEnd);
+}
+
+function eventIntersectsRange(event, rangeStart, rangeEnd) {
+  const eventStart = new Date(event.start_at);
+  const eventEnd = new Date(event.end_at);
+  if (Number.isNaN(eventStart.getTime()) || Number.isNaN(eventEnd.getTime())) {
+    return false;
+  }
+  if (eventEnd.getTime() === eventStart.getTime()) {
+    return eventStart >= rangeStart && eventStart < rangeEnd;
+  }
+  return eventStart < rangeEnd && eventEnd > rangeStart;
 }
 
 function dateKey(date) {
