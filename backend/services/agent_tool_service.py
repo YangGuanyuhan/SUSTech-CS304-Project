@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from backend.models.calendar import CalendarEventCreate, CalendarEventMove, CalendarEventUpdate
 from backend.services.datetime_service import DateTimeService
-from backend.services.blackboard_service import DemoBlackboardProvider
+from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
 from backend.services.calendar_service import CalendarService
 from backend.services.memory_service import MemoryService
 from backend.services.quiz_service import QuizService
@@ -330,6 +330,35 @@ def get_tool_definitions() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "blackboard_get_all_courses",
+                "description": "Fetch all Blackboard courses available to the current user.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "blackboard_get_course_announcements",
+                "description": "Get announcements for a specific Blackboard course.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "course_id": {
+                            "type": "string",
+                            "pattern": "^_\\d+_\\d+$",
+                            "description": "The exact 'course_id' field returned by the blackboard_get_all_courses tool. Required format is usually '_XXX_1'."
+                        }
+                    },
+                    "required": ["course_id"]
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "blackboard_test_api_available",
                 "description": "Check whether Blackboard API endpoint users/me is currently available.",
                 "parameters": {
@@ -434,6 +463,10 @@ class AgentToolService:
             return await self._quiz_history_summary(arguments)
         if tool_name == "get_current_datetime":
             return await self._get_current_datetime()
+        if tool_name == "blackboard_get_all_courses":
+            return await self._blackboard_get_all_courses()
+        if tool_name == "blackboard_get_course_announcements":
+            return await self._blackboard_get_course_announcements(arguments)
         if tool_name == "blackboard_test_api_available":
             return await self._blackboard_test_api_available()
         if tool_name == "blackboard_get_calendar_items":
@@ -715,6 +748,19 @@ class AgentToolService:
     async def _get_current_datetime(self) -> str:
         datetime_info = DateTimeService().get_current_datetime()
         return json.dumps(datetime_info.model_dump(mode="json"), ensure_ascii=False)
+
+    async def _blackboard_get_all_courses(self) -> str:
+        service = BlackboardService(self.session, DemoBlackboardProvider())
+        result = await service.get_all_courses()
+        return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
+
+    async def _blackboard_get_course_announcements(self, arguments: dict[str, Any]) -> str:
+        course_id = str(arguments.get("course_id", "")).strip()
+        if not course_id:
+            raise ToolExecutionError("`course_id` is required.")
+        service = BlackboardService(self.session, DemoBlackboardProvider())
+        result = await service.get_announcements(course_id)
+        return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
 
     async def _blackboard_test_api_available(self) -> str:
         import logging

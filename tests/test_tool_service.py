@@ -102,7 +102,7 @@ async def test_command_tool_accepts_string_command(db_session, tmp_path):
     service = AgentToolService(db_session)
     result_raw = await service.execute(
         "run_local_command",
-        {"command": "pwd"},
+        {"command": "echo test"},
         chat_session_id="chat-1",
         workspace_root=str(tmp_path),
     )
@@ -124,3 +124,44 @@ async def test_command_tool_runs_python_script_with_interpreter(db_session, tmp_
     result = json.loads(result_raw)
     assert result["returncode"] == 0
     assert "hello from script" in result["stdout"]
+
+
+async def test_blackboard_get_all_courses_tool_returns_payload(db_session, monkeypatch):
+    from backend.services import agent_tool_service
+
+    class FakeResult:
+        def model_dump(self, mode: str = "json"):
+            assert mode == "json"
+            return {
+                "data": [
+                    {
+                        "course_id": "_101_1",
+                        "name": "Software Engineering",
+                        "blackboard_course_id": "CS304-2026",
+                    }
+                ],
+                "is_cached": False,
+                "cached_at": None,
+                "warning": None,
+            }
+
+    class FakeBlackboardService:
+        def __init__(self, _session, _provider):
+            pass
+
+        async def get_all_courses(self):
+            return FakeResult()
+
+    monkeypatch.setattr(agent_tool_service, "BlackboardService", FakeBlackboardService)
+
+    service = AgentToolService(db_session)
+    result_raw = await service.execute(
+        "blackboard_get_all_courses",
+        {},
+        chat_session_id="chat-1",
+        workspace_root=None,
+    )
+    result = json.loads(result_raw)
+    assert result["is_cached"] is False
+    assert len(result["data"]) == 1
+    assert result["data"][0]["course_id"] == "_101_1"

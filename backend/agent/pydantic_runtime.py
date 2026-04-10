@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Annotated, Any
 
 from httpx import AsyncClient
+from pydantic import Field
 from pydantic_ai import Agent, DeferredToolResults, RunContext
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.openai import OpenAIModel
@@ -318,6 +319,29 @@ class PydanticAIRuntime:
         @agent.tool(name="get_current_datetime")
         async def get_current_datetime(ctx: RunContext[AgentDeps]) -> str:
             return await _execute_tool(ctx, "get_current_datetime", {})
+
+        @agent.tool(name="blackboard_get_all_courses")
+        async def blackboard_get_all_courses(ctx: RunContext[AgentDeps]) -> str:
+            return await _execute_tool(ctx, "blackboard_get_all_courses", {})
+
+        @agent.tool(name="blackboard_get_course_announcements")
+        async def blackboard_get_course_announcements(
+            ctx: RunContext[AgentDeps],
+            course_id: Annotated[
+                str,
+                Field(
+                    pattern=r'^_\d+_\d+$',
+                    description="The exact 'course_id' field returned by the blackboard_get_all_courses tool. Required format is usually '_XXXX_X'."
+                )
+            ]
+        ) -> str:
+            """
+            Get announcements for a specific Blackboard course.
+
+            Args:
+                course_id: The ID of the course in Blackboard (e.g. _8012_1).
+            """
+            return await _execute_tool(ctx, "blackboard_get_course_announcements", {"course_id": course_id})
 
         @agent.tool(name="blackboard_test_api_available")
         async def blackboard_test_api_available(ctx: RunContext[AgentDeps]) -> str:

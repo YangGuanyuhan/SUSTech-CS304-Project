@@ -379,7 +379,12 @@ async function loadCourses() {
   try {
     const response = await getCourses();
     const courses = response.data?.data ?? [];
-    const summary = courses.map((item) => `- ${item.name} (${item.code})`).join("\n");
+    const summary = courses
+      .map((item) => {
+        const courseCode = item.blackboard_course_id || item.course_id || item.code;
+        return `- ${item.name} (${courseCode})`;
+      })
+      .join("\n");
     appendMessage("assistant", summary || "No courses returned.");
   } catch (error) {
     appendMessage("assistant", `Course request failed: ${error.message}`);
