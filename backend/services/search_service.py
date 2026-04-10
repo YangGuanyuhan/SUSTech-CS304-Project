@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 
@@ -18,7 +18,7 @@ class SearchService:
 
     async def search_web(self, query: str, max_results: int = 5) -> list[SearchResult]:
         if self.settings.search_provider == "mock":
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             return [
                 SearchResult(
                     title=f"Mock result for {query}",

@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from backend.config import get_settings
-
 
 _INVALID_SESSION_CHARS = re.compile(r"[^a-zA-Z0-9._-]+")
 
@@ -32,7 +31,7 @@ class LLMLoggingService:
 
     def log_event(self, session_id: str, event_type: str, payload: dict[str, Any]) -> None:
         record = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "session_id": session_id,
             "event_type": event_type,
             "payload": payload,
@@ -52,7 +51,9 @@ class LLMLoggingService:
                     {
                         "id": item.get("id"),
                         "name": item.get("function", {}).get("name"),
-                        "arguments": _truncate_text(item.get("function", {}).get("arguments", ""), limit=1200),
+                        "arguments": _truncate_text(
+                            item.get("function", {}).get("arguments", ""), limit=1200
+                        ),
                     }
                     for item in message.get("tool_calls", [])
                 ]

@@ -8,9 +8,12 @@ from sqlalchemy.orm import Session
 
 from backend.db.repositories import UserPreferenceRepository
 from backend.models.settings import BlackboardProfile, LLMProfile
-from backend.services.runtime_settings import RuntimeBlackboardUpdate, RuntimeLLMUpdate, runtime_settings
+from backend.services.runtime_settings import (
+    RuntimeBlackboardUpdate,
+    RuntimeLLMUpdate,
+    runtime_settings,
+)
 from backend.services.secret_store import secret_store
-
 
 LLM_PROFILE_PREFIX = "llm_profile:"
 LLM_PROFILE_SECRET_PREFIX = "llm_profile_secret:"
@@ -33,7 +36,9 @@ class SettingsService:
         for record in records:
             payload = json.loads(record.value)
             payload["name"] = record.key.removeprefix(LLM_PROFILE_PREFIX)
-            payload["api_key_configured"] = f"{LLM_PROFILE_SECRET_PREFIX}{payload['name']}" in secret_keys
+            payload["api_key_configured"] = (
+                f"{LLM_PROFILE_SECRET_PREFIX}{payload['name']}" in secret_keys
+            )
             profiles.append(LLMProfile.model_validate(payload))
         profiles.sort(key=lambda item: item.name.lower())
         return profiles
@@ -69,7 +74,10 @@ class SettingsService:
             return None
 
         secret_records = self.repository.list(key_prefix=LLM_PROFILE_SECRET_PREFIX)
-        secret_record = next((item for item in secret_records if item.key == f"{LLM_PROFILE_SECRET_PREFIX}{name}"), None)
+        secret_record = next(
+            (item for item in secret_records if item.key == f"{LLM_PROFILE_SECRET_PREFIX}{name}"),
+            None,
+        )
         api_key = secret_store.decrypt(secret_record.value) if secret_record else None
         config = runtime_settings.update_llm_config(
             RuntimeLLMUpdate(
@@ -95,12 +103,16 @@ class SettingsService:
         for record in records:
             payload = json.loads(record.value)
             payload["name"] = record.key.removeprefix(BB_PROFILE_PREFIX)
-            payload["password_configured"] = f"{BB_PROFILE_SECRET_PREFIX}{payload['name']}" in secret_keys
+            payload["password_configured"] = (
+                f"{BB_PROFILE_SECRET_PREFIX}{payload['name']}" in secret_keys
+            )
             profiles.append(BlackboardProfile.model_validate(payload))
         profiles.sort(key=lambda item: item.name.lower())
         return profiles
 
-    async def save_bb_profile(self, profile: BlackboardProfile, password: str | None = None) -> BlackboardProfile:
+    async def save_bb_profile(
+        self, profile: BlackboardProfile, password: str | None = None
+    ) -> BlackboardProfile:
         key = f"{BB_PROFILE_PREFIX}{profile.name}"
         value = json.dumps(
             {
@@ -130,7 +142,10 @@ class SettingsService:
             return None
 
         secret_records = self.repository.list(key_prefix=BB_PROFILE_SECRET_PREFIX)
-        secret_record = next((item for item in secret_records if item.key == f"{BB_PROFILE_SECRET_PREFIX}{name}"), None)
+        secret_record = next(
+            (item for item in secret_records if item.key == f"{BB_PROFILE_SECRET_PREFIX}{name}"),
+            None,
+        )
         password = secret_store.decrypt(secret_record.value) if secret_record else None
         config = runtime_settings.update_blackboard_config(
             RuntimeBlackboardUpdate(

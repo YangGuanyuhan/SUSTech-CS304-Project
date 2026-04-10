@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -22,12 +22,12 @@ from backend.services.runtime_settings import runtime_settings
 
 def _ensure_aware(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _default_status_for_window(start_at: datetime, end_at: datetime) -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if end_at < now:
         return "completed"
     if start_at <= now <= end_at:
@@ -50,7 +50,6 @@ class CalendarService:
         end_at: datetime | None = None,
         occurrence_id: str | None = None,
     ) -> CalendarEvent:
-        recurrence_rule = record.recurrence_rule or {}
         return CalendarEvent(
             id=occurrence_id or record.id,
             event_id=record.id,
@@ -65,10 +64,14 @@ class CalendarService:
             status=record.status or "not_started",
             source_event_id=record.source_event_id,
             is_read_only=record.is_read_only,
-            source_payload=record.source_payload if isinstance(record.source_payload, dict) else None,
+            source_payload=record.source_payload
+            if isinstance(record.source_payload, dict)
+            else None,
         )
 
-    def _validate_time_range(self, start_at: datetime, end_at: datetime) -> tuple[datetime, datetime]:
+    def _validate_time_range(
+        self, start_at: datetime, end_at: datetime
+    ) -> tuple[datetime, datetime]:
         normalized_start = _ensure_aware(start_at)
         normalized_end = _ensure_aware(end_at)
         if normalized_end < normalized_start:

@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
-
 
 QuizQuestionType = Literal["single_choice", "true_false", "short_answer"]
 
@@ -89,4 +88,3 @@ class QuizSubmissionRequest(BaseModel):
 
 class QuizHistoryToolPayload(BaseModel):
     history: QuizHistorySummary
-

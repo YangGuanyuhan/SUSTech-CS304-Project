@@ -1,8 +1,9 @@
 """Blackboard provider interface and demo implementation."""
 
 from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import requests
@@ -45,7 +46,12 @@ class BlackboardProvider(ABC):
 class DemoBlackboardProvider(BlackboardProvider):
     """Demo Blackboard provider used for V1 development."""
 
-    def __init__(self, student_id: str | None = None, password: str | None = None, base_url: str | None = None):
+    def __init__(
+        self,
+        student_id: str | None = None,
+        password: str | None = None,
+        base_url: str | None = None,
+    ):
         self._cas_session = None
         self._student_id = student_id
         self._password = password
@@ -54,6 +60,7 @@ class DemoBlackboardProvider(BlackboardProvider):
     def _get_credentials(self):
         """Get credentials from runtime settings or fall back to config."""
         import logging
+
         logger = logging.getLogger(__name__)
 
         from backend.services.runtime_settings import runtime_settings
@@ -76,7 +83,9 @@ class DemoBlackboardProvider(BlackboardProvider):
             settings = get_settings()
             base_url = self._base_url or settings.blackboard_base_url
 
-        logger.info(f"_get_credentials: student_id={student_id}, base_url={base_url}, password_set={bool(password)}")
+        logger.info(
+            f"_get_credentials: student_id={student_id}, base_url={base_url}, password_set={bool(password)}"
+        )
         return student_id, password, base_url
 
     async def bypass_cas_login(self) -> bool:
@@ -249,8 +258,12 @@ class DemoBlackboardProvider(BlackboardProvider):
         return courses
 
     async def get_assignments(self, course_id: str) -> list[Assignment]:
-        due_at = datetime.now(timezone.utc) + timedelta(days=7)
-        return [Assignment(id=f"{course_id}-a1", course_id=course_id, title="Sprint report", due_at=due_at)]
+        due_at = datetime.now(UTC) + timedelta(days=7)
+        return [
+            Assignment(
+                id=f"{course_id}-a1", course_id=course_id, title="Sprint report", due_at=due_at
+            )
+        ]
 
     async def get_announcements(self, course_id: str) -> list[Announcement]:
         _, _, base_url = self._get_credentials()
@@ -296,7 +309,7 @@ class DemoBlackboardProvider(BlackboardProvider):
                 content = body_obj
 
             created_str = item.get("created")
-            published_at = datetime.now(timezone.utc)
+            published_at = datetime.now(UTC)
             if isinstance(created_str, str):
                 try:
                     published_at = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
@@ -319,7 +332,9 @@ class DemoBlackboardProvider(BlackboardProvider):
         path = Path(save_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"Mock Blackboard content for {file_id}", encoding="utf-8")
-        return DownloadResult(file_id=file_id, save_path=save_path, success=True, message="Downloaded mock file.")
+        return DownloadResult(
+            file_id=file_id, save_path=save_path, success=True, message="Downloaded mock file."
+        )
 
 
 class BlackboardService:
@@ -382,13 +397,18 @@ class BlackboardService:
         return await self.provider.download_file(file_id, save_path)
 
     @staticmethod
-    async def test_connection(student_id: str, password: str, base_url: str = "https://bb.sustech.edu.cn/") -> bool:
+    async def test_connection(
+        student_id: str, password: str, base_url: str = "https://bb.sustech.edu.cn/"
+    ) -> bool:
         """Test Blackboard connection with provided credentials."""
-        import aiohttp
         import logging
 
+        import aiohttp
+
         logger = logging.getLogger(__name__)
-        logger.info(f"Testing Blackboard connection for student: {student_id}, base_url: {base_url}")
+        logger.info(
+            f"Testing Blackboard connection for student: {student_id}, base_url: {base_url}"
+        )
 
         session = aiohttp.ClientSession(
             headers={
@@ -420,8 +440,12 @@ class BlackboardService:
                         "geolocation": "",
                     }
 
-                    async with session.post(str(response.url), data=login_data, timeout=aiohttp.ClientTimeout(total=60)) as login_response:
-                        logger.info(f"Login response URL: {login_response.url}, status: {login_response.status}")
+                    async with session.post(
+                        str(response.url), data=login_data, timeout=aiohttp.ClientTimeout(total=60)
+                    ) as login_response:
+                        logger.info(
+                            f"Login response URL: {login_response.url}, status: {login_response.status}"
+                        )
                         success = "cas.sustech.edu.cn" not in str(login_response.url)
                         return success
                 return True

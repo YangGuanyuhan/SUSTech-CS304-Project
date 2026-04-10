@@ -6,8 +6,8 @@ import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.orm import Session
+from sse_starlette.sse import EventSourceResponse
 
 from backend.agent.core import StudentProductivityAgent
 from backend.api.schemas import (
@@ -26,21 +26,25 @@ from backend.api.schemas import (
     MemoryDeleteByQueryRequest,
     QuizAttemptRequest,
 )
+from backend.config import get_settings
 from backend.db.database import get_db_session
 from backend.models.calendar import CalendarEventCreate, CalendarEventMove, CalendarEventUpdate
 from backend.models.common import ApiResponse
 from backend.models.settings import BlackboardProfile, LLMProfile
+from backend.services.approval_service import approval_service
 from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
 from backend.services.calendar_service import CalendarService
-from backend.services.approval_service import approval_service
 from backend.services.database_insights_service import DatabaseInsightsService
 from backend.services.email_service import EmailService, UnconfirmedSendError
 from backend.services.llm_service import LLMConnectionError, LLMService
 from backend.services.memory_service import MemoryService
 from backend.services.quiz_service import QuizService
-from backend.services.runtime_settings import RuntimeBlackboardUpdate, RuntimeLLMUpdate, runtime_settings
+from backend.services.runtime_settings import (
+    RuntimeBlackboardUpdate,
+    RuntimeLLMUpdate,
+    runtime_settings,
+)
 from backend.services.settings_service import SettingsService
-
 
 router = APIRouter(prefix="/api")
 
@@ -102,7 +106,9 @@ async def get_llm_settings() -> ApiResponse[object]:
 
 @router.put("/settings/llm", response_model=ApiResponse[object])
 async def update_llm_settings(request: LLMSettingsRequest) -> ApiResponse[object]:
-    config = runtime_settings.update_llm_config(RuntimeLLMUpdate.model_validate(request.model_dump()))
+    config = runtime_settings.update_llm_config(
+        RuntimeLLMUpdate.model_validate(request.model_dump())
+    )
     return ApiResponse(success=True, data=config)
 
 
@@ -160,7 +166,9 @@ async def save_llm_profile(
 
 
 @router.delete("/settings/llm/profiles/{name}", response_model=ApiResponse[dict[str, bool]])
-async def delete_llm_profile(name: str, session: Session = Depends(get_db_session)) -> ApiResponse[dict[str, bool]]:
+async def delete_llm_profile(
+    name: str, session: Session = Depends(get_db_session)
+) -> ApiResponse[dict[str, bool]]:
     deleted = await SettingsService(session).delete_llm_profile(name)
     if not deleted:
         raise HTTPException(status_code=404, detail="Profile not found")
@@ -168,7 +176,9 @@ async def delete_llm_profile(name: str, session: Session = Depends(get_db_sessio
 
 
 @router.post("/settings/llm/profiles/{name}/apply", response_model=ApiResponse[object])
-async def apply_llm_profile(name: str, session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+async def apply_llm_profile(
+    name: str, session: Session = Depends(get_db_session)
+) -> ApiResponse[object]:
     profile = await SettingsService(session).apply_llm_profile(name)
     if profile is None:
         raise HTTPException(status_code=404, detail="Profile not found")
@@ -199,7 +209,9 @@ async def save_bb_profile(
 
 
 @router.delete("/settings/blackboard/profiles/{name}", response_model=ApiResponse[dict[str, bool]])
-async def delete_bb_profile(name: str, session: Session = Depends(get_db_session)) -> ApiResponse[dict[str, bool]]:
+async def delete_bb_profile(
+    name: str, session: Session = Depends(get_db_session)
+) -> ApiResponse[dict[str, bool]]:
     deleted = await SettingsService(session).delete_bb_profile(name)
     if not deleted:
         raise HTTPException(status_code=404, detail="Profile not found")
@@ -207,7 +219,9 @@ async def delete_bb_profile(name: str, session: Session = Depends(get_db_session
 
 
 @router.post("/settings/blackboard/profiles/{name}/apply", response_model=ApiResponse[object])
-async def apply_bb_profile(name: str, session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+async def apply_bb_profile(
+    name: str, session: Session = Depends(get_db_session)
+) -> ApiResponse[object]:
     profile = await SettingsService(session).apply_bb_profile(name)
     if profile is None:
         raise HTTPException(status_code=404, detail="Profile not found")
@@ -259,13 +273,21 @@ async def test_blackboard_settings(request: BlackboardSettingsRequest) -> ApiRes
             base_url = settings.blackboard_base_url
 
     if not student_id or not password:
-        return ApiResponse(success=False, data={"error": f"Missing credentials - student_id: {bool(student_id)}, password: {bool(password)}"})
+        return ApiResponse(
+            success=False,
+            data={
+                "error": f"Missing credentials - student_id: {bool(student_id)}, password: {bool(password)}"
+            },
+        )
 
     try:
         logged_in = await BlackboardService.test_connection(student_id, password, base_url)
         return ApiResponse(
             success=logged_in,
-            data={"logged_in": logged_in, "message": "Connection successful" if logged_in else "Connection failed"}
+            data={
+                "logged_in": logged_in,
+                "message": "Connection successful" if logged_in else "Connection failed",
+            },
         )
     except Exception as e:
         return ApiResponse(success=False, data={"error": str(e)})
@@ -301,7 +323,9 @@ async def handle_chat_approval(
     if pending is None:
         raise HTTPException(status_code=404, detail="Approval request not found")
     if pending.session_id != request.session_id:
-        raise HTTPException(status_code=400, detail="Approval request does not belong to this session")
+        raise HTTPException(
+            status_code=400, detail="Approval request does not belong to this session"
+        )
 
     agent = StudentProductivityAgent(session)
 
@@ -340,7 +364,9 @@ async def create_calendar_event(
     session: Session = Depends(get_db_session),
 ) -> ApiResponse[object]:
     try:
-        event = await CalendarService(session).create_event(CalendarEventCreate.model_validate(request.model_dump()))
+        event = await CalendarService(session).create_event(
+            CalendarEventCreate.model_validate(request.model_dump())
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ApiResponse(success=True, data=event)
@@ -407,7 +433,9 @@ async def clone_calendar_event(
 
 
 @router.post("/calendar/sync/blackboard", response_model=ApiResponse[object])
-async def sync_blackboard_calendar(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+async def sync_blackboard_calendar(
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
     result = await CalendarService(session).sync_blackboard()
     return ApiResponse(success=True, data=result)
 
@@ -428,7 +456,9 @@ async def list_memories(
 
 
 @router.delete("/memory/{memory_id}", response_model=ApiResponse[dict[str, bool]])
-async def delete_memory(memory_id: str, session: Session = Depends(get_db_session)) -> ApiResponse[dict[str, bool]]:
+async def delete_memory(
+    memory_id: str, session: Session = Depends(get_db_session)
+) -> ApiResponse[dict[str, bool]]:
     deleted = await MemoryService(session).delete_memory(memory_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Memory not found")
@@ -479,7 +509,9 @@ async def create_email_draft(
     request: EmailDraftRequest,
     session: Session = Depends(get_db_session),
 ) -> ApiResponse[object]:
-    draft = await EmailService(session).draft_email(request.to, request.subject, request.body_instruction)
+    draft = await EmailService(session).draft_email(
+        request.to, request.subject, request.body_instruction
+    )
     return ApiResponse(success=True, data=draft)
 
 

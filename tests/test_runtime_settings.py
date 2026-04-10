@@ -15,7 +15,9 @@ def test_runtime_settings_keeps_existing_secret_on_blank_update():
         RuntimeLLMUpdate(provider="openai", model="gpt-4o-mini", base_url=None, api_key="secret-2")
     )
     runtime_settings.update_llm_config(
-        RuntimeLLMUpdate(provider="custom", model="demo-model", base_url="https://example.com/v1", api_key=None)
+        RuntimeLLMUpdate(
+            provider="custom", model="demo-model", base_url="https://example.com/v1", api_key=None
+        )
     )
     config = runtime_settings.get_llm_config()
     assert config.provider == "custom"

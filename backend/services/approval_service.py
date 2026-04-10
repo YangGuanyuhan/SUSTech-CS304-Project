@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
@@ -12,6 +12,7 @@ from backend.models.tooling import BatchApprovalRequest, ToolApprovalRequest, To
 @dataclass
 class PendingApproval:
     """Stores pending approval requests for a batch of tool calls."""
+
     id: str
     session_id: str
     user_input: str

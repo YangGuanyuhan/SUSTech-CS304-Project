@@ -42,7 +42,9 @@ async def create_memory(
     )
 
 
-async def list_memories(session: Session, *, category: str | None = None, owner_id: str = "local-user"):
+async def list_memories(
+    session: Session, *, category: str | None = None, owner_id: str = "local-user"
+):
     return MemoryRepository(session).list(category=category, owner_id=owner_id)
 
 
@@ -58,7 +60,9 @@ async def create_email_draft(
     body: str,
     owner_id: str = "local-user",
 ):
-    return EmailDraftRepository(session).create(to_addr=to_addr, subject=subject, body=body, owner_id=owner_id)
+    return EmailDraftRepository(session).create(
+        to_addr=to_addr, subject=subject, body=body, owner_id=owner_id
+    )
 
 
 async def get_email_draft(session: Session, draft_id: str, *, owner_id: str = "local-user"):
@@ -136,18 +140,26 @@ async def list_recent_history(
     limit: int = 20,
     owner_id: str = "local-user",
 ):
-    return TaskHistoryRepository(session).list_recent(session_id=session_id, limit=limit, owner_id=owner_id)
+    return TaskHistoryRepository(session).list_recent(
+        session_id=session_id, limit=limit, owner_id=owner_id
+    )
 
 
-async def upsert_user_preference(session: Session, *, key: str, value: str, owner_id: str = "local-user"):
+async def upsert_user_preference(
+    session: Session, *, key: str, value: str, owner_id: str = "local-user"
+):
     return UserPreferenceRepository(session).upsert(key=key, value=value, owner_id=owner_id)
 
 
-async def list_user_preferences(session: Session, *, key_prefix: str | None = None, owner_id: str = "local-user"):
+async def list_user_preferences(
+    session: Session, *, key_prefix: str | None = None, owner_id: str = "local-user"
+):
     return UserPreferenceRepository(session).list(key_prefix=key_prefix, owner_id=owner_id)
 
 
-async def delete_user_preference(session: Session, *, key: str, owner_id: str = "local-user") -> bool:
+async def delete_user_preference(
+    session: Session, *, key: str, owner_id: str = "local-user"
+) -> bool:
     return UserPreferenceRepository(session).delete(key=key, owner_id=owner_id)
 
 
@@ -169,8 +181,12 @@ async def create_quiz_session(
     )
 
 
-async def create_quiz_questions(session: Session, *, quiz_session_id: str, questions: list[dict[str, Any]]):
-    return QuizRepository(session).create_questions(quiz_session_id=quiz_session_id, questions=questions)
+async def create_quiz_questions(
+    session: Session, *, quiz_session_id: str, questions: list[dict[str, Any]]
+):
+    return QuizRepository(session).create_questions(
+        quiz_session_id=quiz_session_id, questions=questions
+    )
 
 
 async def get_quiz_session(session: Session, quiz_id: str, *, owner_id: str = "local-user"):
@@ -182,7 +198,9 @@ async def list_quiz_questions(session: Session, quiz_id: str):
     return [] if session_record is None else list(session_record.questions)
 
 
-async def list_recent_quiz_sessions(session: Session, *, limit: int = 10, owner_id: str = "local-user"):
+async def list_recent_quiz_sessions(
+    session: Session, *, limit: int = 10, owner_id: str = "local-user"
+):
     return QuizRepository(session).list_recent_sessions(limit=limit, owner_id=owner_id)
 
 
@@ -208,7 +226,9 @@ async def create_quiz_answers(session: Session, *, attempt_id: str, answers: lis
     return QuizRepository(session).create_answers(attempt_id=attempt_id, answers=answers)
 
 
-async def list_recent_quiz_attempts(session: Session, *, limit: int = 10, owner_id: str = "local-user"):
+async def list_recent_quiz_attempts(
+    session: Session, *, limit: int = 10, owner_id: str = "local-user"
+):
     return QuizRepository(session).list_recent_attempts(limit=limit, owner_id=owner_id)
 
 

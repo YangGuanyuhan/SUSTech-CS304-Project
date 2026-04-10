@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from typing import Any
 
 from pydantic_ai.tools import DeferredToolRequests
@@ -49,16 +48,18 @@ class StudentProductivityAgent:
         for approval_call in deferred.approvals:
             arguments = self.runtime.parse_tool_arguments(approval_call.args)
             tool_name = approval_call.tool_name
-            tool_calls.append({
-                "tool_call_id": approval_call.tool_call_id,
-                "tool_name": tool_name,
-                "tool_arguments": arguments,
-                "summary": self.runtime.tool_service.build_approval_summary(
-                    tool_name,
-                    arguments,
-                    workspace_root=workspace_root,
-                ),
-            })
+            tool_calls.append(
+                {
+                    "tool_call_id": approval_call.tool_call_id,
+                    "tool_name": tool_name,
+                    "tool_arguments": arguments,
+                    "summary": self.runtime.tool_service.build_approval_summary(
+                        tool_name,
+                        arguments,
+                        workspace_root=workspace_root,
+                    ),
+                }
+            )
             # Add to tool events
             tool_events.append(
                 ToolTrace(
@@ -164,7 +165,8 @@ class StudentProductivityAgent:
             session_id,
             "llm_response",
             {
-                "content": response_text[:3000] + ("...<truncated>" if len(response_text) > 3000 else ""),
+                "content": response_text[:3000]
+                + ("...<truncated>" if len(response_text) > 3000 else ""),
                 "tools_used": tools_used,
             },
         )
@@ -177,7 +179,8 @@ class StudentProductivityAgent:
                         "tool_name": event.tool_name,
                         "arguments": event.arguments,
                         "status": event.status,
-                        "result": event.output[:3000] + ("...<truncated>" if len(event.output) > 3000 else ""),
+                        "result": event.output[:3000]
+                        + ("...<truncated>" if len(event.output) > 3000 else ""),
                     },
                 )
         return AgentTurnResult(
@@ -186,7 +189,9 @@ class StudentProductivityAgent:
             tool_events=tool_events,
         )
 
-    async def run(self, message: str, session_id: str, workspace_root: str | None = None) -> dict[str, object]:
+    async def run(
+        self, message: str, session_id: str, workspace_root: str | None = None
+    ) -> dict[str, object]:
         """Generate a response and record task history."""
 
         try:
@@ -224,9 +229,9 @@ class StudentProductivityAgent:
     ) -> dict[str, object]:
         pending = approval_service.pop(approval_id)
         if pending is None:
-            return AgentTurnResult(response="Approval request was not found or has already been handled.").model_dump(
-                mode="json"
-            )
+            return AgentTurnResult(
+                response="Approval request was not found or has already been handled."
+            ).model_dump(mode="json")
 
         # Build deferred results for all tool calls in the batch
         deferred_results = None
@@ -239,7 +244,7 @@ class StudentProductivityAgent:
                 deferred_results = result
             else:
                 # Merge additional tool results
-                if hasattr(deferred_results, 'tool_results') and hasattr(result, 'tool_results'):
+                if hasattr(deferred_results, "tool_results") and hasattr(result, "tool_results"):
                     deferred_results.tool_results.extend(result.tool_results)
 
         if pending.deferred_metadata and deferred_results:
@@ -251,8 +256,7 @@ class StudentProductivityAgent:
             for event in pending.tool_events
             if not (
                 any(
-                    event.tool_name == tc["tool_name"]
-                    and event.arguments == tc["tool_arguments"]
+                    event.tool_name == tc["tool_name"] and event.arguments == tc["tool_arguments"]
                     for tc in pending.tool_calls
                 )
                 and event.status == "awaiting_approval"

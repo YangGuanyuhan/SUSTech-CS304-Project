@@ -14,7 +14,9 @@ class TaskHistoryService:
         self.session = session
         self.repository = TaskHistoryRepository(session)
 
-    async def add_history(self, session_id: str, user_input: str, agent_response: str, tools_used: list[str]) -> None:
+    async def add_history(
+        self, session_id: str, user_input: str, agent_response: str, tools_used: list[str]
+    ) -> None:
         self.repository.create(
             session_id=session_id,
             user_input=user_input,

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import time
+from datetime import UTC, datetime
 
 from backend.models.task import DateTimeInfo
 
@@ -12,7 +12,7 @@ class DateTimeService:
     """Provide current datetime information in a structured format."""
 
     def get_current_datetime(self) -> DateTimeInfo:
-        now = datetime.now(timezone.utc).astimezone()
+        now = datetime.now(UTC).astimezone()
         utc_offset = now.utcoffset()
         utc_offset_hours = utc_offset.total_seconds() / 3600 if utc_offset else 0.0
 

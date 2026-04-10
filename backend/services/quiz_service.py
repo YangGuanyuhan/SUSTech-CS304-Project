@@ -24,7 +24,6 @@ from backend.models.quiz import (
 )
 from backend.services.llm_service import LLMConfigurationError, LLMConnectionError, LLMService
 
-
 _WORD_RE = re.compile(r"[A-Za-z0-9\u4e00-\u9fff]+")
 logger = logging.getLogger(__name__)
 
@@ -36,7 +35,9 @@ class QuizService:
         self.session = session
         self.repository = QuizRepository(session)
         self.llm_service = LLMService()
-        self.subjective_grading_timeout_seconds = float(get_settings().quiz_subjective_grading_timeout)
+        self.subjective_grading_timeout_seconds = float(
+            get_settings().quiz_subjective_grading_timeout
+        )
 
     async def create_quiz(
         self,
@@ -107,7 +108,9 @@ class QuizService:
             created_at=session_record.created_at,
         )
 
-    async def submit_attempt(self, quiz_id: str, answers: list[QuizAnswerSubmission]) -> QuizAttemptResult:
+    async def submit_attempt(
+        self, quiz_id: str, answers: list[QuizAnswerSubmission]
+    ) -> QuizAttemptResult:
         quiz = await self.get_quiz(quiz_id)
         if quiz is None:
             raise ValueError("Quiz not found")
@@ -164,7 +167,11 @@ class QuizService:
             if quiz is None:
                 continue
             answers = self.repository.list_answers_for_attempt(attempt.id)
-            missed = [answer.feedback for answer in answers if answer.is_correct is False and answer.feedback]
+            missed = [
+                answer.feedback
+                for answer in answers
+                if answer.is_correct is False and answer.feedback
+            ]
             weak_areas.extend(missed[:2])
             recent_topics.append(quiz.topic)
             entries.append(
@@ -180,7 +187,11 @@ class QuizService:
                 )
             )
 
-        average_score = round(mean((entry.score / entry.total_points) * 100 for entry in entries), 2) if entries else 0.0
+        average_score = (
+            round(mean((entry.score / entry.total_points) * 100 for entry in entries), 2)
+            if entries
+            else 0.0
+        )
         analysis = self._build_history_analysis(entries, weak_areas)
         return QuizHistorySummary(
             attempts=entries,
@@ -209,7 +220,7 @@ class QuizService:
         source_material: str | None,
     ) -> list[QuizQuestion]:
         prompt = f"""Generate a quiz about {topic}."""
-        
+
         tools = [
             {
                 "type": "function",
@@ -225,26 +236,30 @@ class QuizService:
                                     "type": "object",
                                     "properties": {
                                         "question_type": {
-                                            "type": "string", 
-                                            "enum": ["single_choice", "true_false", "short_answer"]
+                                            "type": "string",
+                                            "enum": ["single_choice", "true_false", "short_answer"],
                                         },
                                         "prompt": {"type": "string"},
-                                        "options": {
-                                            "type": "array", 
-                                            "items": {"type": "string"}
-                                        },
+                                        "options": {"type": "array", "items": {"type": "string"}},
                                         "correct_answer": {"type": "string"},
                                         "explanation": {"type": "string"},
                                         "rubric": {"type": ["string", "null"]},
-                                        "points": {"type": "number"}
+                                        "points": {"type": "number"},
                                     },
-                                    "required": ["question_type", "prompt", "options", "correct_answer", "explanation", "points"]
-                                }
+                                    "required": [
+                                        "question_type",
+                                        "prompt",
+                                        "options",
+                                        "correct_answer",
+                                        "explanation",
+                                        "points",
+                                    ],
+                                },
                             }
                         },
-                        "required": ["questions"]
-                    }
-                }
+                        "required": ["questions"],
+                    },
+                },
             }
         ]
 
@@ -253,15 +268,15 @@ class QuizService:
                 {"role": "system", "content": "You are a specialized quiz generation assistant."},
                 {"role": "user", "content": prompt},
             ],
-            tools=tools
+            tools=tools,
         )
-        
+
         tool_calls = response.choices[0].message.tool_calls
         if not tool_calls:
             raise ValueError("No tool calls returned from LLM for quiz generation.")
-            
+
         payload = json.loads(tool_calls[0].function.arguments)
-        
+
         questions = []
         for item in payload.get("questions", [])[:question_count]:
             questions.append(
@@ -362,7 +377,9 @@ class QuizService:
 
         # Cycle through templates
         while len(questions) < question_count:
-            questions.append(templates[len(questions) % len(templates)].model_copy(update={"id": str(uuid4())}))
+            questions.append(
+                templates[len(questions) % len(templates)].model_copy(update={"id": str(uuid4())})
+            )
 
         return questions[:question_count]
 
@@ -381,7 +398,9 @@ class QuizService:
             return "false"
         return None
 
-    async def _grade_question(self, question: QuizQuestion, submitted_answer: str) -> QuizAttemptAnswerResult:
+    async def _grade_question(
+        self, question: QuizQuestion, submitted_answer: str
+    ) -> QuizAttemptAnswerResult:
         if question.question_type in {"single_choice", "true_false"}:
             normalized_submitted = submitted_answer.strip().lower()
             normalized_correct = question.correct_answer.strip().lower()
@@ -407,7 +426,9 @@ class QuizService:
                 is_correct=is_correct,
                 score=question.points if is_correct else 0.0,
                 max_score=question.points,
-                feedback=question.explanation if is_correct else f"Expected: {question.correct_answer}",
+                feedback=question.explanation
+                if is_correct
+                else f"Expected: {question.correct_answer}",
                 explanation=question.explanation,
             )
 
@@ -425,7 +446,9 @@ class QuizService:
             explanation=question.explanation,
         )
 
-    async def _grade_subjective_answer(self, question: QuizQuestion, submitted_answer: str) -> tuple[float, str]:
+    async def _grade_subjective_answer(
+        self, question: QuizQuestion, submitted_answer: str
+    ) -> tuple[float, str]:
         if not submitted_answer.strip():
             return 0.0, "No answer submitted."
         try:
@@ -445,7 +468,7 @@ STRICT SCORING GUIDANCE (YOU MUST FOLLOW THESE RULES):
 
 Remember: Your goal is to verify if the student understands the basic concept, not to evaluate their essay-writing skills.
 """.strip()
-            
+
             tools = [
                 {
                     "type": "function",
@@ -457,39 +480,42 @@ Remember: Your goal is to verify if the student understands the basic concept, n
                             "properties": {
                                 "score": {
                                     "type": "number",
-                                    "description": "The score to award the student. Must be between 0 and the maximum score."
+                                    "description": "The score to award the student. Must be between 0 and the maximum score.",
                                 },
                                 "feedback": {
                                     "type": "string",
-                                    "description": "Constructive feedback on the student's answer."
-                                }
+                                    "description": "Constructive feedback on the student's answer.",
+                                },
                             },
-                            "required": ["score", "feedback"]
-                        }
-                    }
+                            "required": ["score", "feedback"],
+                        },
+                    },
                 }
             ]
 
             response = await asyncio.wait_for(
                 self.llm_service.create_chat_completion(
                     [
-                        {"role": "system", "content": "You are an automated grader for short answers."},
+                        {
+                            "role": "system",
+                            "content": "You are an automated grader for short answers.",
+                        },
                         {"role": "user", "content": prompt},
                     ],
-                    tools=tools
+                    tools=tools,
                 ),
                 timeout=self.subjective_grading_timeout_seconds,
             )
-            
+
             tool_calls = response.choices[0].message.tool_calls
             if not tool_calls:
                 raise ValueError("No tool calls returned from LLM for grading.")
-            
+
             payload = json.loads(tool_calls[0].function.arguments)
             score = max(0.0, min(question.points, float(payload["score"])))
             return round(score, 2), str(payload["feedback"])
         except (
-            asyncio.TimeoutError,
+            TimeoutError,
             LLMConfigurationError,
             LLMConnectionError,
             ValueError,
@@ -498,7 +524,9 @@ Remember: Your goal is to verify if the student understands the basic concept, n
         ):
             return self._grade_subjective_answer_fallback(question, submitted_answer)
 
-    def _grade_subjective_answer_fallback(self, question: QuizQuestion, submitted_answer: str) -> tuple[float, str]:
+    def _grade_subjective_answer_fallback(
+        self, question: QuizQuestion, submitted_answer: str
+    ) -> tuple[float, str]:
         answer_terms = set(_WORD_RE.findall(submitted_answer.lower()))
         reference_terms = set(_WORD_RE.findall((question.correct_answer or "").lower()))
         if not answer_terms or not reference_terms:
@@ -519,18 +547,24 @@ Remember: Your goal is to verify if the student understands the basic concept, n
         score: float,
         total_points: float,
     ) -> str:
-        incorrect = [item for item in results if item.is_correct is False or item.score < item.max_score]
+        incorrect = [
+            item for item in results if item.is_correct is False or item.score < item.max_score
+        ]
         if not incorrect:
             return f"Great work. You scored {score}/{total_points} with no missed questions."
         focus = "; ".join(item.prompt[:80] for item in incorrect[:2])
         return f"You scored {score}/{total_points}. Review these areas: {focus}"
 
-    def _build_history_analysis(self, entries: list[QuizHistoryEntry], weak_areas: list[str]) -> str:
+    def _build_history_analysis(
+        self, entries: list[QuizHistoryEntry], weak_areas: list[str]
+    ) -> str:
         if not entries:
             return "No quiz attempts yet. Start with a short quiz to build a learning profile."
         latest = entries[0]
         if latest.score >= latest.total_points * 0.8:
-            return "Recent performance is strong. Increase difficulty or expand into adjacent topics."
+            return (
+                "Recent performance is strong. Increase difficulty or expand into adjacent topics."
+            )
         if weak_areas:
             return f"Recent attempts show recurring weaknesses around: {weak_areas[0]}"
         return "Recent attempts show room for improvement. Revisit missed questions and retry with a shorter quiz."

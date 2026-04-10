@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
-from backend.models.calendar import CalendarEventCreate, CalendarEventMove, CalendarEventUpdate
+from backend.models.calendar import CalendarEventCreate, CalendarEventUpdate
 from backend.services.calendar_service import CalendarService
 
 
 def utc(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
 
 
 async def test_calendar_service_creates_and_lists_event(db_session):
@@ -33,6 +33,7 @@ async def test_calendar_service_creates_and_lists_event(db_session):
     assert result.events[0].title == "Team sync"
     assert result.events[0].event_id == created.event_id
     assert result.events[0].status == "not_started"
+
 
 async def test_blackboard_sync_and_clone(db_session, monkeypatch):
     service = CalendarService(db_session)

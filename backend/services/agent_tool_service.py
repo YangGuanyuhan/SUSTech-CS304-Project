@@ -6,7 +6,7 @@ import asyncio
 import json
 import re
 import shlex
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,12 +14,11 @@ import httpx
 from sqlalchemy.orm import Session
 
 from backend.models.calendar import CalendarEventCreate, CalendarEventMove, CalendarEventUpdate
-from backend.services.datetime_service import DateTimeService
 from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
 from backend.services.calendar_service import CalendarService
+from backend.services.datetime_service import DateTimeService
 from backend.services.memory_service import MemoryService
 from backend.services.quiz_service import QuizService
-
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -92,7 +91,12 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                     "properties": {
                         "path": {"type": "string", "default": "."},
                         "recursive": {"type": "boolean", "default": False},
-                        "max_entries": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+                        "max_entries": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 200,
+                            "default": 50,
+                        },
                     },
                 },
             },
@@ -106,7 +110,12 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                     "type": "object",
                     "properties": {
                         "path": {"type": "string"},
-                        "max_chars": {"type": "integer", "minimum": 100, "maximum": 50000, "default": 12000},
+                        "max_chars": {
+                            "type": "integer",
+                            "minimum": 100,
+                            "maximum": 50000,
+                            "default": 12000,
+                        },
                     },
                     "required": ["path"],
                 },
@@ -162,7 +171,12 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                     "type": "object",
                     "properties": {
                         "url": {"type": "string"},
-                        "max_chars": {"type": "integer", "minimum": 200, "maximum": 50000, "default": 12000},
+                        "max_chars": {
+                            "type": "integer",
+                            "minimum": 200,
+                            "maximum": 50000,
+                            "default": 12000,
+                        },
                     },
                     "required": ["url"],
                 },
@@ -176,7 +190,10 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "start": {"type": "string", "description": "ISO datetime start of the range."},
+                        "start": {
+                            "type": "string",
+                            "description": "ISO datetime start of the range.",
+                        },
                         "end": {"type": "string", "description": "ISO datetime end of the range."},
                         "include_blackboard": {"type": "boolean", "default": True},
                     },
@@ -193,7 +210,10 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                     "type": "object",
                     "properties": {
                         "title": {"type": "string"},
-                        "start_at": {"type": "string", "description": "ISO datetime for event start."},
+                        "start_at": {
+                            "type": "string",
+                            "description": "ISO datetime for event start.",
+                        },
                         "end_at": {"type": "string", "description": "ISO datetime for event end."},
                         "description": {"type": "string"},
                         "location": {"type": "string"},
@@ -225,7 +245,10 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                         "location": {"type": "string"},
                         "all_day": {"type": "boolean"},
                         "timezone": {"type": "string"},
-                        "status": {"type": "string", "enum": ["not_started", "pending", "completed"]},
+                        "status": {
+                            "type": "string",
+                            "enum": ["not_started", "pending", "completed"],
+                        },
                     },
                     "required": ["event_id"],
                 },
@@ -295,7 +318,12 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                     "type": "object",
                     "properties": {
                         "topic": {"type": "string"},
-                        "question_count": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
+                        "question_count": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10,
+                            "default": 5,
+                        },
                         "source_material": {"type": "string"},
                         "title": {"type": "string"},
                     },
@@ -349,10 +377,10 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                         "course_id": {
                             "type": "string",
                             "pattern": "^_\\d+_\\d+$",
-                            "description": "The exact 'course_id' field returned by the blackboard_get_all_courses tool. Required format is usually '_XXX_1'."
+                            "description": "The exact 'course_id' field returned by the blackboard_get_all_courses tool. Required format is usually '_XXX_1'.",
                         }
                     },
-                    "required": ["course_id"]
+                    "required": ["course_id"],
                 },
             },
         },
@@ -560,13 +588,28 @@ class AgentToolService:
             ensure_ascii=False,
         )
 
-    async def _run_local_command(self, arguments: dict[str, Any], workspace_root: str | None) -> str:
+    async def _run_local_command(
+        self, arguments: dict[str, Any], workspace_root: str | None
+    ) -> str:
         cwd = self._workspace_root(workspace_root)
         command = self._normalize_command(arguments.get("command"), cwd)
         timeout_seconds = int(arguments.get("timeout_seconds", 20))
 
         # Check if we need to use shell (for built-in commands like cd)
-        shell_builtins = {"cd", "pwd", "echo", "export", "source", "alias", "history", "fg", "bg", "jobs", "kill", "exit"}
+        shell_builtins = {
+            "cd",
+            "pwd",
+            "echo",
+            "export",
+            "source",
+            "alias",
+            "history",
+            "fg",
+            "bg",
+            "jobs",
+            "kill",
+            "exit",
+        }
         use_shell = command[0] in shell_builtins
 
         if use_shell:
@@ -587,7 +630,7 @@ class AgentToolService:
             )
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             process.kill()
             await process.communicate()
             raise ToolExecutionError(f"Command timed out after {timeout_seconds} seconds.") from exc
@@ -604,7 +647,11 @@ class AgentToolService:
     def _normalize_command(self, raw_command: Any, cwd: Path) -> list[str]:
         if isinstance(raw_command, str):
             command = shlex.split(raw_command)
-        elif isinstance(raw_command, list) and raw_command and all(isinstance(item, str) for item in raw_command):
+        elif (
+            isinstance(raw_command, list)
+            and raw_command
+            and all(isinstance(item, str) for item in raw_command)
+        ):
             command = list(raw_command)
         else:
             raise ToolExecutionError("`command` must be a non-empty string or string array.")
@@ -623,7 +670,9 @@ class AgentToolService:
         max_chars = int(arguments.get("max_chars", 12000))
         if not url.startswith(("http://", "https://")):
             raise ToolExecutionError("`url` must start with http:// or https://")
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, trust_env=False) as client:
+        async with httpx.AsyncClient(
+            timeout=20.0, follow_redirects=True, trust_env=False
+        ) as client:
             response = await client.get(url)
             response.raise_for_status()
         content_type = response.headers.get("content-type", "")
@@ -672,7 +721,9 @@ class AgentToolService:
         event = await self.calendar_service.create_event(
             CalendarEventCreate(
                 title=title,
-                start_at=self._require_iso_datetime(arguments.get("start_at"), field_name="start_at"),
+                start_at=self._require_iso_datetime(
+                    arguments.get("start_at"), field_name="start_at"
+                ),
                 end_at=self._require_iso_datetime(arguments.get("end_at"), field_name="end_at"),
                 description=self._optional_string(arguments.get("description")),
                 location=self._optional_string(arguments.get("location")),
@@ -713,7 +764,9 @@ class AgentToolService:
             event = await self.calendar_service.move_event(
                 event_id,
                 CalendarEventMove(
-                    start_at=self._require_iso_datetime(arguments.get("start_at"), field_name="start_at"),
+                    start_at=self._require_iso_datetime(
+                        arguments.get("start_at"), field_name="start_at"
+                    ),
                     end_at=self._require_iso_datetime(arguments.get("end_at"), field_name="end_at"),
                 ),
             )
@@ -764,18 +817,20 @@ class AgentToolService:
 
     async def _blackboard_test_api_available(self) -> str:
         import logging
+
         logger = logging.getLogger(__name__)
 
         from backend.services.runtime_settings import runtime_settings
+
         bb_config = runtime_settings.get_blackboard_config()
         password = runtime_settings.get_secret_blackboard_password()
 
-        logger.info(f"BB config: student_id={bb_config.student_id}, base_url={bb_config.base_url}, password={'set' if password else 'None'}")
+        logger.info(
+            f"BB config: student_id={bb_config.student_id}, base_url={bb_config.base_url}, password={'set' if password else 'None'}"
+        )
 
         provider = DemoBlackboardProvider(
-            student_id=bb_config.student_id,
-            password=password,
-            base_url=bb_config.base_url
+            student_id=bb_config.student_id, password=password, base_url=bb_config.base_url
         )
         available = await provider.test_api_available()
         logger.info(f"BB test_api_available result: {available}")
@@ -783,12 +838,11 @@ class AgentToolService:
 
     async def _blackboard_get_calendar_items(self) -> str:
         from backend.services.runtime_settings import runtime_settings
+
         bb_config = runtime_settings.get_blackboard_config()
         password = runtime_settings.get_secret_blackboard_password()
         provider = DemoBlackboardProvider(
-            student_id=bb_config.student_id,
-            password=password,
-            base_url=bb_config.base_url
+            student_id=bb_config.student_id, password=password, base_url=bb_config.base_url
         )
         items = await provider.get_calendar_items()
         return json.dumps({"items": items}, ensure_ascii=False)
@@ -796,7 +850,9 @@ class AgentToolService:
     def _workspace_root(self, workspace_root: str | None) -> Path:
         root = Path(workspace_root or "").expanduser()
         if not workspace_root:
-            raise ToolExecutionError("No workspace root is configured. Ask the user to set one first.")
+            raise ToolExecutionError(
+                "No workspace root is configured. Ask the user to set one first."
+            )
         try:
             resolved = root.resolve(strict=True)
         except FileNotFoundError as exc:
@@ -807,11 +863,17 @@ class AgentToolService:
 
     def _resolve_path(self, workspace_root: str | None, requested_path: str) -> Path:
         root = self._workspace_root(workspace_root)
-        candidate = (root / requested_path).resolve() if not Path(requested_path).is_absolute() else Path(requested_path).resolve()
+        candidate = (
+            (root / requested_path).resolve()
+            if not Path(requested_path).is_absolute()
+            else Path(requested_path).resolve()
+        )
         try:
             candidate.relative_to(root)
         except ValueError as exc:
-            raise ToolExecutionError("Requested path escapes the configured workspace root.") from exc
+            raise ToolExecutionError(
+                "Requested path escapes the configured workspace root."
+            ) from exc
         return candidate
 
     def _optional_string(self, value: Any) -> str | None:
@@ -829,7 +891,9 @@ class AgentToolService:
         if value is None:
             return None
         if not isinstance(value, str) or not value.strip():
-            raise ToolExecutionError("Optional datetime fields must be ISO datetime strings when provided.")
+            raise ToolExecutionError(
+                "Optional datetime fields must be ISO datetime strings when provided."
+            )
         return self._parse_iso_datetime(value, field_name="datetime")
 
     def _parse_iso_datetime(self, value: str, *, field_name: str) -> datetime:
@@ -837,10 +901,12 @@ class AgentToolService:
         try:
             parsed = datetime.fromisoformat(normalized)
         except ValueError as exc:
-            raise ToolExecutionError(f"`{field_name}` must be a valid ISO datetime string.") from exc
+            raise ToolExecutionError(
+                f"`{field_name}` must be a valid ISO datetime string."
+            ) from exc
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
 
     def _normalize_status(self, value: Any) -> str:
         if value is None:

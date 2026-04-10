@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from email.message import EmailMessage
 
 import aiosmtplib
-from email.message import EmailMessage
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.config import get_settings
-from backend.db.repositories import EmailDraftRepository
 from backend.db.models import EmailDraftRecord
+from backend.db.repositories import EmailDraftRepository
 from backend.models.email import EmailDraft, SendResult
 
 
@@ -44,7 +44,9 @@ class EmailService:
         return _to_draft(record)
 
     async def list_drafts(self) -> list[EmailDraft]:
-        result = self.session.execute(select(EmailDraftRecord).order_by(EmailDraftRecord.created_at.desc()))
+        result = self.session.execute(
+            select(EmailDraftRecord).order_by(EmailDraftRecord.created_at.desc())
+        )
         return [_to_draft(record) for record in result.scalars()]
 
     async def send_email(self, draft_id: str, confirmed: bool) -> SendResult:
@@ -74,6 +76,6 @@ class EmailService:
         self.repository.update_status(
             draft_id,
             status="sent",
-            sent_at=datetime.now(timezone.utc),
+            sent_at=datetime.now(UTC),
         )
         return SendResult(draft_id=draft_id, status="sent", detail="Email sent.")

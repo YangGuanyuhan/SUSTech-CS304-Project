@@ -3,10 +3,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pydantic_ai.tools import DeferredToolRequests
 
 from backend.agent.core import StudentProductivityAgent
 from backend.services.agent_tool_service import AgentToolService, ToolExecutionError
-from pydantic_ai.tools import DeferredToolRequests, ToolApproved
 
 
 def _fake_tool_call(name: str, arguments: dict[str, object], tool_call_id: str = "tool-1"):
@@ -80,10 +80,12 @@ async def test_agent_returns_approval_request_for_local_file_tools(db_session, t
     mock_deps.tool_events = []
     mock_deps.tools_used = []
 
-    with patch.object(agent.runtime, 'run', new_callable=AsyncMock) as mock_run:
+    with patch.object(agent.runtime, "run", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = (mock_result, mock_deps)
-        with patch.object(agent.runtime, 'extract_text_or_requests', return_value=deferred_output):
-            with patch.object(agent.runtime, 'parse_tool_arguments', return_value={"path": "notes.txt"}):
+        with patch.object(agent.runtime, "extract_text_or_requests", return_value=deferred_output):
+            with patch.object(
+                agent.runtime, "parse_tool_arguments", return_value={"path": "notes.txt"}
+            ):
                 result = await agent.run("Read notes.txt", "session-approval", str(tmp_path))
 
                 # Should return batch approval request

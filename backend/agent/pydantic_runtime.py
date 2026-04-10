@@ -19,7 +19,6 @@ from backend.models.tooling import ToolTrace
 from backend.services.agent_tool_service import AgentToolService
 from backend.services.runtime_settings import runtime_settings
 
-
 SYSTEM_PROMPT = """
 You are Student Productivity Agent, a study assistant for SUSTech students.
 You have access to real backend tools. Treat local file access, local command execution,
@@ -245,7 +244,9 @@ class PydanticAIRuntime:
 
         @agent.tool(name="calendar_clone_blackboard_event")
         async def calendar_clone_blackboard_event(ctx: RunContext[AgentDeps], event_id: str) -> str:
-            return await _execute_tool(ctx, "calendar_clone_blackboard_event", {"event_id": event_id})
+            return await _execute_tool(
+                ctx, "calendar_clone_blackboard_event", {"event_id": event_id}
+            )
 
         @agent.tool(name="list_local_files", requires_approval=True)
         async def list_local_files(
@@ -261,8 +262,12 @@ class PydanticAIRuntime:
             )
 
         @agent.tool(name="read_local_file", requires_approval=True)
-        async def read_local_file(ctx: RunContext[AgentDeps], path: str, max_chars: int = 12000) -> str:
-            return await _execute_tool(ctx, "read_local_file", {"path": path, "max_chars": max_chars})
+        async def read_local_file(
+            ctx: RunContext[AgentDeps], path: str, max_chars: int = 12000
+        ) -> str:
+            return await _execute_tool(
+                ctx, "read_local_file", {"path": path, "max_chars": max_chars}
+            )
 
         @agent.tool(name="write_local_file", requires_approval=True)
         async def write_local_file(
@@ -290,7 +295,9 @@ class PydanticAIRuntime:
             )
 
         @agent.tool(name="fetch_webpage", requires_approval=True)
-        async def fetch_webpage(ctx: RunContext[AgentDeps], url: str, max_chars: int = 12000) -> str:
+        async def fetch_webpage(
+            ctx: RunContext[AgentDeps], url: str, max_chars: int = 12000
+        ) -> str:
             return await _execute_tool(ctx, "fetch_webpage", {"url": url, "max_chars": max_chars})
 
         @agent.tool(name="create_quiz")
@@ -330,10 +337,10 @@ class PydanticAIRuntime:
             course_id: Annotated[
                 str,
                 Field(
-                    pattern=r'^_\d+_\d+$',
-                    description="The exact 'course_id' field returned by the blackboard_get_all_courses tool. Required format is usually '_XXXX_X'."
-                )
-            ]
+                    pattern=r"^_\d+_\d+$",
+                    description="The exact 'course_id' field returned by the blackboard_get_all_courses tool. Required format is usually '_XXXX_X'.",
+                ),
+            ],
         ) -> str:
             """
             Get announcements for a specific Blackboard course.
@@ -341,7 +348,9 @@ class PydanticAIRuntime:
             Args:
                 course_id: The ID of the course in Blackboard (e.g. _8012_1).
             """
-            return await _execute_tool(ctx, "blackboard_get_course_announcements", {"course_id": course_id})
+            return await _execute_tool(
+                ctx, "blackboard_get_course_announcements", {"course_id": course_id}
+            )
 
         @agent.tool(name="blackboard_test_api_available")
         async def blackboard_test_api_available(ctx: RunContext[AgentDeps]) -> str:

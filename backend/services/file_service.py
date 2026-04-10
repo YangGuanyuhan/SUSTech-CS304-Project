@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 try:
@@ -20,21 +20,24 @@ from backend.models.task import (
     RenameResult,
 )
 
-
 INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*]')
 
 
 class FileService:
     """Local file automation service."""
 
-    def batch_rename(self, directory: str, pattern: str, dry_run: bool = True) -> RenamePreview | RenameResult:
+    def batch_rename(
+        self, directory: str, pattern: str, dry_run: bool = True
+    ) -> RenamePreview | RenameResult:
         base = Path(directory)
         files = sorted(path for path in base.iterdir() if path.is_file())
         operations: list[RenameOperation] = []
         generated_names: set[str] = set()
 
         for index, file_path in enumerate(files, start=1):
-            new_name = pattern.format(index=index, stem=file_path.stem, suffix=file_path.suffix.lstrip("."))
+            new_name = pattern.format(
+                index=index, stem=file_path.stem, suffix=file_path.suffix.lstrip(".")
+            )
             conflict = False
             reason = None
             if INVALID_FILENAME_CHARS.search(new_name):
@@ -97,4 +100,4 @@ class FileService:
                     explanation="The correct answer is taken directly from the extracted source summary.",
                 )
             )
-        return Quiz(source_file=file_path, questions=questions, generated_at=datetime.now(timezone.utc))
+        return Quiz(source_file=file_path, questions=questions, generated_at=datetime.now(UTC))

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import delete, func, select
@@ -56,7 +56,9 @@ class MemoryRepository(Repository):
             )
         )
 
-    def list(self, *, category: str | None = None, owner_id: str = "local-user") -> list[MemoryRecord]:
+    def list(
+        self, *, category: str | None = None, owner_id: str = "local-user"
+    ) -> list[MemoryRecord]:
         stmt = select(MemoryRecord).where(MemoryRecord.owner_id == owner_id)
         if category:
             stmt = stmt.where(MemoryRecord.category == category)
@@ -64,15 +66,21 @@ class MemoryRepository(Repository):
         return list(self.session.execute(stmt).scalars())
 
     def delete(self, memory_id: str, *, owner_id: str = "local-user") -> bool:
-        stmt = delete(MemoryRecord).where(MemoryRecord.id == memory_id, MemoryRecord.owner_id == owner_id)
+        stmt = delete(MemoryRecord).where(
+            MemoryRecord.id == memory_id, MemoryRecord.owner_id == owner_id
+        )
         result = self.session.execute(stmt)
         self.session.commit()
         return result.rowcount > 0
 
 
 class EmailDraftRepository(Repository):
-    def create(self, *, to_addr: str, subject: str, body: str, owner_id: str = "local-user") -> EmailDraftRecord:
-        return self._persist(EmailDraftRecord(owner_id=owner_id, to_addr=to_addr, subject=subject, body=body))
+    def create(
+        self, *, to_addr: str, subject: str, body: str, owner_id: str = "local-user"
+    ) -> EmailDraftRecord:
+        return self._persist(
+            EmailDraftRecord(owner_id=owner_id, to_addr=to_addr, subject=subject, body=body)
+        )
 
     def get(self, draft_id: str, *, owner_id: str = "local-user") -> EmailDraftRecord | None:
         stmt = select(EmailDraftRecord).where(
@@ -108,7 +116,9 @@ class EmailDraftRepository(Repository):
 
 
 class BlackboardCacheRepository(Repository):
-    def save(self, *, endpoint: str, cache_key: str, data: Any, owner_id: str = "local-user") -> BlackboardCacheRecord:
+    def save(
+        self, *, endpoint: str, cache_key: str, data: Any, owner_id: str = "local-user"
+    ) -> BlackboardCacheRecord:
         return self._persist(
             BlackboardCacheRecord(
                 owner_id=owner_id,
@@ -118,7 +128,9 @@ class BlackboardCacheRepository(Repository):
             )
         )
 
-    def load(self, *, endpoint: str, cache_key: str, owner_id: str = "local-user") -> BlackboardCacheRecord | None:
+    def load(
+        self, *, endpoint: str, cache_key: str, owner_id: str = "local-user"
+    ) -> BlackboardCacheRecord | None:
         stmt = (
             select(BlackboardCacheRecord)
             .where(
@@ -160,7 +172,9 @@ class TaskHistoryRepository(Repository):
     ) -> list[TaskHistoryRecord]:
         stmt = (
             select(TaskHistoryRecord)
-            .where(TaskHistoryRecord.owner_id == owner_id, TaskHistoryRecord.session_id == session_id)
+            .where(
+                TaskHistoryRecord.owner_id == owner_id, TaskHistoryRecord.session_id == session_id
+            )
             .order_by(TaskHistoryRecord.created_at.desc())
             .limit(limit)
         )
@@ -178,12 +192,14 @@ class UserPreferenceRepository(Repository):
             return self._persist(UserPreferenceRecord(owner_id=owner_id, key=key, value=value))
 
         record.value = value
-        record.updated_at = datetime.now(timezone.utc)
+        record.updated_at = datetime.now(UTC)
         self.session.commit()
         self.session.refresh(record)
         return record
 
-    def list(self, *, key_prefix: str | None = None, owner_id: str = "local-user") -> list[UserPreferenceRecord]:
+    def list(
+        self, *, key_prefix: str | None = None, owner_id: str = "local-user"
+    ) -> list[UserPreferenceRecord]:
         stmt = select(UserPreferenceRecord).where(UserPreferenceRecord.owner_id == owner_id)
         if key_prefix:
             stmt = stmt.where(UserPreferenceRecord.key.like(f"{key_prefix}%"))
@@ -268,16 +284,12 @@ class CalendarRepository(Repository):
         owner_id: str = "local-user",
     ) -> list[CalendarEventRecord]:
         recurring_clause = CalendarEventRecord.recurrence_rule.is_not(None)
-        overlap_clause = (
-            (CalendarEventRecord.start_at <= range_end) &
-            (CalendarEventRecord.end_at >= range_start)
+        overlap_clause = (CalendarEventRecord.start_at <= range_end) & (
+            CalendarEventRecord.end_at >= range_start
         )
         stmt = select(CalendarEventRecord).where(
             CalendarEventRecord.owner_id == owner_id,
-            (
-                ((CalendarEventRecord.start_at <= range_end) & recurring_clause)
-                | overlap_clause
-            ),
+            (((CalendarEventRecord.start_at <= range_end) & recurring_clause) | overlap_clause),
         )
         if not include_blackboard:
             stmt = stmt.where(CalendarEventRecord.source != "blackboard")
@@ -315,7 +327,9 @@ class QuizRepository(Repository):
             )
         )
 
-    def create_questions(self, *, quiz_session_id: str, questions: list[dict[str, Any]]) -> list[QuizQuestionRecord]:
+    def create_questions(
+        self, *, quiz_session_id: str, questions: list[dict[str, Any]]
+    ) -> list[QuizQuestionRecord]:
         records: list[QuizQuestionRecord] = []
         for index, question in enumerate(questions, start=1):
             record = QuizQuestionRecord(
@@ -337,7 +351,9 @@ class QuizRepository(Repository):
             self.session.refresh(record)
         return records
 
-    def get_session(self, quiz_id: str, *, owner_id: str = "local-user") -> QuizSessionRecord | None:
+    def get_session(
+        self, quiz_id: str, *, owner_id: str = "local-user"
+    ) -> QuizSessionRecord | None:
         stmt = (
             select(QuizSessionRecord)
             .options(selectinload(QuizSessionRecord.questions))
@@ -345,7 +361,9 @@ class QuizRepository(Repository):
         )
         return self.session.execute(stmt).scalar_one_or_none()
 
-    def list_recent_sessions(self, *, limit: int = 10, owner_id: str = "local-user") -> list[QuizSessionRecord]:
+    def list_recent_sessions(
+        self, *, limit: int = 10, owner_id: str = "local-user"
+    ) -> list[QuizSessionRecord]:
         stmt = (
             select(QuizSessionRecord)
             .where(QuizSessionRecord.owner_id == owner_id)
@@ -373,7 +391,9 @@ class QuizRepository(Repository):
             )
         )
 
-    def create_answers(self, *, attempt_id: str, answers: list[dict[str, Any]]) -> list[QuizAnswerRecord]:
+    def create_answers(
+        self, *, attempt_id: str, answers: list[dict[str, Any]]
+    ) -> list[QuizAnswerRecord]:
         records: list[QuizAnswerRecord] = []
         for answer in answers:
             record = QuizAnswerRecord(
@@ -391,7 +411,9 @@ class QuizRepository(Repository):
             self.session.refresh(record)
         return records
 
-    def list_recent_attempts(self, *, limit: int = 10, owner_id: str = "local-user") -> list[QuizAttemptRecord]:
+    def list_recent_attempts(
+        self, *, limit: int = 10, owner_id: str = "local-user"
+    ) -> list[QuizAttemptRecord]:
         stmt = (
             select(QuizAttemptRecord)
             .where(QuizAttemptRecord.owner_id == owner_id)
@@ -409,27 +431,59 @@ class DatabaseAnalyticsRepository(Repository):
     """Read-only aggregate queries for operational visibility."""
 
     def overview(self, *, owner_id: str = "local-user", recent_limit: int = 8) -> dict[str, Any]:
-        memory_count = self.session.scalar(
-            select(func.count()).select_from(MemoryRecord).where(MemoryRecord.owner_id == owner_id)
-        ) or 0
-        task_count = self.session.scalar(
-            select(func.count()).select_from(TaskHistoryRecord).where(TaskHistoryRecord.owner_id == owner_id)
-        ) or 0
-        quiz_count = self.session.scalar(
-            select(func.count()).select_from(QuizSessionRecord).where(QuizSessionRecord.owner_id == owner_id)
-        ) or 0
-        attempt_count = self.session.scalar(
-            select(func.count()).select_from(QuizAttemptRecord).where(QuizAttemptRecord.owner_id == owner_id)
-        ) or 0
-        draft_count = self.session.scalar(
-            select(func.count()).select_from(EmailDraftRecord).where(EmailDraftRecord.owner_id == owner_id)
-        ) or 0
-        preference_count = self.session.scalar(
-            select(func.count()).select_from(UserPreferenceRecord).where(UserPreferenceRecord.owner_id == owner_id)
-        ) or 0
+        memory_count = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(MemoryRecord)
+                .where(MemoryRecord.owner_id == owner_id)
+            )
+            or 0
+        )
+        task_count = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(TaskHistoryRecord)
+                .where(TaskHistoryRecord.owner_id == owner_id)
+            )
+            or 0
+        )
+        quiz_count = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(QuizSessionRecord)
+                .where(QuizSessionRecord.owner_id == owner_id)
+            )
+            or 0
+        )
+        attempt_count = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(QuizAttemptRecord)
+                .where(QuizAttemptRecord.owner_id == owner_id)
+            )
+            or 0
+        )
+        draft_count = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(EmailDraftRecord)
+                .where(EmailDraftRecord.owner_id == owner_id)
+            )
+            or 0
+        )
+        preference_count = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(UserPreferenceRecord)
+                .where(UserPreferenceRecord.owner_id == owner_id)
+            )
+            or 0
+        )
 
         memory_records = self.session.execute(
-            select(MemoryRecord).where(MemoryRecord.owner_id == owner_id).order_by(MemoryRecord.created_at.desc())
+            select(MemoryRecord)
+            .where(MemoryRecord.owner_id == owner_id)
+            .order_by(MemoryRecord.created_at.desc())
         ).scalars()
         memory_category_counts = Counter(record.category for record in memory_records)
 

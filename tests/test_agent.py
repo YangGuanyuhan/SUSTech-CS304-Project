@@ -15,9 +15,11 @@ async def test_agent_returns_llm_response(db_session):
     mock_deps.tool_events = []
     mock_deps.tools_used = []
 
-    with patch.object(agent.runtime, 'run', new_callable=AsyncMock) as mock_run:
+    with patch.object(agent.runtime, "run", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = (mock_result, mock_deps)
-        with patch.object(agent.runtime, 'extract_text_or_requests', return_value="Here is the answer."):
+        with patch.object(
+            agent.runtime, "extract_text_or_requests", return_value="Here is the answer."
+        ):
             result = await agent.run("Hello", "session-1")
             assert result["response"] == "Here is the answer."
 
@@ -27,8 +29,10 @@ async def test_agent_uses_llm_runtime_fallback_when_unconfigured(db_session):
     agent = StudentProductivityAgent(db_session)
 
     # Mock runtime to raise an error (simulating missing API key)
-    with patch.object(agent.runtime, 'run', new_callable=AsyncMock) as mock_run:
-        mock_run.side_effect = ValueError("No API key is configured. Open the LLM settings panel first.")
+    with patch.object(agent.runtime, "run", new_callable=AsyncMock) as mock_run:
+        mock_run.side_effect = ValueError(
+            "No API key is configured. Open the LLM settings panel first."
+        )
         result = await agent.run("Hello", "session-2")
         assert "LLM is not ready yet" in result["response"]
         assert "No API key" in result["response"]

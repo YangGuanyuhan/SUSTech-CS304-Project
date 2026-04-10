@@ -76,7 +76,7 @@ class RuntimeSettingsManager:
         # Check if it's encrypted (starts with encrypted prefix)
         if stored_password.startswith(SECRET_PREFIX):
             try:
-                return secret_store.decrypt(stored_password[len(SECRET_PREFIX):])
+                return secret_store.decrypt(stored_password[len(SECRET_PREFIX) :])
             except Exception:
                 return None
         # Otherwise return as-is (from environment variable)
@@ -138,6 +138,7 @@ class RuntimeSettingsManager:
         if password:
             encrypted = f"{SECRET_PREFIX}{secret_store.encrypt(password)}"
             import json
+
             secrets_file.write_text(json.dumps({"password": encrypted}))
         elif secrets_file.exists():
             secrets_file.unlink()
@@ -149,10 +150,11 @@ class RuntimeSettingsManager:
         if secrets_file.exists():
             try:
                 import json
+
                 data = json.loads(secrets_file.read_text())
                 stored = data.get("password", "")
                 if stored.startswith(SECRET_PREFIX):
-                    return secret_store.decrypt(stored[len(SECRET_PREFIX):])
+                    return secret_store.decrypt(stored[len(SECRET_PREFIX) :])
             except Exception:
                 pass
         return None

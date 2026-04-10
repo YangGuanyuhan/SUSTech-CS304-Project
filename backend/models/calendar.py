@@ -7,7 +7,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-
 CalendarEventSource = Literal["local", "blackboard"]
 CalendarEventStatus = Literal["not_started", "pending", "completed"]
 
@@ -49,6 +48,7 @@ class CalendarEventUpdate(BaseModel):
     all_day: bool | None = None
     timezone: str | None = None
     status: CalendarEventStatus | None = None
+
 
 class CalendarEventMove(BaseModel):
     start_at: datetime

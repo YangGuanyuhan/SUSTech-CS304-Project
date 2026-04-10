@@ -9,7 +9,9 @@ from backend.services.quiz_service import QuizService
 
 async def test_quiz_service_creates_fallback_quiz(db_session):
     service = QuizService(db_session)
-    service.llm_service.create_chat_completion = AsyncMock(side_effect=LLMConfigurationError("missing"))
+    service.llm_service.create_chat_completion = AsyncMock(
+        side_effect=LLMConfigurationError("missing")
+    )
 
     quiz = await service.create_quiz(
         chat_session_id="chat-quiz",
@@ -24,7 +26,9 @@ async def test_quiz_service_creates_fallback_quiz(db_session):
 
 async def test_quiz_service_grades_attempt_and_returns_summary(db_session):
     service = QuizService(db_session)
-    service.llm_service.create_chat_completion = AsyncMock(side_effect=LLMConfigurationError("missing"))
+    service.llm_service.create_chat_completion = AsyncMock(
+        side_effect=LLMConfigurationError("missing")
+    )
 
     quiz = await service.create_quiz(
         chat_session_id="chat-quiz",
@@ -36,9 +40,13 @@ async def test_quiz_service_grades_attempt_and_returns_summary(db_session):
     attempt = await service.submit_attempt(
         quiz.id,
         [
-            QuizAnswerSubmission(question_id=quiz.questions[0].id, answer=quiz.questions[0].correct_answer),
+            QuizAnswerSubmission(
+                question_id=quiz.questions[0].id, answer=quiz.questions[0].correct_answer
+            ),
             QuizAnswerSubmission(question_id=quiz.questions[1].id, answer="False"),
-            QuizAnswerSubmission(question_id=quiz.questions[2].id, answer="Transactions keep data consistent."),
+            QuizAnswerSubmission(
+                question_id=quiz.questions[2].id, answer="Transactions keep data consistent."
+            ),
         ],
     )
 
@@ -49,7 +57,9 @@ async def test_quiz_service_grades_attempt_and_returns_summary(db_session):
 
 async def test_quiz_history_summary_aggregates_attempts(db_session):
     service = QuizService(db_session)
-    service.llm_service.create_chat_completion = AsyncMock(side_effect=LLMConfigurationError("missing"))
+    service.llm_service.create_chat_completion = AsyncMock(
+        side_effect=LLMConfigurationError("missing")
+    )
 
     quiz = await service.create_quiz(
         chat_session_id="chat-history",
@@ -60,7 +70,9 @@ async def test_quiz_history_summary_aggregates_attempts(db_session):
     await service.submit_attempt(
         quiz.id,
         [
-            QuizAnswerSubmission(question_id=quiz.questions[0].id, answer=quiz.questions[0].correct_answer),
+            QuizAnswerSubmission(
+                question_id=quiz.questions[0].id, answer=quiz.questions[0].correct_answer
+            ),
             QuizAnswerSubmission(question_id=quiz.questions[1].id, answer="False"),
         ],
     )

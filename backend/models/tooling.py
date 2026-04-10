@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -15,17 +15,18 @@ class ToolApprovalRequest(BaseModel):
     arguments: dict[str, Any]
     summary: str
     workspace_root: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class BatchApprovalRequest(BaseModel):
     """Batch of pending tool approvals for the same user request."""
+
     id: str
     session_id: str
     approvals: list[ToolApprovalRequest]
     combined_summary: str
     workspace_root: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class ToolTrace(BaseModel):

@@ -30,7 +30,9 @@ class LLMService:
         if config.provider.strip().lower() != "openai":
             raise LLMConfigurationError("Only OpenAI-compatible providers are supported right now.")
         if not api_key:
-            raise LLMConfigurationError("No API key is configured. Open the LLM settings panel first.")
+            raise LLMConfigurationError(
+                "No API key is configured. Open the LLM settings panel first."
+            )
 
         client = AsyncOpenAI(
             api_key=api_key,
@@ -103,8 +105,10 @@ class LLMService:
         try:
             while True:
                 try:
-                    item = await asyncio.wait_for(queue.get(), timeout=first_chunk_timeout if not first_chunk_seen else None)
-                except asyncio.TimeoutError:
+                    item = await asyncio.wait_for(
+                        queue.get(), timeout=first_chunk_timeout if not first_chunk_seen else None
+                    )
+                except TimeoutError:
                     task.cancel()
                     fallback = await self.generate_chat(messages)
                     if fallback:

@@ -28,7 +28,9 @@ class MemoryService:
         self.session = session
         self.repository = MemoryRepository(session)
 
-    async def save_memory(self, key: str, value: Any, category: str, tags: list[str] | None = None) -> Memory:
+    async def save_memory(
+        self, key: str, value: Any, category: str, tags: list[str] | None = None
+    ) -> Memory:
         record = self.repository.create(
             key=key,
             value=value,
