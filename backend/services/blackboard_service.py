@@ -253,16 +253,67 @@ class DemoBlackboardProvider(BlackboardProvider):
         return [Assignment(id=f"{course_id}-a1", course_id=course_id, title="Sprint report", due_at=due_at)]
 
     async def get_announcements(self, course_id: str) -> list[Announcement]:
-        now = datetime.now(timezone.utc)
-        return [
-            Announcement(
-                id=f"{course_id}-n1",
-                course_id=course_id,
-                title="Project checkpoint",
-                content="Submit your checkpoint slides before Friday.",
-                published_at=now,
+        _, _, base_url = self._get_credentials()
+        api_url = f"{base_url.rstrip('/')}/courses/{course_id}/announcements"
+
+        if self._cas_session is None:
+            logged_in = await self.bypass_cas_login()
+            if not logged_in:
+                return []
+
+        try:
+            response = self._cas_session.get(api_url, timeout=60)
+        except requests.Timeout:
+            return []
+
+        if response.status_code == 401 or not response.ok:
+            return []
+
+        try:
+            payload = response.json()
+        except ValueError:
+            return []
+
+        items = payload.get("results", [])
+        if not isinstance(items, list):
+            return []
+
+        announcements: list[Announcement] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+
+            ann_id = item.get("id")
+            title = item.get("title")
+            if not ann_id or not title:
+                continue
+
+            content = ""
+            body_obj = item.get("body")
+            if isinstance(body_obj, dict):
+                content = str(body_obj.get("rawText", "") or body_obj.get("html", "") or "")
+            elif isinstance(body_obj, str):
+                content = body_obj
+
+            created_str = item.get("created")
+            published_at = datetime.now(timezone.utc)
+            if isinstance(created_str, str):
+                try:
+                    published_at = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+
+            announcements.append(
+                Announcement(
+                    id=str(ann_id),
+                    course_id=course_id,
+                    title=str(title),
+                    content=content,
+                    published_at=published_at,
+                )
             )
-        ]
+
+        return announcements
 
     async def download_file(self, file_id: str, save_path: str) -> DownloadResult:
         path = Path(save_path)
