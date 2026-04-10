@@ -190,10 +190,6 @@
               <input v-model="modalForm.all_day" type="checkbox" :disabled="modalEvent?.source === 'blackboard'" />
               全天事件
             </label>
-            <label class="checkbox-row">
-              <input v-model="modalForm.weekly_repeat" type="checkbox" :disabled="modalEvent?.source === 'blackboard'" />
-              每周重复
-            </label>
           </div>
           <label>
             状态
@@ -242,10 +238,7 @@
               <span class="detail-label">地点</span>
               <strong>{{ modalEvent.location }}</strong>
             </div>
-            <div>
-              <span class="detail-label">重复</span>
-              <strong>{{ modalEvent?.weekly_repeat ? "每周重复" : "单次事件" }}</strong>
-            </div>
+
           </div>
           <p class="detail-copy">{{ modalEvent?.description || "暂无备注。" }}</p>
           <div class="modal-actions">
@@ -320,7 +313,6 @@ const modalForm = reactive({
   description: "",
   location: "",
   all_day: false,
-  weekly_repeat: false,
   status: "not_started"
 });
 
@@ -482,7 +474,6 @@ function openCreateModal(targetDate = null) {
   modalForm.description = "";
   modalForm.location = "";
   modalForm.all_day = false;
-  modalForm.weekly_repeat = false;
   modalForm.status = "not_started";
   modalOpen.value = true;
 }
@@ -496,7 +487,6 @@ function openEventModal(event) {
   modalForm.description = event.description || "";
   modalForm.location = event.location || "";
   modalForm.all_day = Boolean(event.all_day);
-  modalForm.weekly_repeat = Boolean(event.weekly_repeat);
   modalForm.status = event.status || "not_started";
   modalOpen.value = true;
 }
@@ -510,7 +500,6 @@ function switchToEdit() {
   modalForm.description = modalEvent.value.description || "";
   modalForm.location = modalEvent.value.location || "";
   modalForm.all_day = Boolean(modalEvent.value.all_day);
-  modalForm.weekly_repeat = Boolean(modalEvent.value.weekly_repeat);
   modalForm.status = modalEvent.value.status || "not_started";
   modalOpen.value = true;
 }
@@ -530,7 +519,6 @@ async function submitModal() {
     location: modalForm.location.trim() || null,
     all_day: modalForm.all_day,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-    weekly_repeat: modalForm.weekly_repeat,
     status: modalForm.status
   };
   if (modalMode.value === "edit" && modalEvent.value?.source === "blackboard") {

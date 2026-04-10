@@ -34,56 +34,6 @@ async def test_calendar_service_creates_and_lists_event(db_session):
     assert result.events[0].event_id == created.event_id
     assert result.events[0].status == "not_started"
 
-
-async def test_calendar_service_expands_weekly_events(db_session):
-    service = CalendarService(db_session)
-    created = await service.create_event(
-        CalendarEventCreate(
-            title="Weekly Lab",
-            start_at=utc("2026-04-06T02:00:00Z"),
-            end_at=utc("2026-04-06T04:00:00Z"),
-            weekly_repeat=True,
-        )
-    )
-
-    result = await service.list_events(
-        start=utc("2026-04-06T00:00:00Z"),
-        end=utc("2026-04-20T23:59:59Z"),
-    )
-
-    weekly_events = [event for event in result.events if event.event_id == created.event_id]
-    assert len(weekly_events) == 3
-    assert all(event.weekly_repeat for event in weekly_events)
-
-
-async def test_calendar_service_moves_series_anchor(db_session):
-    service = CalendarService(db_session)
-    created = await service.create_event(
-        CalendarEventCreate(
-            title="Research block",
-            start_at=utc("2026-04-10T03:00:00Z"),
-            end_at=utc("2026-04-10T05:00:00Z"),
-            weekly_repeat=True,
-        )
-    )
-
-    moved = await service.move_event(
-        created.event_id,
-        CalendarEventMove(
-            start_at=utc("2026-04-11T06:00:00Z"),
-            end_at=utc("2026-04-11T08:00:00Z"),
-        ),
-    )
-
-    result = await service.list_events(
-        start=utc("2026-04-11T00:00:00Z"),
-        end=utc("2026-04-25T23:59:59Z"),
-    )
-
-    assert moved.start_at == utc("2026-04-11T06:00:00Z")
-    assert result.events[0].start_at == utc("2026-04-11T06:00:00Z")
-
-
 async def test_blackboard_sync_and_clone(db_session, monkeypatch):
     service = CalendarService(db_session)
 

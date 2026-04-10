@@ -26,7 +26,6 @@ class CalendarEvent(BaseModel):
     status: CalendarEventStatus = "not_started"
     source_event_id: str | None = None
     is_read_only: bool = False
-    weekly_repeat: bool = False
     source_payload: dict[str, Any] | None = None
 
 
@@ -38,7 +37,6 @@ class CalendarEventCreate(BaseModel):
     location: str | None = None
     all_day: bool = False
     timezone: str = "UTC"
-    weekly_repeat: bool = False
     status: CalendarEventStatus = "not_started"
 
 
@@ -50,9 +48,7 @@ class CalendarEventUpdate(BaseModel):
     location: str | None = None
     all_day: bool | None = None
     timezone: str | None = None
-    weekly_repeat: bool | None = None
     status: CalendarEventStatus | None = None
-
 
 class CalendarEventMove(BaseModel):
     start_at: datetime

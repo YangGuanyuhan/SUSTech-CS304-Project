@@ -188,7 +188,7 @@ def get_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "calendar_create_event",
-                "description": "Create a local calendar event. Supports optional weekly recurrence.",
+                "description": "Create a local calendar event.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -199,7 +199,6 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                         "location": {"type": "string"},
                         "all_day": {"type": "boolean", "default": False},
                         "timezone": {"type": "string", "default": "UTC"},
-                        "weekly_repeat": {"type": "boolean", "default": False},
                         "status": {
                             "type": "string",
                             "enum": ["not_started", "pending", "completed"],
@@ -226,7 +225,6 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                         "location": {"type": "string"},
                         "all_day": {"type": "boolean"},
                         "timezone": {"type": "string"},
-                        "weekly_repeat": {"type": "boolean"},
                         "status": {"type": "string", "enum": ["not_started", "pending", "completed"]},
                     },
                     "required": ["event_id"],
@@ -647,7 +645,6 @@ class AgentToolService:
                 location=self._optional_string(arguments.get("location")),
                 all_day=bool(arguments.get("all_day", False)),
                 timezone=str(arguments.get("timezone", "UTC")),
-                weekly_repeat=bool(arguments.get("weekly_repeat", False)),
                 status=self._normalize_status(arguments.get("status", "not_started")),
             )
         )
@@ -668,7 +665,6 @@ class AgentToolService:
                     location=self._optional_string(arguments.get("location")),
                     all_day=arguments.get("all_day"),
                     timezone=self._optional_string(arguments.get("timezone")),
-                    weekly_repeat=arguments.get("weekly_repeat"),
                     status=self._normalize_optional_status(arguments.get("status")),
                 ),
             )

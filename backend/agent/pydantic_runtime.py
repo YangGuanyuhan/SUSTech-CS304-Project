@@ -175,7 +175,6 @@ class PydanticAIRuntime:
             location: str | None = None,
             all_day: bool = False,
             timezone: str = "UTC",
-            weekly_repeat: bool = False,
             status: str = "not_started",
         ) -> str:
             return await _execute_tool(
@@ -189,7 +188,6 @@ class PydanticAIRuntime:
                     "location": location,
                     "all_day": all_day,
                     "timezone": timezone,
-                    "weekly_repeat": weekly_repeat,
                     "status": status,
                 },
             )
@@ -205,7 +203,6 @@ class PydanticAIRuntime:
             location: str | None = None,
             all_day: bool | None = None,
             timezone: str | None = None,
-            weekly_repeat: bool | None = None,
             status: str | None = None,
         ) -> str:
             return await _execute_tool(
@@ -220,7 +217,6 @@ class PydanticAIRuntime:
                     "location": location,
                     "all_day": all_day,
                     "timezone": timezone,
-                    "weekly_repeat": weekly_repeat,
                     "status": status,
                 },
             )

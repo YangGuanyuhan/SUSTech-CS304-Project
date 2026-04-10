@@ -83,7 +83,6 @@ class CalendarEventCreateRequest(BaseModel):
     location: str | None = None
     all_day: bool = False
     timezone: str = "UTC"
-    weekly_repeat: bool = False
     status: str = "not_started"
 
 
@@ -95,7 +94,6 @@ class CalendarEventUpdateRequest(BaseModel):
     location: str | None = None
     all_day: bool | None = None
     timezone: str | None = None
-    weekly_repeat: bool | None = None
     status: str | None = None
 
 

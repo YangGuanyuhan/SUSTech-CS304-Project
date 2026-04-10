@@ -75,8 +75,8 @@
 
         <!-- Result -->
         <div v-if="resultMap[question.id]" class="quiz-result">
-          <span :class="['quiz-badge', resultMap[question.id].is_correct === false ? 'wrong' : 'right']">
-            <svg v-if="resultMap[question.id].is_correct === true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <span :class="['quiz-badge', isResultCorrect(resultMap[question.id]) ? 'right' : 'wrong']">
+            <svg v-if="isResultCorrect(resultMap[question.id])" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <polyline points="20 6 9 17 4 12"/>
             </svg>
             <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -134,6 +134,16 @@ function scoreLabel(result) {
   if (result.is_correct === true) return "正确";
   if (result.is_correct === false) return "错误";
   return `${result.score} / ${result.max_score}`;
+}
+
+function isResultCorrect(result) {
+  if (!result) return false;
+  if (result.is_correct === true) return true;
+  if (result.is_correct === false) return false;
+
+  const score = Number(result.score ?? 0);
+  const maxScore = Number(result.max_score ?? 0);
+  return Math.abs(score - maxScore) < 1e-6;
 }
 
 async function submitAnswers() {

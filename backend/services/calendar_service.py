@@ -65,7 +65,6 @@ class CalendarService:
             status=record.status or "not_started",
             source_event_id=record.source_event_id,
             is_read_only=record.is_read_only,
-            weekly_repeat=bool(isinstance(recurrence_rule, dict) and recurrence_rule.get("freq") == "weekly"),
             source_payload=record.source_payload if isinstance(record.source_payload, dict) else None,
         )
 
@@ -160,7 +159,6 @@ class CalendarService:
 
     async def create_event(self, payload: CalendarEventCreate) -> CalendarEvent:
         start_at, end_at = self._validate_time_range(payload.start_at, payload.end_at)
-        recurrence_rule = {"freq": "weekly"} if payload.weekly_repeat else None
         record = self.repository.create(
             title=payload.title.strip(),
             description=payload.description,
@@ -170,7 +168,7 @@ class CalendarService:
             all_day=payload.all_day,
             timezone=payload.timezone,
             status=payload.status,
-            recurrence_rule=recurrence_rule,
+            recurrence_rule=None,
         )
         return self._to_event(record)
 
@@ -184,7 +182,6 @@ class CalendarService:
             or payload.location is not None
             or payload.all_day is not None
             or payload.timezone is not None
-            or payload.weekly_repeat is not None
         )
         if (record.source != "local" or record.is_read_only) and mutable_fields:
             raise ValueError("Only the status field can be modified for Blackboard events.")
@@ -201,8 +198,6 @@ class CalendarService:
         start_at = payload.start_at or record.start_at
         end_at = payload.end_at or record.end_at
         record.start_at, record.end_at = self._validate_time_range(start_at, end_at)
-        if payload.weekly_repeat is not None:
-            record.recurrence_rule = {"freq": "weekly"} if payload.weekly_repeat else None
         if payload.status is not None:
             record.status = payload.status
         updated = self.repository.update(record)
