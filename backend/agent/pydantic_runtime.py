@@ -335,7 +335,7 @@ class PydanticAIRuntime:
                 str,
                 Field(
                     pattern=r'^_\d+_\d+$',
-                    description="The exact 'course_id' field returned by the blackboard_get_all_courses tool. Required format is usually '_XXX_1'."
+                    description="The exact 'course_id' field returned by the blackboard_get_all_courses tool. Required format is usually '_XXXX_X'."
                 )
             ]
         ) -> str:
