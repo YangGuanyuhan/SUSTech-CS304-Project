@@ -530,10 +530,12 @@ onMounted(() => {
   max-width: 800px;
   margin: 0 auto;
   padding: 28px;
-  border-radius: 28px;
+  border-radius: 16px;
   background: rgba(255, 255, 255, 0.92);
   box-shadow: 0 20px 50px rgba(28, 36, 48, 0.12);
   backdrop-filter: blur(20px);
+  max-height: 80vh;
+  overflow-y: auto;
 }
 
 .settings-header {
