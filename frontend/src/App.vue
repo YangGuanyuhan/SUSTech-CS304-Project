@@ -132,8 +132,8 @@
     <section class="main-content">
       <template v-if="activeView === 'chat'">
       <!-- Header -->
-      <header class="header">
-        <div class="header-left">
+      <header :class="['header', { collapsed: !headerExpanded }]">
+        <div v-if="headerExpanded" class="header-left">
           <h2>{{ activeConversation.title }}</h2>
           <p>继续之前的对话或开始新对话</p>
           <div class="header-meta">
@@ -141,7 +141,7 @@
             <span class="meta-chip subtle">{{ activeConversation.messages.length }} 条消息</span>
           </div>
         </div>
-        <div class="header-right">
+        <div v-if="headerExpanded" class="header-right">
           <div class="workspace-field">
             <span>工作目录</span>
             <input
@@ -154,6 +154,26 @@
             加载课程
           </button>
         </div>
+        <button
+          :class="['header-toggle', { collapsed: !headerExpanded }]"
+          type="button"
+          :aria-label="headerExpanded ? '收起顶部栏' : '展开顶部栏'"
+          @click="headerExpanded = !headerExpanded"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path v-if="headerExpanded" d="M18 15l-6-6-6 6" />
+            <path v-else d="M6 9l6 6 6-6" />
+          </svg>
+        </button>
       </header>
 
       <!-- Chat Container -->
@@ -163,20 +183,16 @@
           :key="message.id"
           :class="['message-row', message.role]"
         >
-          <div :class="['avatar', message.role]">
-            <svg v-if="message.role === 'user'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-              <circle cx="12" cy="7" r="4"/>
-            </svg>
-            <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <div v-if="message.role === 'assistant'" :class="['avatar', message.role]">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 2L2 7l10 5 10-5-10-5z"/>
               <path d="M2 17l10 5 10-5"/>
               <path d="M2 12l10 5 10-5"/>
             </svg>
           </div>
           <div :class="['message-bubble', message.role]">
-            <div class="message-meta">
-              <span class="role-label">{{ message.role === 'user' ? '你' : 'AI' }}</span>
+            <div v-if="message.role === 'assistant' || message.elapsedLabel" class="message-meta">
+              <span v-if="message.role === 'assistant'" class="role-label">StudyAI</span>
               <span v-if="message.elapsedLabel" class="elapsed">{{ message.elapsedLabel }}</span>
             </div>
             <div
@@ -367,6 +383,7 @@ const editingTitle = ref("");
 const draft = ref("");
 const composerInput = ref(null);
 const loading = ref(false);
+const headerExpanded = ref(false);
 let activeTimer = null;
 
 const sortedConversations = computed(() =>
@@ -741,9 +758,9 @@ onMounted(() => {
   --radius-xl: 24px;
   --radius-2xl: 28px;
   /* Fonts */
-  --font-heading: "Space Grotesk", -apple-system, sans-serif;
-  --font-body: "IBM Plex Sans", -apple-system, sans-serif;
-  --font-mono: "IBM Plex Mono", monospace;
+  --font-heading: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "Cascadia Code", "Roboto Mono", "Menlo", monospace;
 }
 
 * {
@@ -1050,34 +1067,77 @@ body {
 .header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding: 22px 34px 18px;
+  align-items: flex-start;
+  padding: 18px 28px 16px;
   background: rgba(255, 255, 255, 0.62);
   backdrop-filter: blur(16px);
   border-bottom: 1px solid rgba(53, 62, 72, 0.05);
   position: sticky;
   top: 0;
   z-index: 10;
+  min-height: 84px;
+}
+
+.header.collapsed {
+  justify-content: flex-end;
+  align-items: center;
+  min-height: auto;
+  padding: 10px 18px 0;
+  background: transparent;
+  backdrop-filter: none;
+  border-bottom: none;
+  box-shadow: none;
 }
 
 .header-left {
   display: grid;
   gap: 0;
+  flex: 1;
+  min-width: 0;
 }
 
 .header-left h2 {
   margin: 0;
   font-family: var(--font-heading);
-  font-size: 28px;
-  font-weight: 600;
-  letter-spacing: -0.03em;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.045em;
+  line-height: 1.08;
   color: var(--text-primary);
 }
 
 .header-left p {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   font-size: 13px;
   color: var(--text-muted);
+}
+
+.header-toggle {
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border: 1px solid rgba(53, 62, 72, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.header-toggle:hover {
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text-primary);
+}
+
+.header-toggle.collapsed {
+  background: rgba(255, 255, 255, 0.82);
 }
 
 .header-meta {
@@ -1097,6 +1157,7 @@ body {
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .meta-chip.subtle {
@@ -1202,7 +1263,7 @@ body {
 .message-row.user {
   flex-direction: row-reverse;
   margin-left: auto;
-  margin-right: calc(var(--send-btn-width) + 20px - 54px);
+  margin-right: calc(var(--send-btn-width) + 12px);
   margin-top: 4px;
 }
 
@@ -1222,12 +1283,6 @@ body {
   flex-shrink: 0;
 }
 
-.avatar.user {
-  background: linear-gradient(135deg, var(--accent-orange), #ef8d3f);
-  color: white;
-  box-shadow: 0 10px 22px rgba(218, 106, 30, 0.16);
-}
-
 .avatar.assistant {
   background: rgba(255, 255, 255, 0.92);
   color: var(--ink);
@@ -1235,7 +1290,7 @@ body {
 }
 
 .message-bubble {
-  padding: 16px 18px;
+  padding: 14px 16px;
   border-radius: 22px;
   background: var(--bg-card);
   border: 1px solid rgba(53, 62, 72, 0.06);
@@ -1248,7 +1303,10 @@ body {
 .message-row.user .message-bubble {
   background: linear-gradient(180deg, #fff7ef 0%, #fff1e3 100%);
   border-color: rgba(218, 106, 30, 0.1);
-  border-top-right-radius: 12px;
+  border-top-right-radius: 10px;
+  border-radius: 22px 12px 22px 22px;
+  padding: 10px 16px;
+  box-shadow: 0 12px 24px rgba(218, 106, 30, 0.08);
 }
 
 .message-row.assistant .message-bubble {
@@ -1262,8 +1320,8 @@ body {
   justify-content: flex-start;
   gap: 8px;
   align-items: center;
-  margin-bottom: 10px;
-  padding-bottom: 10px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
   border-bottom: 1px solid rgba(53, 62, 72, 0.05);
 }
 
@@ -1289,7 +1347,7 @@ body {
 }
 
 .markdown-body :deep(p) {
-  margin: 0 0 12px;
+  margin: 0 0 10px;
 }
 
 .markdown-body :deep(h1),
@@ -1303,6 +1361,15 @@ body {
 
 .markdown-body :deep(p:last-child) {
   margin-bottom: 0;
+}
+
+.message-row.user .markdown-body {
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.message-row.user .markdown-body :deep(p) {
+  margin: 0;
 }
 
 .markdown-body :deep(ul),
@@ -1690,6 +1757,14 @@ body {
 
   .header-left h2 {
     font-size: 22px;
+  }
+
+  .header-toggle {
+    padding: 8px 12px;
+  }
+
+  .header.collapsed {
+    padding: 10px 14px 0;
   }
 
   .header-meta {

@@ -1092,7 +1092,10 @@ onMounted(async () => {
 
 .profile-actions,
 .dev-actions {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
   gap: 12px;
 }
 
