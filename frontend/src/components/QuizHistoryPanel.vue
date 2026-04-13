@@ -173,11 +173,13 @@ onMounted(() => {
   display: grid;
   gap: 24px;
   padding: 28px;
-  border-radius: 28px;
+  border-radius: 16px;
   background: rgba(255, 255, 255, 0.96);
   box-shadow: 0 24px 60px rgba(28, 36, 48, 0.18);
   max-width: 900px;
   margin: 0 auto;
+  max-height: 80vh;
+  overflow-y: auto;
 }
 
 .history-header {
