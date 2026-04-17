@@ -322,3 +322,62 @@ export async function streamApprovalDecision(payload, handlers) {
   });
   return consumeSSE(response, handlers);
 }
+
+// Generic API client for convenience
+export const apiClient = {
+  async get(endpoint, options = {}) {
+    const url = new URL(`${API_BASE}${endpoint}`);
+    if (options.params) {
+      Object.entries(options.params).forEach(([key, value]) => {
+        if (value !== null && value !== undefined) {
+          url.searchParams.append(key, value);
+        }
+      });
+    }
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: options.headers || {}
+    });
+    return { data: await parseJson(response) };
+  },
+
+  async post(endpoint, data, options = {}) {
+    const url = new URL(`${API_BASE}${endpoint}`);
+    if (options.params) {
+      Object.entries(options.params).forEach(([key, value]) => {
+        if (value !== null && value !== undefined) {
+          url.searchParams.append(key, value);
+        }
+      });
+    }
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...options.headers
+      },
+      body: data ? JSON.stringify(data) : undefined
+    });
+    return { data: await parseJson(response) };
+  },
+
+  async put(endpoint, data, options = {}) {
+    const url = new URL(`${API_BASE}${endpoint}`);
+    if (options.params) {
+      Object.entries(options.params).forEach(([key, value]) => {
+        if (value !== null && value !== undefined) {
+          url.searchParams.append(key, value);
+        }
+      });
+    }
+    const response = await fetch(url.toString(), {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        ...options.headers
+      },
+      body: data ? JSON.stringify(data) : undefined
+    });
+    return { data: await parseJson(response) };
+  }
+};
