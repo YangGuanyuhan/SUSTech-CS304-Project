@@ -118,8 +118,8 @@ const handleNodeClick = () => {
 }
 
 const handleDoubleClick = () => {
-  // 第三级或文件类型或作业/学习模块类型都触发下载
-  if (isThirdLevel.value || isFile.value || props.node.type === 'x-bb-assignment' || props.node.type === 'x-bb-lesson') {
+  // 只有真正的文件类型才触发下载，其他类型（文件夹、作业等）双击无作用
+  if (isFile.value) {
     emit('download', props.node.course_id, props.node.id)
   }
 }
