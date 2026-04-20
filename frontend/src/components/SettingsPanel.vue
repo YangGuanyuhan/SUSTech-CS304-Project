@@ -341,14 +341,17 @@
           </section>
         </template>
 
-        <p class="result" :class="{ error: messageType === 'error' }">{{ message }}</p>
       </div>
     </div>
+
+    <transition name="toast-fade">
+      <p v-if="message" class="result" :class="{ error: messageType === 'error' }">{{ message }}</p>
+    </transition>
   </section>
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from "vue";
+import { onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import {
   applyBBProfile,
   applyLLMProfile,
@@ -378,10 +381,11 @@ const llmEditorMode = ref("create");
 const bbEditorOpen = ref(false);
 const bbEditorMode = ref("create");
 const saving = ref(false);
-const message = ref("加载或更新运行时配置。");
+const message = ref("");
 const messageType = ref("info");
 const profiles = ref([]);
 const bbProfiles = ref([]);
+let messageTimer = null;
 
 const sections = [
   { id: "llm", label: "LLM 后端", description: "模型、网关与密钥", icon: "AI" },
@@ -423,6 +427,26 @@ const bbForm = reactive({
   base_url: "",
   replace_password: false
 });
+
+function clearMessage() {
+  message.value = "";
+  if (messageTimer) {
+    clearTimeout(messageTimer);
+    messageTimer = null;
+  }
+}
+
+function showMessage(text, type = "info") {
+  message.value = text;
+  messageType.value = type;
+  if (messageTimer) {
+    clearTimeout(messageTimer);
+  }
+  messageTimer = window.setTimeout(() => {
+    message.value = "";
+    messageTimer = null;
+  }, 10000);
+}
 
 function applyState(payload) {
   state.provider = payload.provider;
@@ -509,11 +533,9 @@ async function refreshBlackboard() {
   try {
     const response = await getBlackboardSettings();
     applyBBState(response.data);
-    message.value = "Blackboard 配置已加载。";
-    messageType.value = "info";
+    showMessage("Blackboard 配置已加载。");
   } catch (error) {
-    message.value = `加载 Blackboard 配置失败: ${error.message}`;
-    messageType.value = "error";
+    showMessage(`加载 Blackboard 配置失败: ${error.message}`, "error");
   } finally {
     saving.value = false;
   }
@@ -530,11 +552,9 @@ async function saveBlackboard() {
     });
     applyBBState(response.data);
     closeBBEditor();
-    message.value = "Blackboard 配置已保存。密码仅存储在服务器内存中。";
-    messageType.value = "info";
+    showMessage("Blackboard 配置已保存。密码仅存储在服务器内存中。");
   } catch (error) {
-    message.value = `保存失败: ${error.message}`;
-    messageType.value = "error";
+    showMessage(`保存失败: ${error.message}`, "error");
   } finally {
     saving.value = false;
   }
@@ -550,15 +570,12 @@ async function testBlackboard() {
       replace_password: bbForm.replace_password
     });
     if (response.success) {
-      message.value = "Blackboard 连接测试成功。";
-      messageType.value = "info";
+      showMessage("Blackboard 连接测试成功。");
     } else {
-      message.value = `连接测试失败: ${response.data?.error || "未知错误"}`;
-      messageType.value = "error";
+      showMessage(`连接测试失败: ${response.data?.error || "未知错误"}`, "error");
     }
   } catch (error) {
-    message.value = `测试失败: ${error.message}`;
-    messageType.value = "error";
+    showMessage(`测试失败: ${error.message}`, "error");
   } finally {
     saving.value = false;
   }
@@ -569,8 +586,7 @@ function applyProfile(profile) {
   form.provider = profile.provider;
   form.model = profile.model;
   form.base_url = profile.base_url ?? "";
-  message.value = `已加载配置 "${profile.name}"。如未设置密钥，请为此运行时设置 API 密钥。`;
-  messageType.value = "info";
+  showMessage(`已加载配置 "${profile.name}"。如未设置密钥，请为此运行时设置 API 密钥。`);
 }
 
 async function useProfile(profile) {
@@ -580,11 +596,9 @@ async function useProfile(profile) {
     const response = await applyLLMProfile(profile.name);
     applyState(response.data);
     closeLLMEditor();
-    message.value = `配置 "${profile.name}" 已应用到运行时。`;
-    messageType.value = "info";
+    showMessage(`配置 "${profile.name}" 已应用到运行时。`);
   } catch (error) {
-    message.value = `应用失败: ${error.message}`;
-    messageType.value = "error";
+    showMessage(`应用失败: ${error.message}`, "error");
   } finally {
     saving.value = false;
   }
@@ -600,11 +614,9 @@ async function refresh() {
   try {
     const [settingsResponse] = await Promise.all([getLLMSettings(), refreshProfiles()]);
     applyState(settingsResponse.data);
-    message.value = "已从后端加载运行时 LLM 配置。";
-    messageType.value = "info";
+    showMessage("已从后端加载运行时 LLM 配置。");
   } catch (error) {
-    message.value = `加载运行时配置失败: ${error.message}`;
-    messageType.value = "error";
+    showMessage(`加载运行时配置失败: ${error.message}`, "error");
   } finally {
     saving.value = false;
   }
@@ -612,8 +624,7 @@ async function refresh() {
 
 async function saveProfile() {
   if (!form.profile_name.trim()) {
-    message.value = "请输入配置名称后再保存。";
-    messageType.value = "error";
+    showMessage("请输入配置名称后再保存。", "error");
     return;
   }
 
@@ -628,11 +639,9 @@ async function saveProfile() {
     });
     await refreshProfiles();
     closeLLMEditor();
-    message.value = `配置 "${form.profile_name.trim()}" 已保存。${form.api_key ? "API 密钥已加密保存。" : "API 密钥未更改。"}`;
-    messageType.value = "info";
+    showMessage(`配置 "${form.profile_name.trim()}" 已保存。${form.api_key ? "API 密钥已加密保存。" : "API 密钥未更改。"}`);
   } catch (error) {
-    message.value = `保存配置失败: ${error.message}`;
-    messageType.value = "error";
+    showMessage(`保存配置失败: ${error.message}`, "error");
   } finally {
     saving.value = false;
   }
@@ -643,14 +652,12 @@ async function removeProfile(name) {
   try {
     await deleteLLMProfile(name);
     await refreshProfiles();
-    message.value = `配置 "${name}" 已删除。`;
-    messageType.value = "info";
+    showMessage(`配置 "${name}" 已删除。`);
     if (form.profile_name === name) {
       form.profile_name = "";
     }
   } catch (error) {
-    message.value = `删除失败: ${error.message}`;
-    messageType.value = "error";
+    showMessage(`删除失败: ${error.message}`, "error");
   } finally {
     saving.value = false;
   }
@@ -671,11 +678,9 @@ async function useBBProfile(profile) {
     const response = await applyBBProfile(profile.name);
     applyBBState(response.data);
     closeBBEditor();
-    message.value = `配置 "${profile.name}" 已应用到运行时。`;
-    messageType.value = "info";
+    showMessage(`配置 "${profile.name}" 已应用到运行时。`);
   } catch (error) {
-    message.value = `应用失败: ${error.message}`;
-    messageType.value = "error";
+    showMessage(`应用失败: ${error.message}`, "error");
   } finally {
     saving.value = false;
   }
@@ -683,8 +688,7 @@ async function useBBProfile(profile) {
 
 async function saveBBProfile() {
   if (!bbForm.profile_name.trim()) {
-    message.value = "请输入配置名称后再保存。";
-    messageType.value = "error";
+    showMessage("请输入配置名称后再保存。", "error");
     return;
   }
 
@@ -698,11 +702,9 @@ async function saveBBProfile() {
     });
     await refreshBBProfiles();
     closeBBEditor();
-    message.value = `Blackboard 配置 "${bbForm.profile_name.trim()}" 已保存。${bbForm.password ? "密码已加密保存。" : "密码未更改。"}`;
-    messageType.value = "info";
+    showMessage(`Blackboard 配置 "${bbForm.profile_name.trim()}" 已保存。${bbForm.password ? "密码已加密保存。" : "密码未更改。"}`);
   } catch (error) {
-    message.value = `保存配置失败: ${error.message}`;
-    messageType.value = "error";
+    showMessage(`保存配置失败: ${error.message}`, "error");
   } finally {
     saving.value = false;
   }
@@ -713,14 +715,12 @@ async function removeBBProfile(name) {
   try {
     await deleteBBProfile(name);
     await refreshBBProfiles();
-    message.value = `配置 "${name}" 已删除。`;
-    messageType.value = "info";
+    showMessage(`配置 "${name}" 已删除。`);
     if (bbForm.profile_name === name) {
       bbForm.profile_name = "";
     }
   } catch (error) {
-    message.value = `删除失败: ${error.message}`;
-    messageType.value = "error";
+    showMessage(`删除失败: ${error.message}`, "error");
   } finally {
     saving.value = false;
   }
@@ -737,11 +737,9 @@ async function save() {
     });
     applyState(response.data);
     closeLLMEditor();
-    message.value = "运行时配置已保存。API 密钥仅保留在服务器端。";
-    messageType.value = "info";
+    showMessage("运行时配置已保存。API 密钥仅保留在服务器端。");
   } catch (error) {
-    message.value = `保存失败: ${error.message}`;
-    messageType.value = "error";
+    showMessage(`保存失败: ${error.message}`, "error");
   } finally {
     saving.value = false;
   }
@@ -757,11 +755,9 @@ async function testConnection() {
       api_key: form.api_key || null
     });
     const result = response.data;
-    message.value = `连接正常，耗时 ${result.latency_ms}ms。预览: ${result.preview}`;
-    messageType.value = "info";
+    showMessage(`连接正常，耗时 ${result.latency_ms}ms。预览: ${result.preview}`);
   } catch (error) {
-    message.value = `连接测试失败: ${error.message}`;
-    messageType.value = "error";
+    showMessage(`连接测试失败: ${error.message}`, "error");
   } finally {
     saving.value = false;
   }
@@ -784,25 +780,32 @@ async function refreshAll() {
     bbProfiles.value = bbProfilesResponse.data ?? [];
     backendStatus.healthy = true;
     backendStatus.message = healthResponse.status || "服务响应正常";
-    message.value = "所有配置与后端状态已刷新。";
-    messageType.value = "info";
+    showMessage("所有配置与后端状态已刷新。");
   } catch (error) {
     backendStatus.healthy = false;
     backendStatus.message = error.message;
-    message.value = `刷新失败: ${error.message}`;
-    messageType.value = "error";
+    showMessage(`刷新失败: ${error.message}`, "error");
   } finally {
     saving.value = false;
   }
 }
 
+watch(activeSection, () => {
+  clearMessage();
+});
+
 onMounted(async () => {
   await Promise.all([refresh(), refreshBlackboard(), refreshBBProfiles(), checkBackendHealth()]);
+});
+
+onBeforeUnmount(() => {
+  clearMessage();
 });
 </script>
 
 <style scoped>
 .settings-panel {
+  position: relative;
   max-width: 1120px;
   margin: 0 auto;
   padding: 28px;
@@ -1252,10 +1255,13 @@ button:disabled {
 }
 
 .result {
-  position: sticky;
-  bottom: 0;
+  position: absolute;
+  right: 28px;
+  bottom: 28px;
+  z-index: 6;
+  max-width: min(520px, calc(100% - 56px));
   margin: 0;
-  padding: 14px 16px;
+  padding: 14px 18px;
   border-radius: 16px;
   background: rgba(34, 197, 94, 0.1);
   color: #15803d;
@@ -1264,13 +1270,25 @@ button:disabled {
   border: 1px solid rgba(34, 197, 94, 0.14);
   box-shadow: 0 14px 24px rgba(15, 23, 42, 0.08);
   backdrop-filter: blur(12px);
-  z-index: 2;
+  line-height: 1.5;
+  word-break: break-word;
 }
 
 .result.error {
   background: rgba(239, 68, 68, 0.1);
   color: #dc2626;
   border-color: rgba(239, 68, 68, 0.16);
+}
+
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
 }
 
 @media (max-width: 980px) {
@@ -1292,6 +1310,12 @@ button:disabled {
 
   .nav-copy {
     display: grid !important;
+  }
+
+  .result {
+    right: 20px;
+    bottom: 20px;
+    max-width: calc(100% - 40px);
   }
 
   .status-grid,

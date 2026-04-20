@@ -918,6 +918,7 @@ function statusClass(status) {
   border-radius: 18px;
   background: #f9fbfb;
   border: 1px solid rgba(31, 41, 55, 0.06);
+  overflow: hidden;
 }
 
 .month-cell.muted {
@@ -945,9 +946,13 @@ function statusClass(status) {
 }
 
 .cell-events {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .event-pill,
@@ -981,6 +986,8 @@ function statusClass(status) {
   padding: 8px 10px;
   background: #eff5f4;
   color: #163434;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .event-pill.local,
@@ -1017,9 +1024,13 @@ function statusClass(status) {
 .agenda-time {
   font-size: 12px;
   color: #5d7373;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .event-title {
+  min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
