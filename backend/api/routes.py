@@ -33,7 +33,7 @@ from backend.models.calendar import CalendarEventCreate, CalendarEventMove, Cale
 from backend.models.common import ApiResponse
 from backend.models.settings import BlackboardProfile, LLMProfile
 from backend.services.approval_service import approval_service
-from backend.services.blackboard_file_service import BBFileManager, BBContent, BBFile
+from backend.services.blackboard_file_service import BBContent, BBFileManager
 from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
 from backend.services.calendar_service import CalendarService
 from backend.services.database_insights_service import DatabaseInsightsService
@@ -556,9 +556,10 @@ async def _get_authenticated_provider():
     Get an authenticated Blackboard provider using configured credentials.
     Returns (provider, is_authenticated) tuple.
     """
-    from backend.services.blackboard_service import DemoBlackboardProvider
     import time
-    
+
+    from backend.services.blackboard_service import DemoBlackboardProvider
+
     provider = DemoBlackboardProvider()
     student_id = None
 
@@ -572,7 +573,10 @@ async def _get_authenticated_provider():
     # Check cache (valid for 1 hour)
     if cache_key in _bb_providers_cache:
         cached_provider, timestamp = _bb_providers_cache[cache_key]
-        if time.time() - timestamp < 3600 and getattr(cached_provider, "_cas_session", None) is not None:
+        if (
+            time.time() - timestamp < 3600
+            and getattr(cached_provider, "_cas_session", None) is not None
+        ):
             return cached_provider, True
 
     # Try to authenticate with runtime/settings fallback credentials.
@@ -617,12 +621,12 @@ async def get_blackboard_courses(
         # Get authenticated provider
         provider, is_authenticated = await _get_authenticated_provider()
         print(f"[BB][files/courses] authenticated={is_authenticated}")
-        
+
         if is_authenticated and provider:
             try:
                 courses_list = await provider.get_all_courses()
                 print(f"[BB] Successfully fetched {len(courses_list)} courses from Blackboard")
-                
+
                 if courses_list:
                     # Convert Course objects to API response format
                     courses = [
@@ -646,6 +650,7 @@ async def get_blackboard_courses(
             except Exception as e:
                 print(f"[BB] Error fetching courses: {e}")
                 import traceback
+
                 traceback.print_exc()
         else:
             print("[BB] Provider not authenticated")
@@ -660,10 +665,11 @@ async def get_blackboard_courses(
             data={"courses": []},
             error="Blackboard 未返回课程数据",
         )
-        
+
     except Exception as e:
         print(f"[BB] Error in get_blackboard_courses: {e}")
         import traceback
+
         traceback.print_exc()
         return ApiResponse(success=True, data={"courses": []})
 
@@ -680,7 +686,9 @@ async def get_blackboard_file_tree(
         print(f"[BB][files/tree] request course_id={course_id}, node_id={node_id}")
         provider, is_authenticated = await _get_authenticated_provider()
         if not is_authenticated or provider is None or provider._cas_session is None:
-            raise HTTPException(status_code=401, detail="Blackboard 登录失败，请在设置中重新输入账号密码")
+            raise HTTPException(
+                status_code=401, detail="Blackboard 登录失败，请在设置中重新输入账号密码"
+            )
 
         if is_authenticated and provider and provider._cas_session:
             cookie_dict = provider._cas_session.cookies.get_dict()
@@ -703,7 +711,9 @@ async def get_blackboard_file_tree(
                             node_type = handler.split("/")[-1]
                         node_has_children = bool(meta.get("hasChildren", True))
                     except Exception as exc:
-                        print(f"[BB][files/tree] failed to resolve node metadata for {node_id}: {exc}")
+                        print(
+                            f"[BB][files/tree] failed to resolve node metadata for {node_id}: {exc}"
+                        )
 
                     node = BBContent(
                         id=node_id,
@@ -758,6 +768,7 @@ async def get_blackboard_file_tree(
     except Exception as e:
         print(f"[BB] Error in tree retrieval: {e}")
         import traceback
+
         traceback.print_exc()
     raise HTTPException(status_code=502, detail="Blackboard 文件树加载失败")
 
@@ -804,6 +815,5 @@ async def download_blackboard_batch(
 ) -> ApiResponse[object]:
     """Start batch download for a course or node."""
     raise HTTPException(
-        status_code=400,
-        detail="节点本身不能下载，请双击文件夹展开后，双击具体的文件进行下载"
+        status_code=400, detail="节点本身不能下载，请双击文件夹展开后，双击具体的文件进行下载"
     )

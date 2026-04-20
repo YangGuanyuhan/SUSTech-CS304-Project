@@ -6,11 +6,10 @@ import asyncio
 import os
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 try:
-    import aiohttp
     import aiofiles
+    import aiohttp
 except ImportError:
     aiohttp = None
     aiofiles = None
@@ -19,23 +18,25 @@ except ImportError:
 @dataclass
 class BBFile:
     """Represents a downloadable file in Blackboard."""
+
     id: str
     file_name: str
     download_url: str
-    parent_content: "BBContent" = None
+    parent_content: BBContent = None
 
 
 @dataclass
 class BBContent:
     """Represents a Blackboard content node (course, folder, document, file)."""
+
     id: str
     title: str
     type: str  # x-bb-course / x-bb-folder / x-bb-document / x-bb-file
     course_id: str
     has_children: bool = False
-    children: List["BBContent"] = field(default_factory=list)
-    attachments: List[BBFile] = field(default_factory=list)
-    parent_node: Optional["BBContent"] = None
+    children: list[BBContent] = field(default_factory=list)
+    attachments: list[BBFile] = field(default_factory=list)
+    parent_node: BBContent | None = None
     is_loaded: bool = False
     _load_event: object = field(default=None, repr=False, compare=False)
 
@@ -67,11 +68,13 @@ class BBFileManager:
 
     def __init__(self, cookies: dict, download_root: str = "./BB_Files"):
         if aiohttp is None or aiofiles is None:
-            raise RuntimeError("aiohttp and aiofiles are required. Install with: pip install aiohttp aiofiles")
-        
+            raise RuntimeError(
+                "aiohttp and aiofiles are required. Install with: pip install aiohttp aiofiles"
+            )
+
         self.cookies = cookies
         self.download_root = download_root
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
         self._dl_sem = asyncio.Semaphore(10)  # Max 10 concurrent downloads
         self._api_sem = asyncio.Semaphore(20)  # Max 20 concurrent API requests
         os.makedirs(self.download_root, exist_ok=True)
@@ -100,7 +103,7 @@ class BBFileManager:
     def get_full_path(self, node: BBContent) -> str:
         """Get full filesystem path for a content node."""
         segments: list[str] = []
-        curr: Optional[BBContent] = node
+        curr: BBContent | None = node
         while curr:
             segments.insert(0, self.sanitize_path(curr.title))
             curr = curr.parent_node
@@ -114,7 +117,7 @@ class BBFileManager:
                 r.raise_for_status()
                 return await r.json()
 
-    async def fetch_all_courses(self) -> List[BBContent]:
+    async def fetch_all_courses(self) -> list[BBContent]:
         """Fetch list of all courses for current user."""
         try:
             data = await self._get_json(f"{self.BASE_URL}/users/me/courses?expand=course")
@@ -158,10 +161,7 @@ class BBFileManager:
                 if node.type == "x-bb-course":
                     url = f"{self.BASE_URL}/courses/{node.course_id}/contents"
                 else:
-                    url = (
-                        f"{self.BASE_URL}/courses/{node.course_id}"
-                        f"/contents/{node.id}/children"
-                    )
+                    url = f"{self.BASE_URL}/courses/{node.course_id}/contents/{node.id}/children"
                 try:
                     data = await self._get_json(url)
                     for item in data.get("results", []):
@@ -184,8 +184,7 @@ class BBFileManager:
             attachment_types = {"x-bb-document", "x-bb-file", "x-bb-assignment"}
             if node.type in attachment_types:
                 attach_url = (
-                    f"{self.BASE_URL}/courses/{node.course_id}"
-                    f"/contents/{node.id}/attachments"
+                    f"{self.BASE_URL}/courses/{node.course_id}/contents/{node.id}/attachments"
                 )
                 try:
                     data = await self._get_json(attach_url)
@@ -227,9 +226,7 @@ class BBFileManager:
             os.makedirs(target_dir, exist_ok=True)
             for attach in node.attachments:
                 save_path = os.path.join(target_dir, self.sanitize_path(attach.file_name))
-                tasks.append(
-                    self._execute_download(attach.download_url, save_path)
-                )
+                tasks.append(self._execute_download(attach.download_url, save_path))
 
         # Recursively handle children
         for child in node.children:
@@ -263,9 +260,7 @@ class BBFileManager:
         session = await self._get_session()
         async with self._dl_sem:
             try:
-                async with session.get(
-                    url, timeout=aiohttp.ClientTimeout(total=120)
-                ) as r:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as r:
                     r.raise_for_status()
                     async with aiofiles.open(tmp_path, "wb") as fp:
                         async for chunk in r.content.iter_chunked(256 * 1024):
@@ -281,7 +276,7 @@ class BBFileManager:
 
 
 # Singleton instance for service use
-_bb_file_manager: Optional[BBFileManager] = None
+_bb_file_manager: BBFileManager | None = None
 
 
 def get_bb_file_manager(cookies: dict) -> BBFileManager:
