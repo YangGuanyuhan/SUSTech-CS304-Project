@@ -803,17 +803,7 @@ async def download_blackboard_batch(
     session: Session = Depends(get_db_session),
 ) -> ApiResponse[object]:
     """Start batch download for a course or node."""
-    # Return mock download stats for demo
-    # TODO: Implement real Blackboard API integration with proper async download handling
-    return ApiResponse(
-        success=True,
-        data={
-            "status": "completed",
-            "stats": {
-                "files_downloaded": 3,
-                "files_skipped": 1,
-                "errors": 0
-            },
-            "message": "演示模式：已下载3个文件，跳过1个文件（已存在）"
-        }
+    raise HTTPException(
+        status_code=400,
+        detail="节点本身不能下载，请双击文件夹展开后，双击具体的文件进行下载"
     )
