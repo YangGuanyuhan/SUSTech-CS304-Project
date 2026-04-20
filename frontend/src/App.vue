@@ -559,7 +559,7 @@ async function loadCourses() {
   try {
     const response = await getCourses();
     const courses = response.data?.data ?? [];
-    const summary = courses.map((item) => `- ${item.name} (${item.code})`).join("\n");
+    const summary = courses.map((item) => `- ${item.name} (${item.blackboard_course_id})`).join("\n");
     appendMessage("assistant", summary || "没有返回课程。");
   } catch (error) {
     appendMessage("assistant", `课程请求失败: ${error.message}`);
