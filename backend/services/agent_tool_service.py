@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 import shlex
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -660,7 +661,7 @@ class AgentToolService:
         candidate = cwd / first
         if candidate.is_file():
             if candidate.suffix == ".py":
-                return ["python3", first, *command[1:]]
+                return [sys.executable, first, *command[1:]]
             if candidate.suffix == ".sh" and not candidate.stat().st_mode & 0o111:
                 return ["bash", first, *command[1:]]
         return command

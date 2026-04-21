@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
@@ -32,6 +33,7 @@ from backend.models.calendar import CalendarEventCreate, CalendarEventMove, Cale
 from backend.models.common import ApiResponse
 from backend.models.settings import BlackboardProfile, LLMProfile
 from backend.services.approval_service import approval_service
+from backend.services.blackboard_file_service import BBContent, BBFileManager
 from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
 from backend.services.calendar_service import CalendarService
 from backend.services.database_insights_service import DatabaseInsightsService
@@ -526,3 +528,292 @@ async def confirm_email(
     except UnconfirmedSendError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ApiResponse(success=True, data=result)
+
+
+# ─────────────────────────────────────────
+# Blackboard File Management APIs
+# ─────────────────────────────────────────
+
+# Global file manager instance for this session
+_bb_file_managers: dict[str, BBFileManager] = {}
+# Cache for authenticated providers
+_bb_providers_cache: dict[str, tuple] = {}  # key -> (provider, timestamp)
+# Cache loaded Blackboard content nodes by (course_id, node_id)
+_bb_node_cache: dict[tuple[str, str], BBContent] = {}
+# Cache course title by course_id to prevent UI title regression to raw ids
+_bb_course_title_cache: dict[str, str] = {}
+
+
+def _get_or_create_manager(session_id: str, cookies: dict) -> BBFileManager:
+    """Get or create a Blackboard file manager for the session."""
+    if session_id not in _bb_file_managers:
+        _bb_file_managers[session_id] = BBFileManager(cookies)
+    return _bb_file_managers[session_id]
+
+
+async def _get_authenticated_provider():
+    """
+    Get an authenticated Blackboard provider using configured credentials.
+    Returns (provider, is_authenticated) tuple.
+    """
+    import time
+
+    from backend.services.blackboard_service import DemoBlackboardProvider
+
+    provider = DemoBlackboardProvider()
+    student_id = None
+
+    try:
+        student_id, _password, _base_url = provider._get_credentials()
+    except Exception as exc:
+        print(f"[BB] Failed to resolve credentials: {exc}")
+
+    cache_key = f"{student_id or 'default'}"
+
+    # Check cache (valid for 1 hour)
+    if cache_key in _bb_providers_cache:
+        cached_provider, timestamp = _bb_providers_cache[cache_key]
+        if (
+            time.time() - timestamp < 3600
+            and getattr(cached_provider, "_cas_session", None) is not None
+        ):
+            return cached_provider, True
+
+    # Try to authenticate with runtime/settings fallback credentials.
+    try:
+        logged_in = await provider.bypass_cas_login()
+        if logged_in:
+            _bb_providers_cache[cache_key] = (provider, time.time())
+            print(f"[BB] Provider authenticated for {student_id}")
+            return provider, True
+
+        print(f"[BB] Failed to authenticate provider for {student_id}")
+        return provider, False
+    except Exception as e:
+        print(f"[BB] Error authenticating provider: {e}")
+        return provider, False
+
+
+async def _ensure_bb_runtime_from_profile(session: Session) -> None:
+    """If runtime Blackboard student_id is missing, try auto-applying a saved BB profile."""
+    bb_config = runtime_settings.get_blackboard_config()
+    if bb_config.student_id:
+        return
+
+    profiles = await SettingsService(session).list_bb_profiles()
+    if not profiles:
+        return
+
+    # Profiles are sorted by name in SettingsService; use the first available one as fallback.
+    fallback_profile = profiles[0]
+    await SettingsService(session).apply_bb_profile(fallback_profile.name)
+    print(f"[BB] Auto-applied Blackboard profile: {fallback_profile.name}")
+
+
+@router.get("/blackboard/files/courses", response_model=ApiResponse[object])
+async def get_blackboard_courses(
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    """Get list of all Blackboard courses for current user."""
+    try:
+        await _ensure_bb_runtime_from_profile(session)
+
+        # Get authenticated provider
+        provider, is_authenticated = await _get_authenticated_provider()
+        print(f"[BB][files/courses] authenticated={is_authenticated}")
+
+        if is_authenticated and provider:
+            try:
+                courses_list = await provider.get_all_courses()
+                print(f"[BB] Successfully fetched {len(courses_list)} courses from Blackboard")
+
+                if courses_list:
+                    # Convert Course objects to API response format
+                    courses = [
+                        {
+                            "id": c.course_id,
+                            "title": c.name,
+                            "type": "x-bb-course",
+                            "course_id": c.course_id,
+                            "has_children": True,
+                            "is_loaded": False,
+                            "children": [],
+                            "attachments": [],
+                        }
+                        for c in courses_list
+                    ]
+                    for c in courses_list:
+                        _bb_course_title_cache[c.course_id] = c.name
+                    return ApiResponse(success=True, data={"courses": courses})
+                else:
+                    print("[BB] No courses returned from Blackboard")
+            except Exception as e:
+                print(f"[BB] Error fetching courses: {e}")
+                import traceback
+
+                traceback.print_exc()
+        else:
+            print("[BB] Provider not authenticated")
+            return ApiResponse(
+                success=False,
+                data={"courses": []},
+                error="Blackboard 登录失败，请在设置中重新输入账号密码",
+            )
+
+        return ApiResponse(
+            success=False,
+            data={"courses": []},
+            error="Blackboard 未返回课程数据",
+        )
+
+    except Exception as e:
+        print(f"[BB] Error in get_blackboard_courses: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return ApiResponse(success=True, data={"courses": []})
+
+
+@router.get("/blackboard/files/tree/{course_id}", response_model=ApiResponse[object])
+async def get_blackboard_file_tree(
+    course_id: str,
+    node_id: str | None = Query(None),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    """Get file tree for a Blackboard course or node."""
+    try:
+        await _ensure_bb_runtime_from_profile(session)
+        print(f"[BB][files/tree] request course_id={course_id}, node_id={node_id}")
+        provider, is_authenticated = await _get_authenticated_provider()
+        if not is_authenticated or provider is None or provider._cas_session is None:
+            raise HTTPException(
+                status_code=401, detail="Blackboard 登录失败，请在设置中重新输入账号密码"
+            )
+
+        if is_authenticated and provider and provider._cas_session:
+            cookie_dict = provider._cas_session.cookies.get_dict()
+            manager = _get_or_create_manager(f"bb:{course_id}", cookie_dict)
+
+            if node_id:
+                node = _bb_node_cache.get((course_id, node_id))
+                if node is None:
+                    # Recover node metadata when cache is missing (e.g., backend restart).
+                    node_title = "Folder"
+                    node_type = "x-bb-folder"
+                    node_has_children = True
+                    try:
+                        meta = await manager._get_json(
+                            f"{manager.BASE_URL}/courses/{course_id}/contents/{node_id}"
+                        )
+                        node_title = meta.get("title") or node_title
+                        handler = meta.get("contentHandler", {}).get("id", "")
+                        if "/" in handler:
+                            node_type = handler.split("/")[-1]
+                        node_has_children = bool(meta.get("hasChildren", True))
+                    except Exception as exc:
+                        print(
+                            f"[BB][files/tree] failed to resolve node metadata for {node_id}: {exc}"
+                        )
+
+                    node = BBContent(
+                        id=node_id,
+                        title=node_title,
+                        type=node_type,
+                        course_id=course_id,
+                        has_children=node_has_children,
+                    )
+                    _bb_node_cache[(course_id, node_id)] = node
+
+                await manager.fetch_node_children(node)
+                print(
+                    f"[BB][files/tree] loaded node={node_id}, children={len(node.children)}, attachments={len(node.attachments)}"
+                )
+
+                for child in node.children:
+                    _bb_node_cache[(course_id, child.id)] = child
+
+                payload = node.to_dict()
+                for attachment in payload.get("attachments", []):
+                    file_name = attachment.get("file_name", "download.bin")
+                    attachment["download_url"] = (
+                        f"/blackboard/files/download?course_id={course_id}"
+                        f"&content_id={node.id}"
+                        f"&attachment_id={attachment.get('id')}"
+                        f"&file_name={quote(str(file_name))}"
+                    )
+
+                return ApiResponse(success=True, data=payload)
+
+            course_node = BBContent(
+                id=course_id,
+                title=_bb_course_title_cache.get(course_id, f"Course {course_id}"),
+                type="x-bb-course",
+                course_id=course_id,
+                has_children=True,
+            )
+            _bb_node_cache[(course_id, course_id)] = course_node
+
+            await manager.fetch_node_children(course_node)
+            print(
+                f"[BB][files/tree] loaded root course={course_id}, children={len(course_node.children)}, attachments={len(course_node.attachments)}"
+            )
+
+            for child in course_node.children:
+                _bb_node_cache[(course_id, child.id)] = child
+
+            return ApiResponse(success=True, data=course_node.to_dict())
+        raise HTTPException(status_code=500, detail="Blackboard 文件树加载失败")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[BB] Error in tree retrieval: {e}")
+        import traceback
+
+        traceback.print_exc()
+    raise HTTPException(status_code=502, detail="Blackboard 文件树加载失败")
+
+
+@router.get("/blackboard/files/download")
+async def download_blackboard_file(
+    course_id: str = Query(...),
+    content_id: str = Query(...),
+    attachment_id: str = Query(...),
+    file_name: str | None = Query(None),
+) -> Response:
+    """Proxy Blackboard attachment download using server-side authenticated session."""
+    provider, is_authenticated = await _get_authenticated_provider()
+    if not is_authenticated or provider is None or provider._cas_session is None:
+        raise HTTPException(status_code=401, detail="Blackboard 未登录或会话已过期")
+
+    download_url = (
+        "https://bb.sustech.edu.cn/learn/api/public/v1"
+        f"/courses/{course_id}/contents/{content_id}/attachments/{attachment_id}/download"
+    )
+
+    try:
+        upstream = provider._cas_session.get(download_url, timeout=60)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"下载请求失败: {exc}") from exc
+
+    if upstream.status_code != 200:
+        raise HTTPException(
+            status_code=upstream.status_code,
+            detail=f"Blackboard 下载失败 (status={upstream.status_code})",
+        )
+
+    resolved_name = (file_name or f"{attachment_id}.bin").strip() or f"{attachment_id}.bin"
+    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(resolved_name)}"}
+    media_type = upstream.headers.get("Content-Type", "application/octet-stream")
+    return Response(content=upstream.content, media_type=media_type, headers=headers)
+
+
+@router.post("/blackboard/files/download-batch", response_model=ApiResponse[object])
+async def download_blackboard_batch(
+    course_id: str = Query(...),
+    node_id: str | None = Query(None),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    """Start batch download for a course or node."""
+    raise HTTPException(
+        status_code=400, detail="节点本身不能下载，请双击文件夹展开后，双击具体的文件进行下载"
+    )

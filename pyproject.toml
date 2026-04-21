@@ -5,6 +5,8 @@ description = "A modular student productivity agent for software engineering cou
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "aiohttp>=3.9.0",
+  "aiofiles>=23.2.0",
   "aiosmtplib>=3.0.1",
   "beautifulsoup4>=4.12.3",
   "fastapi>=0.115.0",
