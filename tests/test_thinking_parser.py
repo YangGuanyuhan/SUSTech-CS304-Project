@@ -1,5 +1,6 @@
 from backend.services.thinking_parser import (
     MAX_THINKING_LENGTH,
+    StreamingThinkingParser,
     THINKING_TRUNCATION_SUFFIX,
     parse_reasoning_api_response,
     parse_thinking_response,
@@ -37,6 +38,13 @@ def test_parse_thinking_response_uses_remaining_content_when_final_tag_missing()
     assert result.final_answer == "Answer body"
 
 
+def test_parse_thinking_response_recovers_when_final_closing_tag_is_missing():
+    result = parse_thinking_response("<thinking>Reasoning</thinking>\n<final>Answer body")
+
+    assert result.thinking == "Reasoning"
+    assert result.final_answer == "Answer body"
+
+
 def test_parse_thinking_response_truncates_long_thinking():
     long_thinking = "a" * (MAX_THINKING_LENGTH + 50)
 
@@ -58,3 +66,43 @@ def test_parse_reasoning_api_response_maps_reasoning_fields():
 
     assert result.thinking == "Model reasoning"
     assert result.final_answer == "Visible answer"
+
+
+def test_streaming_thinking_parser_splits_channels_incrementally():
+    parser = StreamingThinkingParser()
+
+    chunks = []
+    chunks.extend(parser.feed("<think"))
+    chunks.extend(parser.feed("ing>Plan A"))
+    chunks.extend(parser.feed("</thinking><final>Answer"))
+    chunks.extend(parser.flush())
+
+    assert [(chunk.channel, chunk.text) for chunk in chunks] == [
+        ("thinking", "Plan A"),
+        ("final", "Answer"),
+    ]
+
+
+def test_streaming_thinking_parser_routes_prefix_to_thinking_before_first_tag():
+    parser = StreamingThinkingParser()
+
+    chunks = []
+    chunks.extend(parser.feed("Prelude"))
+    chunks.extend(parser.feed("<thinking>Plan</thinking><final>Answer</final>"))
+    chunks.extend(parser.flush())
+
+    assert [(chunk.channel, chunk.text) for chunk in chunks] == [
+        ("thinking", "PreludePlan"),
+        ("final", "Answer"),
+    ]
+
+
+def test_streaming_thinking_parser_streams_plain_text_without_tags():
+    parser = StreamingThinkingParser()
+
+    chunks = []
+    chunks.extend(parser.feed("Plain "))
+    chunks.extend(parser.feed("response"))
+    chunks.extend(parser.flush())
+
+    assert "".join(chunk.text for chunk in chunks if chunk.channel == "final") == "Plain response"

@@ -638,7 +638,7 @@ async function submitMessage() {
       },
       {
         onThinking(thinking) {
-          assistantMessage.thinking = thinking || "";
+          assistantMessage.thinking += thinking || "";
           scrollToBottom();
         },
         onChunk(chunk) {
@@ -655,7 +655,8 @@ async function submitMessage() {
           scrollToBottom();
         },
         onDone(payload) {
-          assistantMessage.content = assistantMessage.content.trim();
+          assistantMessage.content = (payload.response ?? assistantMessage.content).trim();
+          assistantMessage.thinking = (payload.thinking ?? assistantMessage.thinking).trim();
           assistantMessage.toolEvents = payload.tool_events || assistantMessage.toolEvents || [];
           scrollToBottom();
         }
@@ -717,7 +718,7 @@ async function resolveApproval(approved) {
       },
       {
         onThinking(thinking) {
-          assistantMessage.thinking = thinking || "";
+          assistantMessage.thinking += thinking || "";
           scrollToBottom();
         },
         onChunk(chunk) {
@@ -737,7 +738,8 @@ async function resolveApproval(approved) {
           scrollToBottom();
         },
         onDone(payload) {
-          assistantMessage.content = assistantMessage.content.trim();
+          assistantMessage.content = (payload.response ?? assistantMessage.content).trim();
+          assistantMessage.thinking = (payload.thinking ?? assistantMessage.thinking).trim();
           assistantMessage.toolEvents = payload.tool_events || assistantMessage.toolEvents || [];
           scrollToBottom();
         }

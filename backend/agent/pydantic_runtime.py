@@ -56,6 +56,7 @@ When answering user questions, structure your response using XML tags:
    - Do not repeat the thinking content.
 3. Both tags are required for every response.
 4. The <thinking> section must come before <final>.
+5. Do not output any text before <thinking> or after </final>.
 """.strip()
 
 
@@ -92,6 +93,19 @@ class PydanticAIRuntime:
             http_client=AsyncClient(trust_env=False),
         )
         return OpenAIModel(config.model, provider=provider)
+
+    @staticmethod
+    def _normalize_assistant_history_content(content: str) -> str:
+        assistant_content = (content or "").strip()
+        lowered = assistant_content.lower()
+        has_thinking = "<thinking>" in lowered and "</thinking>" in lowered
+        has_final = "<final>" in lowered and "</final>" in lowered
+
+        if has_thinking and has_final:
+            return assistant_content
+        if has_final:
+            return f"<thinking>\n</thinking>\n{assistant_content}"
+        return f"<thinking>\n</thinking>\n<final>\n{assistant_content}\n</final>"
 
     def _build_agent(self) -> Agent[AgentDeps, str | DeferredToolRequests]:
         agent = Agent[AgentDeps, str | DeferredToolRequests](
@@ -380,7 +394,8 @@ class PydanticAIRuntime:
             if role == "user":
                 messages.append(ModelRequest(parts=[UserPromptPart(content)]))
             elif role == "assistant":
-                messages.append(ModelResponse(parts=[TextPart(content)]))
+                assistant_content = self._normalize_assistant_history_content(content)
+                messages.append(ModelResponse(parts=[TextPart(assistant_content)]))
         return messages
 
     async def run(
@@ -409,40 +424,31 @@ class PydanticAIRuntime:
         )
         return run_result, deps
 
-    # async def run_stream(
-    #     self,
-    #     *,
-    #     user_input: str | None,
-    #     session_id: str,
-    #     workspace_root: str | None,
-    #     history: list[dict[str, str]] | None = None,
-    #     message_history: list[Any] | None = None,
-    #     deferred_tool_results: DeferredToolResults | None = None,
-    # ) -> tuple[Any, AgentDeps, Any]:
-    #     """Run agent with streaming output.
-
-    #     Returns a tuple of (result, deps, stream_context) where stream_context
-    #     is an async context manager that provides the stream.
-    #     """
-    #     deps = AgentDeps(
-    #         session=self.session,
-    #         session_id=session_id,
-    #         workspace_root=workspace_root,
-    #         tool_service=self.tool_service,
-    #     )
-    #     agent = self._build_agent()
-    #     final_history = message_history or self._history_to_model_messages(history or [])
-
-    #     # Use streaming run - returns an async context manager
-    #     # We return the context manager itself, caller needs to use 'async with'
-    #     stream_context = agent.run_stream(
-    #         user_prompt=user_input,
-    #         message_history=final_history,
-    #         deferred_tool_results=deferred_tool_results,
-    #         deps=deps,
-    #     )
-
-    #     return run_result, deps
+    def run_stream(
+        self,
+        *,
+        user_input: str | None,
+        session_id: str,
+        workspace_root: str | None,
+        history: list[dict[str, str]] | None = None,
+        message_history: list[Any] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+    ):
+        deps = AgentDeps(
+            session=self.session,
+            session_id=session_id,
+            workspace_root=workspace_root,
+            tool_service=self.tool_service,
+        )
+        agent = self._build_agent()
+        final_history = message_history or self._history_to_model_messages(history or [])
+        stream_context = agent.run_stream(
+            user_prompt=user_input,
+            message_history=final_history,
+            deferred_tool_results=deferred_tool_results,
+            deps=deps,
+        )
+        return stream_context, deps
 
     @staticmethod
     def extract_text_or_requests(run_result: Any) -> str | DeferredToolRequests:
