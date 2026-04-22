@@ -46,6 +46,16 @@ Response style:
 - Be concise and practical.
 - Respond in Markdown when useful.
 - Do not invent file contents, command output, or webpage content.
+
+Structured output format:
+When answering user questions, structure your response using XML tags:
+1. First, wrap your reasoning inside <thinking>...</thinking> tags.
+   - Keep it concise but useful.
+2. Then, provide your final answer inside <final>...</final> tags.
+   - Make this the direct answer for the user.
+   - Do not repeat the thinking content.
+3. Both tags are required for every response.
+4. The <thinking> section must come before <final>.
 """.strip()
 
 

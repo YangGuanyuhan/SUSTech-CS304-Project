@@ -81,6 +81,10 @@ async def _stream_agent_result(result: dict[str, object], *, session_id: str):
         }
         return
 
+    thinking = result.get("thinking")
+    if thinking:
+        yield {"event": "thinking", "data": json.dumps({"thinking": str(thinking)})}
+
     # Return full response at once
     yield {"event": "message", "data": json.dumps({"chunk": str(result.get("response", ""))})}
     yield {

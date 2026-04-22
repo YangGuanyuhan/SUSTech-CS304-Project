@@ -38,6 +38,7 @@ class ToolTrace(BaseModel):
 
 class AgentTurnResult(BaseModel):
     response: str = ""
+    thinking: str | None = None
     tools_used: list[str] = Field(default_factory=list)
     tool_events: list[ToolTrace] = Field(default_factory=list)
     approval_request: BatchApprovalRequest | None = None

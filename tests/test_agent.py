@@ -22,6 +22,29 @@ async def test_agent_returns_llm_response(db_session):
         ):
             result = await agent.run("Hello", "session-1")
             assert result["response"] == "Here is the answer."
+            assert result["thinking"] is None
+
+
+async def test_agent_extracts_thinking_from_structured_response(db_session):
+    agent = StudentProductivityAgent(db_session)
+
+    mock_result = AsyncMock()
+    mock_result.output = "<thinking>Check context</thinking><final>Here is the answer.</final>"
+
+    mock_deps = AsyncMock()
+    mock_deps.tool_events = []
+    mock_deps.tools_used = []
+
+    with patch.object(agent.runtime, "run", new_callable=AsyncMock) as mock_run:
+        mock_run.return_value = (mock_result, mock_deps)
+        with patch.object(
+            agent.runtime,
+            "extract_text_or_requests",
+            return_value="<thinking>Check context</thinking><final>Here is the answer.</final>",
+        ):
+            result = await agent.run("Hello", "session-structured")
+            assert result["response"] == "Here is the answer."
+            assert result["thinking"] == "Check context"
 
 
 async def test_agent_uses_llm_runtime_fallback_when_unconfigured(db_session):

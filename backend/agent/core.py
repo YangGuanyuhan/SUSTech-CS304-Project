@@ -13,6 +13,7 @@ from backend.services.approval_service import approval_service
 from backend.services.llm_logging_service import llm_logger
 from backend.services.runtime_settings import runtime_settings
 from backend.services.task_service import TaskHistoryService
+from backend.services.thinking_parser import parse_thinking_response
 
 
 class StudentProductivityAgent:
@@ -160,7 +161,8 @@ class StudentProductivityAgent:
                 tools_used=tools_used,
             )
 
-        response_text = str(output).strip()
+        parsed_response = parse_thinking_response(str(output).strip())
+        response_text = parsed_response.final_answer
         llm_logger.log_event(
             session_id,
             "llm_response",
@@ -185,6 +187,7 @@ class StudentProductivityAgent:
                 )
         return AgentTurnResult(
             response=response_text,
+            thinking=parsed_response.thinking,
             tools_used=tools_used,
             tool_events=tool_events,
         )

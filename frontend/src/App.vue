@@ -195,6 +195,15 @@
               <span v-if="message.role === 'assistant'" class="role-label">StudyAI</span>
               <span v-if="message.elapsedLabel" class="elapsed">{{ message.elapsedLabel }}</span>
             </div>
+            <details v-if="message.thinking" class="thinking-section">
+              <summary class="thinking-summary">
+                <span class="thinking-label">思考过程</span>
+                <span class="thinking-badge">推理完成</span>
+              </summary>
+              <div class="thinking-body">
+                <div class="markdown-body" v-html="renderMarkdown(message.thinking)" />
+              </div>
+            </details>
             <div
               class="markdown-body"
               v-html="renderMarkdown(message.content)"
@@ -349,6 +358,7 @@ function makeConversation(title = "新对话") {
         id: crypto.randomUUID(),
         role: "assistant",
         content: "你好！我是 StudyAI 助手，可以帮助你查询课程、搜索文件、管理记忆等。有什么可以帮你的吗？",
+        thinking: "",
         elapsedLabel: "",
         toolEvents: []
       })
@@ -370,6 +380,7 @@ function restoreConversations() {
         messages: (conversation.messages || []).map((message) =>
           reactive({
             ...message,
+            thinking: message.thinking || "",
             toolEvents: message.toolEvents || []
           })
         )
@@ -601,6 +612,7 @@ async function submitMessage() {
     id: crypto.randomUUID(),
     role: "assistant",
     content: "正在等待模型响应...",
+    thinking: "",
     elapsedLabel: "",
     toolEvents: []
   });
@@ -625,6 +637,10 @@ async function submitMessage() {
         workspace_root: conversation.workspaceRoot?.trim() || null
       },
       {
+        onThinking(thinking) {
+          assistantMessage.thinking = thinking || "";
+          scrollToBottom();
+        },
         onChunk(chunk) {
           if (assistantMessage.content === "正在等待模型响应...") {
             assistantMessage.content = "";
@@ -681,6 +697,7 @@ async function resolveApproval(approved) {
     id: crypto.randomUUID(),
     role: "assistant",
     content: approved ? "正在执行批准的操作..." : "审批被拒绝。让智能体继续...",
+    thinking: "",
     elapsedLabel: "",
     toolEvents: []
   });
@@ -699,6 +716,10 @@ async function resolveApproval(approved) {
         approved
       },
       {
+        onThinking(thinking) {
+          assistantMessage.thinking = thinking || "";
+          scrollToBottom();
+        },
         onChunk(chunk) {
           if (
             assistantMessage.content === "正在执行批准的操作..." ||
@@ -1447,6 +1468,55 @@ body {
 
 .markdown-body :deep(a) {
   color: var(--accent);
+}
+
+/* Thinking Section */
+.thinking-section {
+  margin-bottom: 14px;
+  border: 1px solid rgba(31, 111, 120, 0.12);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(237, 248, 247, 0.92), rgba(255, 255, 255, 0.96));
+  overflow: hidden;
+}
+
+.thinking-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.thinking-summary::-webkit-details-marker {
+  display: none;
+}
+
+.thinking-label {
+  letter-spacing: -0.01em;
+}
+
+.thinking-badge {
+  margin-left: auto;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(31, 111, 120, 0.12);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.thinking-body {
+  padding: 0 14px 14px;
+  border-top: 1px solid rgba(31, 111, 120, 0.08);
+}
+
+.thinking-body .markdown-body {
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 /* Tool Events */
