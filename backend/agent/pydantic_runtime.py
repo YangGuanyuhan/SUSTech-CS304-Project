@@ -59,6 +59,19 @@ When answering user questions, structure your response using XML tags:
 5. Do not output any text before <thinking> or after </final>.
 """.strip()
 
+TURN_OUTPUT_FORMAT_REMINDER = """
+Structured output format:
+When answering user questions, structure your response using XML tags:
+1. First, wrap your reasoning inside <thinking>...</thinking> tags.
+    - Keep it concise but useful.
+2. Then, provide your final answer inside <final>...</final> tags.
+    - Make this the direct answer for the user.
+    - Do not repeat the thinking content.
+3. Both tags are required for every response.
+4. The <thinking> section must come before <final>.
+5. Do not output any text before <thinking> or after </final>.
+""".strip()
+
 
 @dataclass
 class AgentDeps:
@@ -106,6 +119,14 @@ class PydanticAIRuntime:
         if has_final:
             return f"<thinking>\n</thinking>\n{assistant_content}"
         return f"<thinking>\n</thinking>\n<final>\n{assistant_content}\n</final>"
+
+    @staticmethod
+    def _with_turn_output_reminder(user_input: str | None) -> str | None:
+        if user_input is None:
+            return None
+        if TURN_OUTPUT_FORMAT_REMINDER in user_input:
+            return user_input
+        return f"{user_input.rstrip()}\n\n{TURN_OUTPUT_FORMAT_REMINDER}"
 
     def _build_agent(self) -> Agent[AgentDeps, str | DeferredToolRequests]:
         agent = Agent[AgentDeps, str | DeferredToolRequests](
@@ -416,8 +437,9 @@ class PydanticAIRuntime:
         )
         agent = self._build_agent()
         final_history = message_history or self._history_to_model_messages(history or [])
+        turn_user_input = self._with_turn_output_reminder(user_input)
         run_result = await agent.run(
-            user_prompt=user_input,
+            user_prompt=turn_user_input,
             message_history=final_history,
             deferred_tool_results=deferred_tool_results,
             deps=deps,
@@ -442,8 +464,9 @@ class PydanticAIRuntime:
         )
         agent = self._build_agent()
         final_history = message_history or self._history_to_model_messages(history or [])
+        turn_user_input = self._with_turn_output_reminder(user_input)
         stream_context = agent.run_stream(
-            user_prompt=user_input,
+            user_prompt=turn_user_input,
             message_history=final_history,
             deferred_tool_results=deferred_tool_results,
             deps=deps,

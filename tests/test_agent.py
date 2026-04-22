@@ -1,7 +1,7 @@
 from unittest.mock import AsyncMock, patch
 
 from backend.agent.core import StudentProductivityAgent
-from backend.agent.pydantic_runtime import PydanticAIRuntime
+from backend.agent.pydantic_runtime import PydanticAIRuntime, TURN_OUTPUT_FORMAT_REMINDER
 
 
 async def test_agent_returns_llm_response(db_session):
@@ -96,3 +96,22 @@ def test_runtime_wraps_plain_assistant_history_in_structured_tags(db_session):
     )
 
     assert messages[1].parts[0].content == "<thinking>\n</thinking>\n<final>\nplain answer\n</final>"
+
+
+def test_runtime_appends_turn_output_reminder(db_session):
+    runtime = PydanticAIRuntime(db_session)
+
+    prompt = runtime._with_turn_output_reminder("hello")
+
+    assert prompt is not None
+    assert prompt.startswith("hello")
+    assert TURN_OUTPUT_FORMAT_REMINDER in prompt
+
+
+def test_runtime_does_not_duplicate_turn_output_reminder(db_session):
+    runtime = PydanticAIRuntime(db_session)
+
+    original = f"hello\n\n{TURN_OUTPUT_FORMAT_REMINDER}"
+    prompt = runtime._with_turn_output_reminder(original)
+
+    assert prompt == original

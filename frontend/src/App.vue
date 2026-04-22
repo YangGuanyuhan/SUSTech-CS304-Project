@@ -195,9 +195,13 @@
               <span v-if="message.role === 'assistant'" class="role-label">StudyAI</span>
               <span v-if="message.elapsedLabel" class="elapsed">{{ message.elapsedLabel }}</span>
             </div>
-            <details v-if="message.thinking" class="thinking-section">
+            <details v-if="message.thinking" class="thinking-section" open>
               <summary class="thinking-summary">
                 <span class="thinking-label">思考过程</span>
+                <span class="thinking-toggle" aria-hidden="true">
+                  <span class="toggle-closed">显示</span>
+                  <span class="toggle-open">收起</span>
+                </span>
                 <span class="thinking-badge">推理完成</span>
               </summary>
               <div class="thinking-body">
@@ -1499,6 +1503,27 @@ body {
 
 .thinking-label {
   letter-spacing: -0.01em;
+}
+
+.thinking-toggle {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.thinking-toggle .toggle-closed {
+  display: inline;
+}
+
+.thinking-toggle .toggle-open {
+  display: none;
+}
+
+.thinking-section[open] .thinking-toggle .toggle-closed {
+  display: none;
+}
+
+.thinking-section[open] .thinking-toggle .toggle-open {
+  display: inline;
 }
 
 .thinking-badge {
