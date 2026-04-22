@@ -305,11 +305,12 @@ async function consumeSSE(response, handlers) {
   }
 }
 
-export async function streamChat(payload, handlers) {
+export async function streamChat(payload, handlers, requestOptions = {}) {
   const response = await fetch(`${API_BASE}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    signal: requestOptions.signal
   });
   return consumeSSE(response, handlers);
 }

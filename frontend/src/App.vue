@@ -265,6 +265,17 @@
           />
         </div>
         <button
+          v-if="chatStreaming"
+          class="send-btn stop-btn"
+          @click="stopActiveChat"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="7" y="7" width="10" height="10" rx="1.5" ry="1.5"/>
+          </svg>
+          <span>停止</span>
+        </button>
+        <button
+          v-else
           class="send-btn"
           :disabled="loading || !draft.trim()"
           @click="submitMessage"
@@ -273,7 +284,7 @@
             <line x1="22" y1="2" x2="11" y2="13"/>
             <polygon points="22 2 15 22 11 13 2 9 22 2"/>
           </svg>
-          <span>{{ loading ? '发送中...' : '发送' }}</span>
+          <span>发送</span>
         </button>
       </div>
       </template>
@@ -385,8 +396,11 @@ const editingTitle = ref("");
 const draft = ref("");
 const composerInput = ref(null);
 const loading = ref(false);
+const chatStreaming = ref(false);
 const headerExpanded = ref(false);
 let activeTimer = null;
+let activeChatAbortController = null;
+let chatStopRequested = false;
 
 const sortedConversations = computed(() =>
   [...conversations.value].sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0))
@@ -569,6 +583,8 @@ async function loadCourses() {
 }
 
 async function submitMessage() {
+  if (loading.value) return;
+
   const content = draft.value.trim();
   if (!content) return;
 
@@ -595,6 +611,9 @@ async function submitMessage() {
   draft.value = "";
   nextTick(() => resizeComposer(composerInput.value));
   loading.value = true;
+  chatStreaming.value = true;
+  chatStopRequested = false;
+  activeChatAbortController = new AbortController();
   const stopTimer = startTimer(assistantMessage);
   scrollToBottom();
 
@@ -624,15 +643,33 @@ async function submitMessage() {
           assistantMessage.toolEvents = payload.tool_events || assistantMessage.toolEvents || [];
           scrollToBottom();
         }
+      },
+      {
+        signal: activeChatAbortController.signal
       }
     );
   } catch (error) {
-    assistantMessage.content = `聊天失败: ${error.message}`;
+    const aborted = chatStopRequested || error?.name === "AbortError";
+    if (aborted) {
+      const partial = assistantMessage.content.trim();
+      assistantMessage.content = partial ? `${partial}\n\n[已停止生成]` : "已停止生成。";
+    } else {
+      assistantMessage.content = `聊天失败: ${error.message}`;
+    }
   } finally {
     conversation.updatedAt = Date.now();
     stopTimer();
+    activeChatAbortController = null;
+    chatStopRequested = false;
+    chatStreaming.value = false;
     loading.value = false;
   }
+}
+
+function stopActiveChat() {
+  if (!chatStreaming.value || !activeChatAbortController) return;
+  chatStopRequested = true;
+  activeChatAbortController.abort();
 }
 
 async function resolveApproval(approved) {
@@ -716,6 +753,10 @@ watch(
 
 onBeforeUnmount(() => {
   if (activeTimer) window.clearInterval(activeTimer);
+  if (activeChatAbortController) {
+    activeChatAbortController.abort();
+    activeChatAbortController = null;
+  }
 });
 
 onMounted(() => {
@@ -1626,6 +1667,15 @@ body {
 .send-btn:hover {
   background: #EA580C;
   transform: translateY(-1px);
+}
+
+.stop-btn {
+  background: linear-gradient(135deg, #b33a24, #cc4a2f);
+  box-shadow: 0 12px 24px rgba(179, 58, 36, 0.22);
+}
+
+.stop-btn:hover {
+  background: #a5321f;
 }
 
 .send-btn:disabled {
