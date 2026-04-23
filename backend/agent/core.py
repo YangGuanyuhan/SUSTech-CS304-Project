@@ -440,9 +440,7 @@ class StudentProductivityAgent:
             )
         return result.model_dump(mode="json")
 
-    async def stream(
-        self, message: str, session_id: str, workspace_root: str | None = None
-    ):
+    async def stream(self, message: str, session_id: str, workspace_root: str | None = None):
         final_result: AgentTurnResult | None = None
         emitted_any_event = False
 

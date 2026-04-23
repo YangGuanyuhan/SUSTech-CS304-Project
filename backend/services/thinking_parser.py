@@ -175,10 +175,14 @@ def parse_thinking_response(text: str) -> ThinkingParseResult:
         return ThinkingParseResult(thinking=None, final_answer=raw, raw=raw)
 
     thinking_parts = [
-        cleaned for match in _THINKING_PATTERN.finditer(raw) if (cleaned := _clean_section(match.group(1)))
+        cleaned
+        for match in _THINKING_PATTERN.finditer(raw)
+        if (cleaned := _clean_section(match.group(1)))
     ]
     final_parts = [
-        cleaned for match in _FINAL_PATTERN.finditer(raw) if (cleaned := _clean_section(match.group(1)))
+        cleaned
+        for match in _FINAL_PATTERN.finditer(raw)
+        if (cleaned := _clean_section(match.group(1)))
     ]
 
     thinking = _truncate_thinking("\n\n".join(thinking_parts) if thinking_parts else None)
