@@ -57,43 +57,8 @@ def _chunk_text(text: str, chunk_size: int = 2000) -> list[str]:
     return [text[index : index + chunk_size] for index in range(0, len(text), chunk_size)]
 
 
-async def _stream_agent_result(result: dict[str, object], *, session_id: str):
-    approval_request = result.get("approval_request")
-    if approval_request is not None:
-        yield {
-            "event": "approval_required",
-            "data": json.dumps(
-                {
-                    **approval_request,
-                    "tool_events": result.get("tool_events", []),
-                }
-            ),
-        }
-        yield {
-            "event": "done",
-            "data": json.dumps(
-                {
-                    "session_id": session_id,
-                    "status": "approval_required",
-                    "tool_events": result.get("tool_events", []),
-                }
-            ),
-        }
-        return
-
-    # Return full response at once
-    yield {"event": "message", "data": json.dumps({"chunk": str(result.get("response", ""))})}
-    yield {
-        "event": "done",
-        "data": json.dumps(
-            {
-                "session_id": session_id,
-                "status": "completed",
-                "tools_used": result.get("tools_used", []),
-                "tool_events": result.get("tool_events", []),
-            }
-        ),
-    }
+def _encode_sse(event: str, payload: dict[str, object]) -> dict[str, str]:
+    return {"event": event, "data": json.dumps(payload)}
 
 
 @router.get("/health", response_model=ApiResponse[dict[str, str]])
@@ -304,9 +269,12 @@ async def chat(
 
     async def event_generator():
         try:
-            result = await agent.run(request.message, request.session_id, request.workspace_root)
-            async for event in _stream_agent_result(result, session_id=request.session_id):
-                yield event
+            async for event in agent.stream(
+                request.message,
+                request.session_id,
+                request.workspace_root,
+            ):
+                yield _encode_sse(event.event, event.payload)
         except Exception as e:
             yield {
                 "event": "error",
@@ -332,9 +300,11 @@ async def handle_chat_approval(
     agent = StudentProductivityAgent(session)
 
     async def event_generator():
-        result = await agent.resume_approval(request.approval_id, approved=request.approved)
-        async for event in _stream_agent_result(result, session_id=request.session_id):
-            yield event
+        async for event in agent.stream_resume_approval(
+            request.approval_id,
+            approved=request.approved,
+        ):
+            yield _encode_sse(event.event, event.payload)
 
     return EventSourceResponse(event_generator())
 
