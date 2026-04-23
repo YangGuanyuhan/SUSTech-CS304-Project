@@ -1,7 +1,7 @@
 from backend.services.thinking_parser import (
     MAX_THINKING_LENGTH,
-    StreamingThinkingParser,
     THINKING_TRUNCATION_SUFFIX,
+    StreamingThinkingParser,
     parse_reasoning_api_response,
     parse_thinking_response,
 )
