@@ -1,7 +1,7 @@
 from unittest.mock import AsyncMock, patch
 
 from backend.agent.core import StudentProductivityAgent
-from backend.agent.pydantic_runtime import PydanticAIRuntime, TURN_OUTPUT_FORMAT_REMINDER
+from backend.agent.pydantic_runtime import TURN_OUTPUT_FORMAT_REMINDER, PydanticAIRuntime
 
 
 async def test_agent_returns_llm_response(db_session):
