@@ -89,10 +89,6 @@
             <span class="role">{{ message.role }}</span>
             <span v-if="message.elapsedLabel" class="elapsed">{{ message.elapsedLabel }}</span>
           </div>
-          <div
-            class="markdown-body"
-            v-html="renderMarkdown(message.content)"
-          />
           <div v-if="message.toolEvents?.length" class="tool-events">
             <details
               v-for="(toolEvent, index) in message.toolEvents"
@@ -115,6 +111,11 @@
               </div>
             </details>
           </div>
+          <div
+            v-if="message.content"
+            class="markdown-body"
+            v-html="renderMarkdown(message.content)"
+          />
           <template
             v-for="(toolEvent, index) in message.toolEvents?.filter((event) => event.tool_name === 'create_quiz') || []"
             :key="`${message.id}-quiz-${index}`"
@@ -268,6 +269,7 @@ function formatElapsed(ms) {
 }
 
 function formatToolStatus(status) {
+  if (status === "running") return "Running";
   if (status === "completed") return "Completed";
   if (status === "failed") return "Failed";
   if (status === "denied") return "Denied";
@@ -435,6 +437,9 @@ async function submitMessage() {
           }
           assistantMessage.content += chunk;
         },
+        onToolEvents(toolEvents) {
+          assistantMessage.toolEvents = toolEvents || assistantMessage.toolEvents || [];
+        },
         onApprovalRequired(approval) {
           assistantMessage.content = "Tool invocation is waiting for your approval.";
           assistantMessage.toolEvents = approval.tool_events || [];
@@ -489,6 +494,9 @@ async function resolveApproval(approved) {
             assistantMessage.content = "";
           }
           assistantMessage.content += chunk;
+        },
+        onToolEvents(toolEvents) {
+          assistantMessage.toolEvents = toolEvents || assistantMessage.toolEvents || [];
         },
         onApprovalRequired(nextApproval) {
           assistantMessage.content = "Another action is waiting for your approval.";
@@ -891,6 +899,11 @@ onBeforeUnmount(() => {
 .tool-event-status.completed {
   background: rgba(34, 197, 94, 0.12);
   color: #15803d;
+}
+
+.tool-event-status.running {
+  background: rgba(59, 130, 246, 0.14);
+  color: #1d4ed8;
 }
 
 .tool-event-status.failed,

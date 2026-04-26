@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 from datetime import datetime
 from urllib.parse import quote
@@ -57,7 +59,33 @@ def _chunk_text(text: str, chunk_size: int = 2000) -> list[str]:
     return [text[index : index + chunk_size] for index in range(0, len(text), chunk_size)]
 
 
-async def _stream_agent_result(result: dict[str, object], *, session_id: str):
+def _serialize_tool_event(event: object) -> dict[str, object]:
+    if hasattr(event, "model_dump"):
+        return event.model_dump(mode="json")
+    if isinstance(event, dict):
+        return event
+    return {"tool_name": "unknown", "arguments": {}, "status": "failed", "output": str(event)}
+
+
+def _serialize_tool_events(tool_events: object) -> list[dict[str, object]]:
+    if not isinstance(tool_events, list):
+        return []
+    return [_serialize_tool_event(event) for event in tool_events]
+
+
+async def _stream_agent_result(
+    result: dict[str, object],
+    *,
+    session_id: str,
+    emit_initial_tool_events: bool = True,
+):
+    tool_events = result.get("tool_events", [])
+    if emit_initial_tool_events and tool_events:
+        yield {
+            "event": "tool_events",
+            "data": json.dumps({"tool_events": tool_events}),
+        }
+
     approval_request = result.get("approval_request")
     if approval_request is not None:
         yield {
@@ -65,7 +93,7 @@ async def _stream_agent_result(result: dict[str, object], *, session_id: str):
             "data": json.dumps(
                 {
                     **approval_request,
-                    "tool_events": result.get("tool_events", []),
+                    "tool_events": tool_events,
                 }
             ),
         }
@@ -75,7 +103,7 @@ async def _stream_agent_result(result: dict[str, object], *, session_id: str):
                 {
                     "session_id": session_id,
                     "status": "approval_required",
-                    "tool_events": result.get("tool_events", []),
+                    "tool_events": tool_events,
                 }
             ),
         }
@@ -90,10 +118,44 @@ async def _stream_agent_result(result: dict[str, object], *, session_id: str):
                 "session_id": session_id,
                 "status": "completed",
                 "tools_used": result.get("tools_used", []),
-                "tool_events": result.get("tool_events", []),
+                "tool_events": tool_events,
             }
         ),
     }
+
+
+async def _stream_agent_execution(*, session_id: str, execute):
+    tool_events_queue: asyncio.Queue[list[dict[str, object]]] = asyncio.Queue()
+
+    async def on_tool_events(tool_events: list[object]) -> None:
+        await tool_events_queue.put(_serialize_tool_events(tool_events))
+
+    run_task = asyncio.create_task(execute(on_tool_events))
+    try:
+        while True:
+            if run_task.done() and tool_events_queue.empty():
+                break
+            try:
+                tool_events = await asyncio.wait_for(tool_events_queue.get(), timeout=0.1)
+            except TimeoutError:
+                continue
+            yield {
+                "event": "tool_events",
+                "data": json.dumps({"tool_events": tool_events}),
+            }
+
+        result = await run_task
+        async for event in _stream_agent_result(
+            result,
+            session_id=session_id,
+            emit_initial_tool_events=False,
+        ):
+            yield event
+    finally:
+        if not run_task.done():
+            run_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await run_task
 
 
 @router.get("/health", response_model=ApiResponse[dict[str, str]])
@@ -304,8 +366,15 @@ async def chat(
 
     async def event_generator():
         try:
-            result = await agent.run(request.message, request.session_id, request.workspace_root)
-            async for event in _stream_agent_result(result, session_id=request.session_id):
+            async for event in _stream_agent_execution(
+                session_id=request.session_id,
+                execute=lambda on_tool_events: agent.run(
+                    request.message,
+                    request.session_id,
+                    request.workspace_root,
+                    on_tool_events=on_tool_events,
+                ),
+            ):
                 yield event
         except Exception as e:
             yield {
@@ -332,9 +401,21 @@ async def handle_chat_approval(
     agent = StudentProductivityAgent(session)
 
     async def event_generator():
-        result = await agent.resume_approval(request.approval_id, approved=request.approved)
-        async for event in _stream_agent_result(result, session_id=request.session_id):
-            yield event
+        try:
+            async for event in _stream_agent_execution(
+                session_id=request.session_id,
+                execute=lambda on_tool_events: agent.resume_approval(
+                    request.approval_id,
+                    approved=request.approved,
+                    on_tool_events=on_tool_events,
+                ),
+            ):
+                yield event
+        except Exception as e:
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": str(e)}),
+            }
 
     return EventSourceResponse(event_generator())
 

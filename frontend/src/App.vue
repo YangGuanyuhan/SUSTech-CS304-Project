@@ -195,10 +195,6 @@
               <span v-if="message.role === 'assistant'" class="role-label">StudyAI</span>
               <span v-if="message.elapsedLabel" class="elapsed">{{ message.elapsedLabel }}</span>
             </div>
-            <div
-              class="markdown-body"
-              v-html="renderMarkdown(message.content)"
-            />
             <!-- Tool Events -->
             <div v-if="message.toolEvents?.length" class="tool-events">
               <details
@@ -222,6 +218,11 @@
                 </div>
               </details>
             </div>
+            <div
+              v-if="message.content"
+              class="markdown-body"
+              v-html="renderMarkdown(message.content)"
+            />
             <!-- Quiz Panel -->
             <template
               v-for="(toolEvent, index) in message.toolEvents?.filter((event) => event.tool_name === 'create_quiz') || []"
@@ -459,6 +460,7 @@ function formatElapsed(ms) {
 }
 
 function formatToolStatus(status) {
+  if (status === "running") return "运行中";
   if (status === "completed") return "完成";
   if (status === "failed") return "失败";
   if (status === "denied") return "已拒绝";
@@ -632,6 +634,10 @@ async function submitMessage() {
           assistantMessage.content += chunk;
           scrollToBottom();
         },
+        onToolEvents(toolEvents) {
+          assistantMessage.toolEvents = toolEvents || assistantMessage.toolEvents || [];
+          scrollToBottom();
+        },
         onApprovalRequired(approval) {
           assistantMessage.content = "工具调用正在等待你的审批。";
           assistantMessage.toolEvents = approval.tool_events || [];
@@ -707,6 +713,10 @@ async function resolveApproval(approved) {
             assistantMessage.content = "";
           }
           assistantMessage.content += chunk;
+          scrollToBottom();
+        },
+        onToolEvents(toolEvents) {
+          assistantMessage.toolEvents = toolEvents || assistantMessage.toolEvents || [];
           scrollToBottom();
         },
         onApprovalRequired(nextApproval) {
@@ -1495,6 +1505,11 @@ body {
 .tool-event-status.completed {
   background: rgba(34, 197, 94, 0.12);
   color: #15803d;
+}
+
+.tool-event-status.running {
+  background: rgba(59, 130, 246, 0.14);
+  color: #1d4ed8;
 }
 
 .tool-event-status.failed,

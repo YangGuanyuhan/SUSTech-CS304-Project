@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+import inspect
+from typing import Any, Awaitable, Callable
 
 from pydantic_ai.tools import DeferredToolRequests
 from sqlalchemy.orm import Session
@@ -24,6 +25,18 @@ class StudentProductivityAgent:
 
     async def _build_history(self, session_id: str) -> list[dict[str, str]]:
         return await TaskHistoryService(self.session).get_recent_messages(session_id, limit=10)
+
+    async def _emit_tool_events(
+        self,
+        on_tool_events: Callable[[list[ToolTrace]], Awaitable[None] | None] | None,
+        tool_events: list[ToolTrace],
+    ) -> None:
+        if on_tool_events is None:
+            return
+        snapshot = [event.model_copy(deep=True) for event in tool_events]
+        maybe_awaitable = on_tool_events(snapshot)
+        if inspect.isawaitable(maybe_awaitable):
+            await maybe_awaitable
 
     def _approval_result(
         self,
@@ -111,6 +124,7 @@ class StudentProductivityAgent:
         deferred_tool_results: Any | None = None,
         prior_tool_events: list[ToolTrace] | None = None,
         prior_tools_used: list[str] | None = None,
+        on_tool_events: Callable[[list[ToolTrace]], Awaitable[None] | None] | None = None,
     ) -> AgentTurnResult:
         llm_logger.log_event(
             session_id,
@@ -122,6 +136,11 @@ class StudentProductivityAgent:
                 "runtime": "pydantic_ai",
             },
         )
+        prior_events_snapshot = list(prior_tool_events or [])
+
+        async def runtime_tool_events_callback(tool_events: list[ToolTrace]) -> None:
+            await self._emit_tool_events(on_tool_events, prior_events_snapshot + list(tool_events))
+
         run_result, deps = await self.runtime.run(
             user_input=user_input,
             session_id=session_id,
@@ -129,9 +148,10 @@ class StudentProductivityAgent:
             history=history,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
+            on_tool_events=runtime_tool_events_callback if on_tool_events else None,
         )
         output = self.runtime.extract_text_or_requests(run_result)
-        tool_events = list(prior_tool_events or []) + deps.tool_events
+        tool_events = prior_events_snapshot + deps.tool_events
         tools_used = list(prior_tools_used or []) + deps.tools_used
 
         if isinstance(output, DeferredToolRequests):
@@ -150,7 +170,7 @@ class StudentProductivityAgent:
                     "deferred_calls": [call.tool_name for call in output.calls],
                 },
             )
-            return self._approval_result(
+            approval_result = self._approval_result(
                 session_id=session_id,
                 user_input=user_input or "",
                 workspace_root=workspace_root,
@@ -159,6 +179,8 @@ class StudentProductivityAgent:
                 tool_events=tool_events,
                 tools_used=tools_used,
             )
+            await self._emit_tool_events(on_tool_events, approval_result.tool_events)
+            return approval_result
 
         response_text = str(output).strip()
         llm_logger.log_event(
@@ -190,7 +212,11 @@ class StudentProductivityAgent:
         )
 
     async def run(
-        self, message: str, session_id: str, workspace_root: str | None = None
+        self,
+        message: str,
+        session_id: str,
+        workspace_root: str | None = None,
+        on_tool_events: Callable[[list[ToolTrace]], Awaitable[None] | None] | None = None,
     ) -> dict[str, object]:
         """Generate a response and record task history."""
 
@@ -200,6 +226,7 @@ class StudentProductivityAgent:
                 session_id=session_id,
                 workspace_root=workspace_root,
                 history=await self._build_history(session_id),
+                on_tool_events=on_tool_events,
             )
         except Exception as exc:
             llm_config = runtime_settings.get_llm_config()
@@ -226,6 +253,7 @@ class StudentProductivityAgent:
         approval_id: str,
         *,
         approved: bool,
+        on_tool_events: Callable[[list[ToolTrace]], Awaitable[None] | None] | None = None,
     ) -> dict[str, object]:
         pending = approval_service.pop(approval_id)
         if pending is None:
@@ -297,6 +325,7 @@ class StudentProductivityAgent:
                 deferred_tool_results=deferred_results,
                 prior_tool_events=pending.tool_events,
                 prior_tools_used=pending.tools_used,
+                on_tool_events=on_tool_events,
             )
         except Exception as exc:
             result = AgentTurnResult(
