@@ -129,6 +129,8 @@ async def _stream_agent_execution(*, session_id: str, execute):
 
     async def on_tool_events(tool_events: list[object]) -> None:
         await tool_events_queue.put(_serialize_tool_events(tool_events))
+        # Yield once so the SSE loop can flush "running" updates before heavy tool work continues.
+        await asyncio.sleep(0)
 
     run_task = asyncio.create_task(execute(on_tool_events))
     try:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import inspect
 from dataclasses import dataclass, field
@@ -124,6 +125,8 @@ class PydanticAIRuntime:
             running_event = ToolTrace(tool_name=tool_name, arguments=arguments, status="running")
             ctx.deps.tool_events.append(running_event)
             await _notify_tool_events(ctx)
+            # Let the event loop flush the "running" SSE event before tool execution starts.
+            await asyncio.sleep(0)
             try:
                 output = await ctx.deps.tool_service.execute(
                     tool_name,
