@@ -11,7 +11,16 @@ from typing import Annotated, Any, Awaitable, Callable
 from httpx import AsyncClient
 from pydantic import Field
 from pydantic_ai import Agent, DeferredToolResults, RunContext
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    FinalResultEvent,
+    ModelRequest,
+    ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+    UserPromptPart,
+)
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.tools import DeferredToolRequests, ToolApproved, ToolDenied
@@ -392,6 +401,52 @@ class PydanticAIRuntime:
                 messages.append(ModelResponse(parts=[TextPart(content)]))
         return messages
 
+    @staticmethod
+    async def _emit_response_chunk(
+        callback: Callable[[str], Awaitable[None] | None] | None,
+        chunk: str,
+    ) -> None:
+        if callback is None or not chunk:
+            return
+        maybe_awaitable = callback(chunk)
+        if inspect.isawaitable(maybe_awaitable):
+            await maybe_awaitable
+
+    def _build_event_stream_handler(
+        self,
+        on_response_chunk: Callable[[str], Awaitable[None] | None] | None,
+    ):
+        if on_response_chunk is None:
+            return None
+
+        async def event_stream_handler(_run_ctx, event_stream) -> None:
+            buffered_chunks: list[str] = []
+            final_text_detected = False
+
+            async for event in event_stream:
+                if isinstance(event, FinalResultEvent) and event.tool_name is None:
+                    final_text_detected = True
+                    for chunk in buffered_chunks:
+                        await self._emit_response_chunk(on_response_chunk, chunk)
+                    buffered_chunks.clear()
+                    continue
+
+                chunk = ""
+                if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                    chunk = event.part.content
+                elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                    chunk = event.delta.content_delta
+
+                if not chunk:
+                    continue
+
+                if final_text_detected:
+                    await self._emit_response_chunk(on_response_chunk, chunk)
+                else:
+                    buffered_chunks.append(chunk)
+
+        return event_stream_handler
+
     async def run(
         self,
         *,
@@ -402,6 +457,7 @@ class PydanticAIRuntime:
         message_history: list[Any] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         on_tool_events: Callable[[list[ToolTrace]], Awaitable[None] | None] | None = None,
+        on_response_chunk: Callable[[str], Awaitable[None] | None] | None = None,
     ):
         deps = AgentDeps(
             session=self.session,
@@ -417,6 +473,7 @@ class PydanticAIRuntime:
             message_history=final_history,
             deferred_tool_results=deferred_tool_results,
             deps=deps,
+            event_stream_handler=self._build_event_stream_handler(on_response_chunk),
         )
         return run_result, deps
 

@@ -78,6 +78,7 @@ async def _stream_agent_result(
     *,
     session_id: str,
     emit_initial_tool_events: bool = True,
+    emit_response: bool = True,
 ):
     tool_events = result.get("tool_events", [])
     if emit_initial_tool_events and tool_events:
@@ -109,8 +110,9 @@ async def _stream_agent_result(
         }
         return
 
-    # Return full response at once
-    yield {"event": "message", "data": json.dumps({"chunk": str(result.get("response", ""))})}
+    if emit_response:
+        for chunk in _chunk_text(str(result.get("response", ""))):
+            yield {"event": "message", "data": json.dumps({"chunk": chunk})}
     yield {
         "event": "done",
         "data": json.dumps(
@@ -125,32 +127,50 @@ async def _stream_agent_result(
 
 
 async def _stream_agent_execution(*, session_id: str, execute):
-    tool_events_queue: asyncio.Queue[list[dict[str, object]]] = asyncio.Queue()
+    event_queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
 
     async def on_tool_events(tool_events: list[object]) -> None:
-        await tool_events_queue.put(_serialize_tool_events(tool_events))
+        await event_queue.put(
+            {
+                "event": "tool_events",
+                "data": json.dumps({"tool_events": _serialize_tool_events(tool_events)}),
+            }
+        )
         # Yield once so the SSE loop can flush "running" updates before heavy tool work continues.
         await asyncio.sleep(0)
 
-    run_task = asyncio.create_task(execute(on_tool_events))
+    async def on_response_chunk(chunk: str) -> None:
+        if not chunk:
+            return
+        await event_queue.put(
+            {
+                "event": "message",
+                "data": json.dumps({"chunk": chunk}),
+            }
+        )
+        # Yield once so the SSE loop can flush "running" updates before heavy tool work continues.
+        await asyncio.sleep(0)
+
+    run_task = asyncio.create_task(execute(on_tool_events, on_response_chunk))
+    response_streamed = False
     try:
         while True:
-            if run_task.done() and tool_events_queue.empty():
+            if run_task.done() and event_queue.empty():
                 break
             try:
-                tool_events = await asyncio.wait_for(tool_events_queue.get(), timeout=0.1)
+                event = await asyncio.wait_for(event_queue.get(), timeout=0.1)
             except TimeoutError:
                 continue
-            yield {
-                "event": "tool_events",
-                "data": json.dumps({"tool_events": tool_events}),
-            }
+            if event.get("event") == "message":
+                response_streamed = True
+            yield event
 
         result = await run_task
         async for event in _stream_agent_result(
             result,
             session_id=session_id,
             emit_initial_tool_events=False,
+            emit_response=not response_streamed,
         ):
             yield event
     finally:
@@ -370,11 +390,12 @@ async def chat(
         try:
             async for event in _stream_agent_execution(
                 session_id=request.session_id,
-                execute=lambda on_tool_events: agent.run(
+                execute=lambda on_tool_events, on_response_chunk: agent.run(
                     request.message,
                     request.session_id,
                     request.workspace_root,
                     on_tool_events=on_tool_events,
+                    on_response_chunk=on_response_chunk,
                 ),
             ):
                 yield event
@@ -406,10 +427,11 @@ async def handle_chat_approval(
         try:
             async for event in _stream_agent_execution(
                 session_id=request.session_id,
-                execute=lambda on_tool_events: agent.resume_approval(
+                execute=lambda on_tool_events, on_response_chunk: agent.resume_approval(
                     request.approval_id,
                     approved=request.approved,
                     on_tool_events=on_tool_events,
+                    on_response_chunk=on_response_chunk,
                 ),
             ):
                 yield event
