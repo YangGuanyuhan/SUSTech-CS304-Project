@@ -419,32 +419,41 @@ class PydanticAIRuntime:
         if on_response_chunk is None:
             return None
 
+        # async def event_stream_handler(_run_ctx, event_stream) -> None:
+        #     buffered_chunks: list[str] = []
+        #     final_text_detected = False
+
+        #     async for event in event_stream:
+        #         if isinstance(event, FinalResultEvent) and event.tool_name is None:
+        #             final_text_detected = True
+        #             for chunk in buffered_chunks:
+        #                 await self._emit_response_chunk(on_response_chunk, chunk)
+        #             buffered_chunks.clear()
+        #             continue
+
+        #         chunk = ""
+        #         if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+        #             chunk = event.part.content
+        #         elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+        #             chunk = event.delta.content_delta
+
+        #         if not chunk:
+        #             continue
+
+        #         if final_text_detected:
+        #             await self._emit_response_chunk(on_response_chunk, chunk)
+        #         else:
+        #             buffered_chunks.append(chunk)
         async def event_stream_handler(_run_ctx, event_stream) -> None:
-            buffered_chunks: list[str] = []
-            final_text_detected = False
-
             async for event in event_stream:
-                if isinstance(event, FinalResultEvent) and event.tool_name is None:
-                    final_text_detected = True
-                    for chunk in buffered_chunks:
-                        await self._emit_response_chunk(on_response_chunk, chunk)
-                    buffered_chunks.clear()
-                    continue
-
                 chunk = ""
                 if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
                     chunk = event.part.content
                 elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
                     chunk = event.delta.content_delta
 
-                if not chunk:
-                    continue
-
-                if final_text_detected:
+                if chunk:
                     await self._emit_response_chunk(on_response_chunk, chunk)
-                else:
-                    buffered_chunks.append(chunk)
-
         return event_stream_handler
 
     async def run(
