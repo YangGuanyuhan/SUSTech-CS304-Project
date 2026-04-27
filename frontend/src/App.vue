@@ -446,7 +446,14 @@ function renderMarkdown(content) {
 
 function formatConversationTime(timestamp) {
   const date = new Date(timestamp || Date.now());
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today.getTime() - 86400000);
+  const msgDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  if (msgDay.getTime() >= today.getTime()) return time;
+  if (msgDay.getTime() >= yesterday.getTime()) return `昨天 ${time}`;
+  return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")} ${time}`;
 }
 
 function formatElapsed(ms) {
