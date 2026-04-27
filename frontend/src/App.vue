@@ -144,11 +144,27 @@
         <div v-if="headerExpanded" class="header-right">
           <div class="workspace-field">
             <span>工作目录</span>
-            <input
-              v-model="activeConversation.workspaceRoot"
-              type="text"
-              placeholder="/path/to/your/project"
-            />
+            <div class="workspace-picker">
+              <input
+                :value="activeConversation.workspaceRoot"
+                type="text"
+                readonly
+                placeholder="Select a project directory"
+                title="Selected workspace root"
+              />
+              <button
+                class="workspace-picker-btn"
+                type="button"
+                :disabled="workspacePicking"
+                title="Select workspace directory"
+                @click="chooseWorkspaceRoot"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M3 7h5l2 3h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                  <path d="M3 7V5a2 2 0 0 1 2-2h4l2 4"/>
+                </svg>
+              </button>
+            </div>
           </div>
           <button class="header-btn" :disabled="loading" @click="loadCourses">
             加载课程
@@ -311,7 +327,13 @@ import DatabaseOverviewPanel from "./components/DatabaseOverviewPanel.vue";
 import QuizHistoryPanel from "./components/QuizHistoryPanel.vue";
 import FilePanel from "./components/FilePanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
-import { getCourses, getHealth, streamApprovalDecision, streamChat } from "./api/client";
+import {
+  getCourses,
+  getHealth,
+  selectWorkspaceDirectory,
+  streamApprovalDecision,
+  streamChat
+} from "./api/client";
 
 const CHAT_CONVERSATIONS_KEY = "spa-conversations";
 const ACTIVE_CONVERSATION_KEY = "spa-active-conversation-id";
@@ -392,6 +414,7 @@ const editingTitle = ref("");
 const draft = ref("");
 const composerInput = ref(null);
 const loading = ref(false);
+const workspacePicking = ref(false);
 const chatStreaming = ref(false);
 const headerExpanded = ref(false);
 let activeTimer = null;
@@ -571,6 +594,23 @@ function appendMessage(role, content) {
   );
   activeConversation.value.updatedAt = Date.now();
   scrollToBottom();
+}
+
+async function chooseWorkspaceRoot() {
+  workspacePicking.value = true;
+  try {
+    const response = await selectWorkspaceDirectory();
+    const selectedPath = response.data?.path;
+    if (selectedPath) {
+      activeConversation.value.workspaceRoot = selectedPath;
+      activeConversation.value.updatedAt = Date.now();
+      persistConversations();
+    }
+  } catch (error) {
+    appendMessage("assistant", `工作目录选择失败: ${error.message}`);
+  } finally {
+    workspacePicking.value = false;
+  }
 }
 
 async function loadCourses() {
@@ -1328,6 +1368,12 @@ body {
   color: var(--text-muted);
 }
 
+.workspace-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .workspace-field input {
   width: 280px;
   padding: 12px 14px;
@@ -1338,10 +1384,43 @@ body {
   transition: all 0.2s ease;
 }
 
+.workspace-picker input {
+  min-width: 0;
+  flex: 1;
+}
+
+.workspace-field input[readonly] {
+  cursor: default;
+}
+
 .workspace-field input:focus {
   outline: none;
   border-color: var(--accent-orange);
   box-shadow: 0 0 0 3px var(--accent-orange-subtle);
+}
+
+.workspace-picker-btn {
+  width: 42px;
+  height: 42px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid rgba(53, 62, 72, 0.08);
+  border-radius: 16px;
+  background: white;
+  color: var(--accent-orange);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.workspace-picker-btn:hover:not(:disabled) {
+  border-color: rgba(234, 88, 12, 0.3);
+  box-shadow: 0 6px 18px rgba(234, 88, 12, 0.12);
+}
+
+.workspace-picker-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
 }
 
 .header-btn {

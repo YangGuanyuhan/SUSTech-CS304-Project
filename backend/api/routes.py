@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -51,6 +52,32 @@ from backend.services.runtime_settings import (
 from backend.services.settings_service import SettingsService
 
 router = APIRouter(prefix="/api")
+
+
+def _open_workspace_directory_dialog() -> str | None:
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except ImportError as exc:
+        raise RuntimeError("Directory picker is not available in this Python environment.") from exc
+
+    root = tk.Tk()
+    root.withdraw()
+    root.update()
+    try:
+        with contextlib.suppress(tk.TclError):
+            root.attributes("-topmost", True)
+        selected = filedialog.askdirectory(
+            parent=root,
+            title="Select Workspace Root",
+            mustexist=True,
+        )
+    finally:
+        root.destroy()
+
+    if not selected:
+        return None
+    return str(Path(selected).expanduser().resolve())
 
 
 def _chunk_text(text: str, chunk_size: int = 2000) -> list[str]:
@@ -183,6 +210,18 @@ async def _stream_agent_execution(*, session_id: str, execute):
 @router.get("/health", response_model=ApiResponse[dict[str, str]])
 async def health() -> ApiResponse[dict[str, str]]:
     return ApiResponse(success=True, data={"status": "ok"})
+
+
+@router.post("/workspace/select-directory", response_model=ApiResponse[dict[str, str | None]])
+async def select_workspace_directory() -> ApiResponse[dict[str, str | None]]:
+    try:
+        selected = await asyncio.to_thread(_open_workspace_directory_dialog)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Unable to open directory picker: {exc}",
+        ) from exc
+    return ApiResponse(success=True, data={"path": selected})
 
 
 @router.get("/settings/llm", response_model=ApiResponse[object])

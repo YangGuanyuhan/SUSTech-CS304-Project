@@ -19,6 +19,13 @@ export async function getHealth() {
   return parseJson(response);
 }
 
+export async function selectWorkspaceDirectory() {
+  const response = await fetch(`${API_BASE}/workspace/select-directory`, {
+    method: "POST"
+  });
+  return parseJson(response);
+}
+
 export async function getLLMSettings() {
   const response = await fetch(`${API_BASE}/settings/llm`);
   return parseJson(response);

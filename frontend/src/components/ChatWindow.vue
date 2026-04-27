@@ -69,11 +69,27 @@
         <div class="toolbar-actions">
           <label class="workspace-field">
             <span>Workspace Root</span>
-            <input
-              v-model="activeConversation.workspaceRoot"
-              type="text"
-              placeholder="/path/to/your/project"
-            />
+            <div class="workspace-picker">
+              <input
+                :value="activeConversation.workspaceRoot"
+                type="text"
+                readonly
+                placeholder="Select a project directory"
+                title="Selected workspace root"
+              />
+              <button
+                class="workspace-picker-btn"
+                type="button"
+                :disabled="workspacePicking"
+                title="Select workspace directory"
+                @click="chooseWorkspaceRoot"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M3 7h5l2 3h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                  <path d="M3 7V5a2 2 0 0 1 2-2h4l2 4"/>
+                </svg>
+              </button>
+            </div>
           </label>
           <button :disabled="loading" @click="loadCourses">Load Blackboard Courses</button>
         </div>
@@ -178,7 +194,12 @@
 import MarkdownIt from "markdown-it";
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import QuizPanel from "./QuizPanel.vue";
-import { getCourses, streamApprovalDecision, streamChat } from "../api/client";
+import {
+  getCourses,
+  selectWorkspaceDirectory,
+  streamApprovalDecision,
+  streamChat
+} from "../api/client";
 
 const CHAT_CONVERSATIONS_KEY = "spa-conversations";
 const ACTIVE_CONVERSATION_KEY = "spa-active-conversation-id";
@@ -243,6 +264,7 @@ const editingConversationId = ref("");
 const editingTitle = ref("");
 const draft = ref("Show my Blackboard courses");
 const loading = ref(false);
+const workspacePicking = ref(false);
 const chatStreaming = ref(false);
 const messagesViewport = ref(null);
 let activeTimer = null;
@@ -405,6 +427,23 @@ function appendMessage(role, content) {
   );
   activeConversation.value.updatedAt = Date.now();
   scrollMessagesToBottom();
+}
+
+async function chooseWorkspaceRoot() {
+  workspacePicking.value = true;
+  try {
+    const response = await selectWorkspaceDirectory();
+    const selectedPath = response.data?.path;
+    if (selectedPath) {
+      activeConversation.value.workspaceRoot = selectedPath;
+      activeConversation.value.updatedAt = Date.now();
+      persistConversations();
+    }
+  } catch (error) {
+    appendMessage("assistant", `Workspace picker failed: ${error.message}`);
+  } finally {
+    workspacePicking.value = false;
+  }
 }
 
 async function loadCourses() {
@@ -776,12 +815,42 @@ onBeforeUnmount(() => {
   color: var(--muted);
 }
 
+.workspace-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .workspace-field input {
   border-radius: 14px;
   border: 1px solid rgba(28, 36, 48, 0.12);
   padding: 12px 14px;
   background: rgba(255, 255, 255, 0.88);
   font: inherit;
+  min-width: 0;
+  flex: 1;
+}
+
+.workspace-field input[readonly] {
+  cursor: default;
+}
+
+.workspace-picker-btn {
+  width: 44px;
+  height: 44px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid rgba(28, 36, 48, 0.12);
+  border-radius: 14px;
+  background: white;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.workspace-picker-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
 }
 
 .toolbar h2 {
