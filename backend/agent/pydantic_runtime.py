@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import inspect
+import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Awaitable, Callable
+from typing import Annotated, Any
 
 from httpx import AsyncClient
 from pydantic import Field
 from pydantic_ai import Agent, DeferredToolResults, RunContext
 from pydantic_ai.messages import (
-    FinalResultEvent,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
@@ -454,6 +454,7 @@ class PydanticAIRuntime:
 
                 if chunk:
                     await self._emit_response_chunk(on_response_chunk, chunk)
+
         return event_stream_handler
 
     async def run(
