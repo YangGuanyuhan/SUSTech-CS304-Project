@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Annotated, Any
 
 from httpx import AsyncClient
 from pydantic import Field
 from pydantic_ai import Agent, DeferredToolResults, RunContext
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+    UserPromptPart,
+)
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.tools import DeferredToolRequests, ToolApproved, ToolDenied
@@ -59,6 +70,7 @@ class AgentDeps:
     tool_service: AgentToolService
     tool_events: list[ToolTrace] = field(default_factory=list)
     tools_used: list[str] = field(default_factory=list)
+    on_tool_events: Callable[[list[ToolTrace]], Awaitable[None] | None] | None = None
 
 
 class PydanticAIRuntime:
@@ -105,30 +117,46 @@ class PydanticAIRuntime:
                 "Do not use local file or command tools until the user sets one."
             )
 
-        def _normalize_result(tool_name: str, arguments: dict[str, Any], output: str) -> str:
-            status = "failed" if '"ok": false' in output.lower() else "completed"
-            ctx = _tool_context["ctx"]
-            ctx.deps.tool_events.append(
-                ToolTrace(tool_name=tool_name, arguments=arguments, status=status, output=output)
-            )
-            ctx.deps.tools_used.append(tool_name)
-            return output
+        async def _notify_tool_events(ctx: RunContext[AgentDeps]) -> None:
+            callback = ctx.deps.on_tool_events
+            if callback is None:
+                return
+            snapshot = [event.model_copy(deep=True) for event in ctx.deps.tool_events]
+            maybe_awaitable = callback(snapshot)
+            if inspect.isawaitable(maybe_awaitable):
+                await maybe_awaitable
 
         async def _execute_tool(
             ctx: RunContext[AgentDeps],
             tool_name: str,
             arguments: dict[str, Any],
         ) -> str:
-            _tool_context["ctx"] = ctx
-            output = await ctx.deps.tool_service.execute(
-                tool_name,
-                arguments,
-                chat_session_id=ctx.deps.session_id,
-                workspace_root=ctx.deps.workspace_root,
-            )
-            return _normalize_result(tool_name, arguments, output)
+            running_event = ToolTrace(tool_name=tool_name, arguments=arguments, status="running")
+            ctx.deps.tool_events.append(running_event)
+            await _notify_tool_events(ctx)
+            # Let the event loop flush the "running" SSE event before tool execution starts.
+            await asyncio.sleep(0)
+            try:
+                output = await ctx.deps.tool_service.execute(
+                    tool_name,
+                    arguments,
+                    chat_session_id=ctx.deps.session_id,
+                    workspace_root=ctx.deps.workspace_root,
+                )
+            except Exception as exc:
+                running_event.status = "failed"
+                running_event.output = json.dumps(
+                    {"ok": False, "error": str(exc)},
+                    ensure_ascii=False,
+                )
+                await _notify_tool_events(ctx)
+                raise
 
-        _tool_context: dict[str, RunContext[AgentDeps]] = {}
+            running_event.status = "failed" if '"ok": false' in output.lower() else "completed"
+            running_event.output = output
+            ctx.deps.tools_used.append(tool_name)
+            await _notify_tool_events(ctx)
+            return output
 
         @agent.tool(name="memory_search")
         async def memory_search(ctx: RunContext[AgentDeps], query: str, limit: int = 5) -> str:
@@ -373,6 +401,62 @@ class PydanticAIRuntime:
                 messages.append(ModelResponse(parts=[TextPart(content)]))
         return messages
 
+    @staticmethod
+    async def _emit_response_chunk(
+        callback: Callable[[str], Awaitable[None] | None] | None,
+        chunk: str,
+    ) -> None:
+        if callback is None or not chunk:
+            return
+        maybe_awaitable = callback(chunk)
+        if inspect.isawaitable(maybe_awaitable):
+            await maybe_awaitable
+
+    def _build_event_stream_handler(
+        self,
+        on_response_chunk: Callable[[str], Awaitable[None] | None] | None,
+    ):
+        if on_response_chunk is None:
+            return None
+
+        # async def event_stream_handler(_run_ctx, event_stream) -> None:
+        #     buffered_chunks: list[str] = []
+        #     final_text_detected = False
+
+        #     async for event in event_stream:
+        #         if isinstance(event, FinalResultEvent) and event.tool_name is None:
+        #             final_text_detected = True
+        #             for chunk in buffered_chunks:
+        #                 await self._emit_response_chunk(on_response_chunk, chunk)
+        #             buffered_chunks.clear()
+        #             continue
+
+        #         chunk = ""
+        #         if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+        #             chunk = event.part.content
+        #         elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+        #             chunk = event.delta.content_delta
+
+        #         if not chunk:
+        #             continue
+
+        #         if final_text_detected:
+        #             await self._emit_response_chunk(on_response_chunk, chunk)
+        #         else:
+        #             buffered_chunks.append(chunk)
+        async def event_stream_handler(_run_ctx, event_stream) -> None:
+            async for event in event_stream:
+                chunk = ""
+                if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                    chunk = event.part.content
+                elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                    chunk = event.delta.content_delta
+
+                if chunk:
+                    await self._emit_response_chunk(on_response_chunk, chunk)
+
+        return event_stream_handler
+
     async def run(
         self,
         *,
@@ -382,12 +466,15 @@ class PydanticAIRuntime:
         history: list[dict[str, str]] | None = None,
         message_history: list[Any] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        on_tool_events: Callable[[list[ToolTrace]], Awaitable[None] | None] | None = None,
+        on_response_chunk: Callable[[str], Awaitable[None] | None] | None = None,
     ):
         deps = AgentDeps(
             session=self.session,
             session_id=session_id,
             workspace_root=workspace_root,
             tool_service=self.tool_service,
+            on_tool_events=on_tool_events,
         )
         agent = self._build_agent()
         final_history = message_history or self._history_to_model_messages(history or [])
@@ -396,6 +483,7 @@ class PydanticAIRuntime:
             message_history=final_history,
             deferred_tool_results=deferred_tool_results,
             deps=deps,
+            event_stream_handler=self._build_event_stream_handler(on_response_chunk),
         )
         return run_result, deps
 

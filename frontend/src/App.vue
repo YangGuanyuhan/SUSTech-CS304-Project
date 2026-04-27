@@ -195,41 +195,27 @@
               <span v-if="message.role === 'assistant'" class="role-label">StudyAI</span>
               <span v-if="message.elapsedLabel" class="elapsed">{{ message.elapsedLabel }}</span>
             </div>
-            <div
-              class="markdown-body"
-              v-html="renderMarkdown(message.content)"
-            />
-            <!-- Tool Events -->
-            <div v-if="message.toolEvents?.length" class="tool-events">
-              <details
-                v-for="(toolEvent, index) in message.toolEvents"
-                :key="`${message.id}-${toolEvent.tool_name}-${index}`"
-                class="tool-event"
-              >
+            <template v-for="(part, i) in message.parts" :key="`${message.id}-${i}`">
+              <div v-if="part.type === 'text'" class="markdown-body" v-html="renderMarkdown(part.content)" />
+              <details v-else-if="part.type === 'tool'" class="tool-event">
                 <summary class="tool-event-summary">
-                  <span class="tool-event-name">{{ toolEvent.tool_name }}</span>
-                  <span :class="['tool-event-status', toolEvent.status]">{{ formatToolStatus(toolEvent.status) }}</span>
+                  <span class="tool-event-name">{{ part.toolEvent.tool_name }}</span>
+                  <span :class="['tool-event-status', part.toolEvent.status]">{{ formatToolStatus(part.toolEvent.status) }}</span>
                 </summary>
                 <div class="tool-event-body">
                   <div class="tool-event-block">
                     <strong>输入</strong>
-                    <pre>{{ formatToolPayload(toolEvent.arguments) }}</pre>
+                    <pre>{{ formatToolPayload(part.toolEvent.arguments) }}</pre>
                   </div>
-                  <div v-if="toolEvent.output" class="tool-event-block">
+                  <div v-if="part.toolEvent.output" class="tool-event-block">
                     <strong>输出</strong>
-                    <pre>{{ formatToolPayload(toolEvent.output) }}</pre>
+                    <pre>{{ formatToolPayload(part.toolEvent.output) }}</pre>
                   </div>
                 </div>
               </details>
-            </div>
-            <!-- Quiz Panel -->
-            <template
-              v-for="(toolEvent, index) in message.toolEvents?.filter((event) => event.tool_name === 'create_quiz') || []"
-              :key="`${message.id}-quiz-${index}`"
-            >
               <QuizPanel
-                v-if="tryParseToolOutput(toolEvent.output)?.quiz_session"
-                :quiz="tryParseToolOutput(toolEvent.output).quiz_session"
+                v-if="part.type === 'tool' && part.toolEvent.tool_name === 'create_quiz' && tryParseToolOutput(part.toolEvent.output)?.quiz_session"
+                :quiz="tryParseToolOutput(part.toolEvent.output).quiz_session"
               />
             </template>
           </div>
@@ -348,12 +334,27 @@ function makeConversation(title = "新对话") {
       reactive({
         id: crypto.randomUUID(),
         role: "assistant",
-        content: "你好！我是 StudyAI 助手，可以帮助你查询课程、搜索文件、管理记忆等。有什么可以帮你的吗？",
-        elapsedLabel: "",
-        toolEvents: []
+        parts: [
+          { type: "text", content: "你好！我是 StudyAI 助手，可以帮助你查询课程、搜索文件、管理记忆等。有什么可以帮你的吗？" }
+        ],
+        elapsedLabel: ""
       })
     ]
   });
+}
+
+function migrateMessage(message) {
+  if (message.parts) {
+    return reactive({ ...message, content: undefined, toolEvents: undefined });
+  }
+  const parts = [];
+  if (message.toolEvents?.length) {
+    message.toolEvents.forEach((te) => parts.push({ type: "tool", toolEvent: te }));
+  }
+  if (message.content) {
+    parts.push({ type: "text", content: message.content });
+  }
+  return reactive({ ...message, parts, content: undefined, toolEvents: undefined });
 }
 
 function restoreConversations() {
@@ -367,12 +368,7 @@ function restoreConversations() {
         ...conversation,
         workspaceRoot: conversation.workspaceRoot || "",
         pendingApproval: conversation.pendingApproval || null,
-        messages: (conversation.messages || []).map((message) =>
-          reactive({
-            ...message,
-            toolEvents: message.toolEvents || []
-          })
-        )
+        messages: (conversation.messages || []).map((message) => migrateMessage(message))
       })
     );
   } catch {
@@ -459,6 +455,7 @@ function formatElapsed(ms) {
 }
 
 function formatToolStatus(status) {
+  if (status === "running") return "运行中";
   if (status === "completed") return "完成";
   if (status === "failed") return "失败";
   if (status === "denied") return "已拒绝";
@@ -500,7 +497,9 @@ function startTimer(message) {
 function updateConversationTitle(conversation) {
   const firstUserMessage = conversation.messages.find((message) => message.role === "user");
   if (!firstUserMessage) return;
-  conversation.title = firstUserMessage.content.slice(0, 20) || conversation.title;
+  const firstText = firstUserMessage.parts?.find((p) => p.type === "text");
+  const text = firstText?.content || "";
+  conversation.title = text.slice(0, 20) || conversation.title;
 }
 
 function createConversation() {
@@ -559,9 +558,8 @@ function appendMessage(role, content) {
     reactive({
       id: crypto.randomUUID(),
       role,
-      content,
-      elapsedLabel: "",
-      toolEvents: []
+      parts: content ? [{ type: "text", content }] : [],
+      elapsedLabel: ""
     })
   );
   activeConversation.value.updatedAt = Date.now();
@@ -593,16 +591,15 @@ async function submitMessage() {
     reactive({
       id: crypto.randomUUID(),
       role: "user",
-      content,
+      parts: [{ type: "text", content }],
       elapsedLabel: ""
     })
   );
   const assistantMessage = reactive({
     id: crypto.randomUUID(),
     role: "assistant",
-    content: "正在等待模型响应...",
-    elapsedLabel: "",
-    toolEvents: []
+    parts: [{ type: "text", content: "正在等待模型响应..." }],
+    elapsedLabel: ""
   });
   conversation.messages.push(assistantMessage);
   conversation.updatedAt = Date.now();
@@ -617,6 +614,8 @@ async function submitMessage() {
   const stopTimer = startTimer(assistantMessage);
   scrollToBottom();
 
+  const WAITING_TEXT = "正在等待模型响应...";
+
   try {
     await streamChat(
       {
@@ -626,21 +625,62 @@ async function submitMessage() {
       },
       {
         onChunk(chunk) {
-          if (assistantMessage.content === "正在等待模型响应...") {
-            assistantMessage.content = "";
+          const lastPart = assistantMessage.parts.at(-1);
+          if (!lastPart || lastPart.type !== "text" || lastPart.content === WAITING_TEXT) {
+            if (lastPart?.content === WAITING_TEXT) {
+              lastPart.content = "";
+            } else {
+              assistantMessage.parts.push({ type: "text", content: "" });
+            }
           }
-          assistantMessage.content += chunk;
+          assistantMessage.parts.at(-1).content += chunk;
+          scrollToBottom();
+        },
+        onToolEvents(toolEvents) {
+          const firstPart = assistantMessage.parts[0];
+          if (firstPart?.type === "text" && firstPart.content === WAITING_TEXT) {
+            assistantMessage.parts.shift();
+          }
+          const existingToolParts = assistantMessage.parts.filter((p) => p.type === "tool");
+          toolEvents.forEach((newEvent, idx) => {
+            if (idx < existingToolParts.length) {
+              existingToolParts[idx].toolEvent = newEvent;
+            } else {
+              assistantMessage.parts.push({ type: "tool", toolEvent: newEvent });
+            }
+          });
           scrollToBottom();
         },
         onApprovalRequired(approval) {
-          assistantMessage.content = "工具调用正在等待你的审批。";
-          assistantMessage.toolEvents = approval.tool_events || [];
+          const firstPart = assistantMessage.parts[0];
+          if (firstPart?.type === "text" && firstPart.content === WAITING_TEXT) {
+            assistantMessage.parts.shift();
+          }
+          const lastPart = assistantMessage.parts.at(-1);
+          if (lastPart?.type === "text") {
+            lastPart.content = "工具调用正在等待你的审批。";
+          } else {
+            assistantMessage.parts.push({ type: "text", content: "工具调用正在等待你的审批。" });
+          }
+          (approval.tool_events || []).forEach((te) => {
+            const toolParts = assistantMessage.parts.filter((p) => p.type === "tool");
+            const existingIdx = toolParts.findIndex(
+              (tp) => tp.toolEvent.tool_name === te.tool_name
+            );
+            if (existingIdx >= 0) {
+              toolParts[existingIdx].toolEvent = te;
+            } else {
+              assistantMessage.parts.push({ type: "tool", toolEvent: te });
+            }
+          });
           conversation.pendingApproval = approval;
           scrollToBottom();
         },
         onDone(payload) {
-          assistantMessage.content = assistantMessage.content.trim();
-          assistantMessage.toolEvents = payload.tool_events || assistantMessage.toolEvents || [];
+          const lastText = assistantMessage.parts.findLast((p) => p.type === "text");
+          if (lastText) {
+            lastText.content = lastText.content.trim();
+          }
           scrollToBottom();
         }
       },
@@ -650,11 +690,18 @@ async function submitMessage() {
     );
   } catch (error) {
     const aborted = chatStopRequested || error?.name === "AbortError";
+    const lastText = assistantMessage.parts.findLast((p) => p.type === "text");
     if (aborted) {
-      const partial = assistantMessage.content.trim();
-      assistantMessage.content = partial ? `${partial}\n\n[已停止生成]` : "已停止生成。";
+      if (lastText) {
+        const partial = lastText.content.trim();
+        lastText.content = partial ? `${partial}\n\n[已停止生成]` : "已停止生成。";
+      }
     } else {
-      assistantMessage.content = `聊天失败: ${error.message}`;
+      if (lastText) {
+        lastText.content = `聊天失败: ${error.message}`;
+      } else {
+        assistantMessage.parts.push({ type: "text", content: `聊天失败: ${error.message}` });
+      }
     }
   } finally {
     conversation.updatedAt = Date.now();
@@ -677,12 +724,12 @@ async function resolveApproval(approved) {
   const pending = conversation.pendingApproval;
   if (!pending) return;
 
+  const INITIAL_TEXT = approved ? "正在执行批准的操作..." : "审批被拒绝。让智能体继续...";
   const assistantMessage = reactive({
     id: crypto.randomUUID(),
     role: "assistant",
-    content: approved ? "正在执行批准的操作..." : "审批被拒绝。让智能体继续...",
-    elapsedLabel: "",
-    toolEvents: []
+    parts: [{ type: "text", content: INITIAL_TEXT }],
+    elapsedLabel: ""
   });
   conversation.messages.push(assistantMessage);
   conversation.pendingApproval = null;
@@ -700,30 +747,73 @@ async function resolveApproval(approved) {
       },
       {
         onChunk(chunk) {
-          if (
-            assistantMessage.content === "正在执行批准的操作..." ||
-            assistantMessage.content === "审批被拒绝。让智能体继续..."
-          ) {
-            assistantMessage.content = "";
+          const lastPart = assistantMessage.parts.at(-1);
+          if (!lastPart || lastPart.type !== "text" || lastPart.content === INITIAL_TEXT) {
+            if (lastPart?.content === INITIAL_TEXT) {
+              lastPart.content = "";
+            } else {
+              assistantMessage.parts.push({ type: "text", content: "" });
+            }
           }
-          assistantMessage.content += chunk;
+          assistantMessage.parts.at(-1).content += chunk;
+          scrollToBottom();
+        },
+        onToolEvents(toolEvents) {
+          const firstPart = assistantMessage.parts[0];
+          if (firstPart?.type === "text" && firstPart.content === INITIAL_TEXT) {
+            assistantMessage.parts.shift();
+          }
+          const existingToolParts = assistantMessage.parts.filter((p) => p.type === "tool");
+          toolEvents.forEach((newEvent, idx) => {
+            if (idx < existingToolParts.length) {
+              existingToolParts[idx].toolEvent = newEvent;
+            } else {
+              assistantMessage.parts.push({ type: "tool", toolEvent: newEvent });
+            }
+          });
           scrollToBottom();
         },
         onApprovalRequired(nextApproval) {
-          assistantMessage.content = "另一个操作正在等待你的审批。";
-          assistantMessage.toolEvents = nextApproval.tool_events || [];
+          const firstPart = assistantMessage.parts[0];
+          if (firstPart?.type === "text" && firstPart.content === INITIAL_TEXT) {
+            assistantMessage.parts.shift();
+          }
+          const lastPart = assistantMessage.parts.at(-1);
+          if (lastPart?.type === "text") {
+            lastPart.content = "另一个操作正在等待你的审批。";
+          } else {
+            assistantMessage.parts.push({ type: "text", content: "另一个操作正在等待你的审批。" });
+          }
+          (nextApproval.tool_events || []).forEach((te) => {
+            const toolParts = assistantMessage.parts.filter((p) => p.type === "tool");
+            const existingIdx = toolParts.findIndex(
+              (tp) => tp.toolEvent.tool_name === te.tool_name
+            );
+            if (existingIdx >= 0) {
+              toolParts[existingIdx].toolEvent = te;
+            } else {
+              assistantMessage.parts.push({ type: "tool", toolEvent: te });
+            }
+          });
           conversation.pendingApproval = nextApproval;
           scrollToBottom();
         },
         onDone(payload) {
-          assistantMessage.content = assistantMessage.content.trim();
-          assistantMessage.toolEvents = payload.tool_events || assistantMessage.toolEvents || [];
+          const lastText = assistantMessage.parts.findLast((p) => p.type === "text");
+          if (lastText) {
+            lastText.content = lastText.content.trim();
+          }
           scrollToBottom();
         }
       }
     );
   } catch (error) {
-    assistantMessage.content = `审批流程失败: ${error.message}`;
+    const lastText = assistantMessage.parts.findLast((p) => p.type === "text");
+    if (lastText) {
+      lastText.content = `审批流程失败: ${error.message}`;
+    } else {
+      assistantMessage.parts.push({ type: "text", content: `审批流程失败: ${error.message}` });
+    }
   } finally {
     conversation.updatedAt = Date.now();
     stopTimer();
@@ -1458,6 +1548,7 @@ body {
 }
 
 .tool-event {
+  margin: 8px 0;
   border: 1px solid var(--border-light);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.82);
@@ -1495,6 +1586,11 @@ body {
 .tool-event-status.completed {
   background: rgba(34, 197, 94, 0.12);
   color: #15803d;
+}
+
+.tool-event-status.running {
+  background: rgba(59, 130, 246, 0.14);
+  color: #1d4ed8;
 }
 
 .tool-event-status.failed,

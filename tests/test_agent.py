@@ -1,6 +1,15 @@
 from unittest.mock import AsyncMock, patch
 
+from pydantic_ai.messages import (
+    FinalResultEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+)
+
 from backend.agent.core import StudentProductivityAgent
+from backend.agent.pydantic_runtime import PydanticAIRuntime
 
 
 async def test_agent_returns_llm_response(db_session):
@@ -36,3 +45,30 @@ async def test_agent_uses_llm_runtime_fallback_when_unconfigured(db_session):
         result = await agent.run("Hello", "session-2")
         assert "LLM is not ready yet" in result["response"]
         assert "No API key" in result["response"]
+
+
+async def test_runtime_stream_handler_emits_all_text_chunks_immediately(db_session):
+    runtime = PydanticAIRuntime(db_session)
+    streamed_chunks = []
+
+    async def on_response_chunk(chunk: str) -> None:
+        streamed_chunks.append(chunk)
+
+    handler = runtime._build_event_stream_handler(on_response_chunk)
+    assert handler is not None
+
+    async def intermediate_stream():
+        yield PartStartEvent(index=0, part=TextPart("Thinking aloud"))
+
+    await handler(None, intermediate_stream())
+    assert streamed_chunks == ["Thinking aloud"]
+
+    streamed_chunks.clear()
+
+    async def final_text_stream():
+        yield PartStartEvent(index=0, part=TextPart("Hello"))
+        yield FinalResultEvent(tool_name=None, tool_call_id=None)
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=" world"))
+
+    await handler(None, final_text_stream())
+    assert streamed_chunks == ["Hello", " world"]
