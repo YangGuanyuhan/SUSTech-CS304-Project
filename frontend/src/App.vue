@@ -1396,8 +1396,9 @@ body {
 .message-row.user {
   flex-direction: row-reverse;
   margin-left: auto;
-  margin-right: calc(var(--send-btn-width) + 12px);
+  margin-right: calc(var(--send-btn-width) - 22px);
   margin-top: 4px;
+  max-width: min(600px, calc(100% - 108px));
 }
 
 .message-row.assistant {
@@ -1431,6 +1432,8 @@ body {
   max-width: 100%;
   width: fit-content;
   min-width: 0;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .message-row.user .message-bubble {
@@ -1700,6 +1703,7 @@ body {
   display: flex;
   gap: 16px;
   padding: 20px 34px 30px;
+  padding-left: 128px;
   background: linear-gradient(180deg, rgba(243, 240, 234, 0.12), rgba(255, 255, 255, 0.68));
   border-top: 1px solid rgba(53, 62, 72, 0.05);
   position: sticky;
