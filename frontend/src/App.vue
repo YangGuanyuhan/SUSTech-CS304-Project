@@ -197,6 +197,12 @@
             </div>
             <template v-for="(part, i) in message.parts" :key="`${message.id}-${i}`">
               <div v-if="part.type === 'text'" class="markdown-body" v-html="renderMarkdown(part.content)" />
+              <details v-else-if="part.type === 'thinking'" class="thinking-block" open>
+                <summary class="thinking-summary">
+                  <span class="thinking-label">思考过程</span>
+                </summary>
+                <div class="markdown-body thinking-content" v-html="renderMarkdown(part.content)" />
+              </details>
               <details v-else-if="part.type === 'tool'" class="tool-event">
                 <summary class="tool-event-summary">
                   <span class="tool-event-name">{{ part.toolEvent.tool_name }}</span>
@@ -315,6 +321,83 @@ import { getCourses, getHealth, streamApprovalDecision, streamChat } from "./api
 
 const CHAT_CONVERSATIONS_KEY = "spa-conversations";
 const ACTIVE_CONVERSATION_KEY = "spa-active-conversation-id";
+
+// Streaming thinking-tag parser: splits <thinking>...</thinking> blocks from normal text.
+// Handles partial tags that may be split across SSE chunks.
+function createThinkingParser() {
+  let inThinking = false;
+  let buffer = "";
+
+  const TAG_OPEN = "<thinking>";
+  const TAG_CLOSE = "</thinking>";
+
+  function _partialMatch(s, tag) {
+    for (let i = tag.length - 1; i >= 1; i--) {
+      if (s.endsWith(tag.substring(0, i))) return tag.substring(0, i).length;
+    }
+    return 0;
+  }
+
+  function feed(chunk, onText, onThinking) {
+    buffer += chunk;
+
+    while (true) {
+      if (inThinking) {
+        const endIdx = buffer.indexOf(TAG_CLOSE);
+        if (endIdx >= 0) {
+          if (endIdx > 0) onThinking(buffer.substring(0, endIdx));
+          buffer = buffer.substring(endIdx + TAG_CLOSE.length);
+          inThinking = false;
+        } else {
+          const partial = _partialMatch(buffer, TAG_CLOSE);
+          if (partial > 0) {
+            const keep = buffer.substring(0, buffer.length - partial);
+            if (keep) onThinking(keep);
+            buffer = buffer.substring(buffer.length - partial);
+          } else {
+            if (buffer) onThinking(buffer);
+            buffer = "";
+          }
+          break;
+        }
+      } else {
+        const startIdx = buffer.indexOf(TAG_OPEN);
+        if (startIdx >= 0) {
+          if (startIdx > 0) onText(buffer.substring(0, startIdx));
+          buffer = buffer.substring(startIdx + TAG_OPEN.length);
+          inThinking = true;
+        } else {
+          const partial = _partialMatch(buffer, TAG_OPEN);
+          if (partial > 0) {
+            const keep = buffer.substring(0, buffer.length - partial);
+            if (keep) onText(keep);
+            buffer = buffer.substring(buffer.length - partial);
+          } else {
+            if (buffer) onText(buffer);
+            buffer = "";
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  function flush(onText, onThinking) {
+    if (!buffer) return;
+    if (inThinking) {
+      onThinking(buffer);
+    } else {
+      onText(buffer);
+    }
+    buffer = "";
+  }
+
+  function isInThinking() {
+    return inThinking;
+  }
+
+  return { feed, flush, isInThinking };
+}
 
 const markdown = new MarkdownIt({
   html: false,
@@ -622,6 +705,7 @@ async function submitMessage() {
   scrollToBottom();
 
   const WAITING_TEXT = "正在等待模型响应...";
+  const thinkingParser = createThinkingParser();
 
   try {
     await streamChat(
@@ -632,15 +716,32 @@ async function submitMessage() {
       },
       {
         onChunk(chunk) {
-          const lastPart = assistantMessage.parts.at(-1);
-          if (!lastPart || lastPart.type !== "text" || lastPart.content === WAITING_TEXT) {
-            if (lastPart?.content === WAITING_TEXT) {
-              lastPart.content = "";
-            } else {
-              assistantMessage.parts.push({ type: "text", content: "" });
+          thinkingParser.feed(chunk,
+            (text) => {
+              const lastPart = assistantMessage.parts.at(-1);
+              if (lastPart?.type === "text" && lastPart.content === WAITING_TEXT) {
+                lastPart.content = "";
+              }
+              const appendPart = assistantMessage.parts.at(-1);
+              if (!appendPart || appendPart.type !== "text") {
+                assistantMessage.parts.push({ type: "text", content: text });
+              } else {
+                appendPart.content += text;
+              }
+            },
+            (thinking) => {
+              const firstPart = assistantMessage.parts[0];
+              if (firstPart?.type === "text" && firstPart.content === WAITING_TEXT) {
+                assistantMessage.parts.shift();
+              }
+              const appendPart = assistantMessage.parts.at(-1);
+              if (!appendPart || appendPart.type !== "thinking") {
+                assistantMessage.parts.push({ type: "thinking", content: thinking });
+              } else {
+                appendPart.content += thinking;
+              }
             }
-          }
-          assistantMessage.parts.at(-1).content += chunk;
+          );
           scrollToBottom();
         },
         onToolEvents(toolEvents) {
@@ -684,9 +785,31 @@ async function submitMessage() {
           scrollToBottom();
         },
         onDone(payload) {
+          thinkingParser.flush(
+            (text) => {
+              const appendPart = assistantMessage.parts.at(-1);
+              if (!appendPart || appendPart.type !== "text") {
+                assistantMessage.parts.push({ type: "text", content: text });
+              } else {
+                appendPart.content += text;
+              }
+            },
+            (thinking) => {
+              const appendPart = assistantMessage.parts.at(-1);
+              if (!appendPart || appendPart.type !== "thinking") {
+                assistantMessage.parts.push({ type: "thinking", content: thinking });
+              } else {
+                appendPart.content += thinking;
+              }
+            }
+          );
           const lastText = assistantMessage.parts.findLast((p) => p.type === "text");
           if (lastText) {
             lastText.content = lastText.content.trim();
+          }
+          const lastThinking = assistantMessage.parts.findLast((p) => p.type === "thinking");
+          if (lastThinking) {
+            lastThinking.content = lastThinking.content.trim();
           }
           scrollToBottom();
         }
@@ -745,6 +868,8 @@ async function resolveApproval(approved) {
   const stopTimer = startTimer(assistantMessage);
   scrollToBottom();
 
+  const thinkingParser = createThinkingParser();
+
   try {
     await streamApprovalDecision(
       {
@@ -754,15 +879,32 @@ async function resolveApproval(approved) {
       },
       {
         onChunk(chunk) {
-          const lastPart = assistantMessage.parts.at(-1);
-          if (!lastPart || lastPart.type !== "text" || lastPart.content === INITIAL_TEXT) {
-            if (lastPart?.content === INITIAL_TEXT) {
-              lastPart.content = "";
-            } else {
-              assistantMessage.parts.push({ type: "text", content: "" });
+          thinkingParser.feed(chunk,
+            (text) => {
+              const lastPart = assistantMessage.parts.at(-1);
+              if (lastPart?.type === "text" && lastPart.content === INITIAL_TEXT) {
+                lastPart.content = "";
+              }
+              const appendPart = assistantMessage.parts.at(-1);
+              if (!appendPart || appendPart.type !== "text") {
+                assistantMessage.parts.push({ type: "text", content: text });
+              } else {
+                appendPart.content += text;
+              }
+            },
+            (thinking) => {
+              const firstPart = assistantMessage.parts[0];
+              if (firstPart?.type === "text" && firstPart.content === INITIAL_TEXT) {
+                assistantMessage.parts.shift();
+              }
+              const appendPart = assistantMessage.parts.at(-1);
+              if (!appendPart || appendPart.type !== "thinking") {
+                assistantMessage.parts.push({ type: "thinking", content: thinking });
+              } else {
+                appendPart.content += thinking;
+              }
             }
-          }
-          assistantMessage.parts.at(-1).content += chunk;
+          );
           scrollToBottom();
         },
         onToolEvents(toolEvents) {
@@ -806,9 +948,31 @@ async function resolveApproval(approved) {
           scrollToBottom();
         },
         onDone(payload) {
+          thinkingParser.flush(
+            (text) => {
+              const appendPart = assistantMessage.parts.at(-1);
+              if (!appendPart || appendPart.type !== "text") {
+                assistantMessage.parts.push({ type: "text", content: text });
+              } else {
+                appendPart.content += text;
+              }
+            },
+            (thinking) => {
+              const appendPart = assistantMessage.parts.at(-1);
+              if (!appendPart || appendPart.type !== "thinking") {
+                assistantMessage.parts.push({ type: "thinking", content: thinking });
+              } else {
+                appendPart.content += thinking;
+              }
+            }
+          );
           const lastText = assistantMessage.parts.findLast((p) => p.type === "text");
           if (lastText) {
             lastText.content = lastText.content.trim();
+          }
+          const lastThinking = assistantMessage.parts.findLast((p) => p.type === "thinking");
+          if (lastThinking) {
+            lastThinking.content = lastThinking.content.trim();
           }
           scrollToBottom();
         }
@@ -1547,6 +1711,45 @@ body {
 
 .markdown-body :deep(a) {
   color: var(--accent);
+}
+
+/* Thinking Block */
+.thinking-block {
+  margin: 8px 0;
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.04), rgba(99, 102, 241, 0.02));
+  overflow: hidden;
+}
+
+.thinking-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  cursor: pointer;
+  list-style: none;
+  background: rgba(139, 92, 246, 0.06);
+  user-select: none;
+}
+
+.thinking-summary::-webkit-details-marker {
+  display: none;
+}
+
+.thinking-label {
+  font-weight: 700;
+  font-size: 13px;
+  color: #7c3aed;
+}
+
+.thinking-block[open] .thinking-summary {
+  border-bottom: 1px solid rgba(139, 92, 246, 0.1);
+}
+
+.thinking-content {
+  padding: 14px 16px;
+  border-left: 3px solid rgba(139, 92, 246, 0.18);
 }
 
 /* Tool Events */
