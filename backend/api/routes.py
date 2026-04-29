@@ -151,7 +151,18 @@ async def _stream_agent_execution(*, session_id: str, execute):
         # Yield once so the SSE loop can flush "running" updates before heavy tool work continues.
         await asyncio.sleep(0)
 
-    run_task = asyncio.create_task(execute(on_tool_events, on_response_chunk))
+    async def on_thinking_chunk(chunk: str) -> None:
+        if not chunk:
+            return
+        await event_queue.put(
+            {
+                "event": "reasoning",
+                "data": json.dumps({"chunk": chunk}),
+            }
+        )
+        await asyncio.sleep(0)
+
+    run_task = asyncio.create_task(execute(on_tool_events, on_response_chunk, on_thinking_chunk))
     response_streamed = False
     try:
         while True:
@@ -209,6 +220,7 @@ async def test_llm_settings(request: LLMConnectionTestRequest) -> ApiResponse[ob
                 model=request.model or previous.model,
                 base_url=request.base_url if request.base_url is not None else previous.base_url,
                 api_key=request.api_key,
+                enable_reasoning=request.enable_reasoning,
             )
         )
     try:
@@ -223,6 +235,7 @@ async def test_llm_settings(request: LLMConnectionTestRequest) -> ApiResponse[ob
                 base_url=previous.base_url,
                 api_key=previous_secret,
                 replace_api_key=True,
+                enable_reasoning=previous.enable_reasoning,
             )
         )
     return ApiResponse(success=True, data=result)
@@ -245,6 +258,7 @@ async def save_llm_profile(
             provider=request.provider,
             model=request.model,
             base_url=request.base_url,
+            enable_reasoning=request.enable_reasoning,
         ),
         api_key=request.api_key,
     )
@@ -390,12 +404,13 @@ async def chat(
         try:
             async for event in _stream_agent_execution(
                 session_id=request.session_id,
-                execute=lambda on_tool_events, on_response_chunk: agent.run(
+                execute=lambda on_tool_events, on_response_chunk, on_thinking_chunk: agent.run(
                     request.message,
                     request.session_id,
                     request.workspace_root,
                     on_tool_events=on_tool_events,
                     on_response_chunk=on_response_chunk,
+                    on_thinking_chunk=on_thinking_chunk,
                 ),
             ):
                 yield event
@@ -427,11 +442,12 @@ async def handle_chat_approval(
         try:
             async for event in _stream_agent_execution(
                 session_id=request.session_id,
-                execute=lambda on_tool_events, on_response_chunk: agent.resume_approval(
+                execute=lambda on_tool_events, on_response_chunk, on_thinking_chunk: agent.resume_approval(
                     request.approval_id,
                     approved=request.approved,
                     on_tool_events=on_tool_events,
                     on_response_chunk=on_response_chunk,
+                    on_thinking_chunk=on_thinking_chunk,
                 ),
             ):
                 yield event

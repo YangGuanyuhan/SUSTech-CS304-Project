@@ -19,6 +19,8 @@ from pydantic_ai.messages import (
     PartStartEvent,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
     UserPromptPart,
 )
 from pydantic_ai.models.openai import OpenAIModel
@@ -93,6 +95,11 @@ class PydanticAIRuntime:
             api_key=api_key,
             http_client=AsyncClient(trust_env=False),
         )
+        if config.enable_reasoning:
+            from pydantic_ai.profiles.openai import OpenAIModelProfile
+
+            profile = OpenAIModelProfile(openai_chat_thinking_field="reasoning_content")
+            return OpenAIModel(config.model, provider=provider, profile=profile)
         return OpenAIModel(config.model, provider=provider)
 
     def _build_agent(self) -> Agent[AgentDeps, str | DeferredToolRequests]:
@@ -415,45 +422,23 @@ class PydanticAIRuntime:
     def _build_event_stream_handler(
         self,
         on_response_chunk: Callable[[str], Awaitable[None] | None] | None,
+        on_thinking_chunk: Callable[[str], Awaitable[None] | None] | None = None,
     ):
-        if on_response_chunk is None:
+        if on_response_chunk is None and on_thinking_chunk is None:
             return None
 
-        # async def event_stream_handler(_run_ctx, event_stream) -> None:
-        #     buffered_chunks: list[str] = []
-        #     final_text_detected = False
-
-        #     async for event in event_stream:
-        #         if isinstance(event, FinalResultEvent) and event.tool_name is None:
-        #             final_text_detected = True
-        #             for chunk in buffered_chunks:
-        #                 await self._emit_response_chunk(on_response_chunk, chunk)
-        #             buffered_chunks.clear()
-        #             continue
-
-        #         chunk = ""
-        #         if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-        #             chunk = event.part.content
-        #         elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
-        #             chunk = event.delta.content_delta
-
-        #         if not chunk:
-        #             continue
-
-        #         if final_text_detected:
-        #             await self._emit_response_chunk(on_response_chunk, chunk)
-        #         else:
-        #             buffered_chunks.append(chunk)
         async def event_stream_handler(_run_ctx, event_stream) -> None:
             async for event in event_stream:
-                chunk = ""
-                if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-                    chunk = event.part.content
-                elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
-                    chunk = event.delta.content_delta
-
-                if chunk:
-                    await self._emit_response_chunk(on_response_chunk, chunk)
+                if isinstance(event, PartStartEvent):
+                    if isinstance(event.part, TextPart):
+                        await self._emit_response_chunk(on_response_chunk, event.part.content)
+                    elif isinstance(event.part, ThinkingPart):
+                        await self._emit_response_chunk(on_thinking_chunk, event.part.content)
+                elif isinstance(event, PartDeltaEvent):
+                    if isinstance(event.delta, TextPartDelta):
+                        await self._emit_response_chunk(on_response_chunk, event.delta.content_delta)
+                    elif isinstance(event.delta, ThinkingPartDelta):
+                        await self._emit_response_chunk(on_thinking_chunk, event.delta.content_delta)
 
         return event_stream_handler
 
@@ -468,6 +453,7 @@ class PydanticAIRuntime:
         deferred_tool_results: DeferredToolResults | None = None,
         on_tool_events: Callable[[list[ToolTrace]], Awaitable[None] | None] | None = None,
         on_response_chunk: Callable[[str], Awaitable[None] | None] | None = None,
+        on_thinking_chunk: Callable[[str], Awaitable[None] | None] | None = None,
     ):
         deps = AgentDeps(
             session=self.session,
@@ -483,7 +469,7 @@ class PydanticAIRuntime:
             message_history=final_history,
             deferred_tool_results=deferred_tool_results,
             deps=deps,
-            event_stream_handler=self._build_event_stream_handler(on_response_chunk),
+            event_stream_handler=self._build_event_stream_handler(on_response_chunk, on_thinking_chunk=on_thinking_chunk),
         )
         return run_result, deps
 

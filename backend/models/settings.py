@@ -11,6 +11,7 @@ class LLMProfile(BaseModel):
     model: str
     base_url: str | None = None
     api_key_configured: bool = False
+    enable_reasoning: bool = False
 
 
 class BlackboardProfile(BaseModel):

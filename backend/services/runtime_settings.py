@@ -21,6 +21,7 @@ class RuntimeLLMConfig(BaseModel):
     model: str
     base_url: str | None = None
     api_key_configured: bool = False
+    enable_reasoning: bool = False
 
 
 class RuntimeLLMUpdate(BaseModel):
@@ -31,6 +32,7 @@ class RuntimeLLMUpdate(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
     replace_api_key: bool = False
+    enable_reasoning: bool = False
 
 
 class RuntimeBlackboardConfig(BaseModel):
@@ -59,6 +61,7 @@ class RuntimeSettingsManager:
         self._model = settings.llm_model
         self._base_url = settings.llm_base_url
         self._api_key = settings.llm_api_key if settings.llm_api_key != "replace-me" else None
+        self._enable_reasoning = False
         # Blackboard config - load encrypted password from settings, file, or environment
         self._bb_student_id = settings.blackboard_student_id
         # Priority: env var > encrypted file > none
@@ -91,6 +94,7 @@ class RuntimeSettingsManager:
                 model=self._model,
                 base_url=self._base_url,
                 api_key_configured=bool(self._api_key),
+                enable_reasoning=self._enable_reasoning,
             )
 
     def update_llm_config(self, update: RuntimeLLMUpdate) -> RuntimeLLMConfig:
@@ -104,11 +108,13 @@ class RuntimeSettingsManager:
                 self._api_key = update.api_key.strip() if update.api_key else None
             elif update.api_key:
                 self._api_key = update.api_key.strip()
+            self._enable_reasoning = update.enable_reasoning
             return RuntimeLLMConfig(
                 provider=self._provider,
                 model=self._model,
                 base_url=self._base_url,
                 api_key_configured=bool(self._api_key),
+                enable_reasoning=self._enable_reasoning,
             )
 
     def get_secret_api_key(self) -> str | None:
