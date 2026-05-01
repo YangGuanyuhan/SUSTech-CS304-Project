@@ -162,7 +162,9 @@ async def _stream_agent_execution(*, session_id: str, execute):
         )
         await asyncio.sleep(0)
 
-    thinking_handler = on_thinking_chunk if runtime_settings.get_llm_config().enable_reasoning else None
+    thinking_handler = (
+        on_thinking_chunk if runtime_settings.get_llm_config().enable_reasoning else None
+    )
     run_task = asyncio.create_task(execute(on_tool_events, on_response_chunk, thinking_handler))
     response_streamed = False
     try:
@@ -443,12 +445,14 @@ async def handle_chat_approval(
         try:
             async for event in _stream_agent_execution(
                 session_id=request.session_id,
-                execute=lambda on_tool_events, on_response_chunk, on_thinking_chunk: agent.resume_approval(
-                    request.approval_id,
-                    approved=request.approved,
-                    on_tool_events=on_tool_events,
-                    on_response_chunk=on_response_chunk,
-                    on_thinking_chunk=on_thinking_chunk,
+                execute=lambda on_tool_events, on_response_chunk, on_thinking_chunk: (
+                    agent.resume_approval(
+                        request.approval_id,
+                        approved=request.approved,
+                        on_tool_events=on_tool_events,
+                        on_response_chunk=on_response_chunk,
+                        on_thinking_chunk=on_thinking_chunk,
+                    )
                 ),
             ):
                 yield event

@@ -436,9 +436,13 @@ class PydanticAIRuntime:
                         await self._emit_response_chunk(on_thinking_chunk, event.part.content)
                 elif isinstance(event, PartDeltaEvent):
                     if isinstance(event.delta, TextPartDelta):
-                        await self._emit_response_chunk(on_response_chunk, event.delta.content_delta)
+                        await self._emit_response_chunk(
+                            on_response_chunk, event.delta.content_delta
+                        )
                     elif isinstance(event.delta, ThinkingPartDelta):
-                        await self._emit_response_chunk(on_thinking_chunk, event.delta.content_delta)
+                        await self._emit_response_chunk(
+                            on_thinking_chunk, event.delta.content_delta
+                        )
 
         return event_stream_handler
 
@@ -469,7 +473,9 @@ class PydanticAIRuntime:
             message_history=final_history,
             deferred_tool_results=deferred_tool_results,
             deps=deps,
-            event_stream_handler=self._build_event_stream_handler(on_response_chunk, on_thinking_chunk=on_thinking_chunk),
+            event_stream_handler=self._build_event_stream_handler(
+                on_response_chunk, on_thinking_chunk=on_thinking_chunk
+            ),
         )
         return run_result, deps
 
