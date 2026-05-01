@@ -69,6 +69,10 @@
                 <span>Base URL</span>
                 <strong>{{ state.base_url || "默认地址" }}</strong>
               </article>
+              <article class="status-card">
+                <span>推理模式</span>
+                <strong>{{ state.enable_reasoning ? "已启用" : "已禁用" }}</strong>
+              </article>
             </div>
           </section>
 
@@ -142,6 +146,12 @@
                   placeholder="留空以保持当前密钥"
                   autocomplete="new-password"
                 />
+              </label>
+              <label class="toggle-label full">
+                <span class="toggle-row">
+                  <span>启用推理模式 (DeepSeek R1 等推理模型)</span>
+                  <input v-model="form.enable_reasoning" type="checkbox" class="toggle-input" />
+                </span>
               </label>
               <div class="actions full">
                 <button type="button" class="secondary" :disabled="saving" @click="saveProfile">
@@ -403,7 +413,8 @@ const state = reactive({
   provider: "openai",
   model: "gpt-4o-mini",
   base_url: "",
-  api_key_configured: false
+  api_key_configured: false,
+  enable_reasoning: true
 });
 
 const bbState = reactive({
@@ -417,7 +428,8 @@ const form = reactive({
   provider: "openai",
   model: "gpt-4o-mini",
   base_url: "",
-  api_key: ""
+  api_key: "",
+  enable_reasoning: true
 });
 
 const bbForm = reactive({
@@ -453,9 +465,11 @@ function applyState(payload) {
   state.model = payload.model;
   state.base_url = payload.base_url ?? "";
   state.api_key_configured = Boolean(payload.api_key_configured);
+  state.enable_reasoning = Boolean(payload.enable_reasoning);
   form.provider = payload.provider;
   form.model = payload.model;
   form.base_url = payload.base_url ?? "";
+  form.enable_reasoning = Boolean(payload.enable_reasoning);
   form.api_key = "";
 }
 
@@ -635,7 +649,8 @@ async function saveProfile() {
       provider: form.provider,
       model: form.model,
       base_url: form.base_url || null,
-      api_key: form.api_key || null
+      api_key: form.api_key || null,
+      enable_reasoning: form.enable_reasoning
     });
     await refreshProfiles();
     closeLLMEditor();
@@ -733,7 +748,8 @@ async function save() {
       provider: form.provider,
       model: form.model,
       base_url: form.base_url || null,
-      api_key: form.api_key || null
+      api_key: form.api_key || null,
+      enable_reasoning: form.enable_reasoning
     });
     applyState(response.data);
     closeLLMEditor();
@@ -752,7 +768,8 @@ async function testConnection() {
       provider: form.provider,
       model: form.model,
       base_url: form.base_url || null,
-      api_key: form.api_key || null
+      api_key: form.api_key || null,
+      enable_reasoning: form.enable_reasoning
     });
     const result = response.data;
     showMessage(`连接正常，耗时 ${result.latency_ms}ms。预览: ${result.preview}`);
@@ -1344,5 +1361,22 @@ button:disabled {
   .settings-nav.collapsed {
     grid-template-columns: 1fr;
   }
+}
+</style>
+
+<style scoped>
+.toggle-label {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.toggle-row {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+}
+.toggle-input {
+  width: auto;
+  margin-left: 10px;
 }
 </style>

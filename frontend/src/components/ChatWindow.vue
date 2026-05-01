@@ -111,6 +111,13 @@
               </div>
             </details>
           </div>
+          <div v-show="message.thinking" class="thinking-block">
+            <div class="thinking-summary" @click="toggleThinking(message.id)">
+              <span class="thinking-label">思考过程</span>
+              <span class="thinking-toggle-icon">{{ thinkingExpanded[message.id] ? '▲' : '▼' }}</span>
+            </div>
+            <div v-show="thinkingExpanded[message.id]" class="markdown-body thinking-content" v-html="renderMarkdown(message.thinking)" />
+          </div>
           <div
             v-if="message.content && message.isStreaming"
             class="streaming-body"
@@ -202,6 +209,7 @@ function makeConversation(title = "New Conversation") {
         id: crypto.randomUUID(),
         role: "assistant",
         content: "UI is connected to the backend contract. Start here or continue a previous session.",
+        thinking: "",
         elapsedLabel: "",
         isStreaming: false,
         toolEvents: []
@@ -245,6 +253,10 @@ const draft = ref("Show my Blackboard courses");
 const loading = ref(false);
 const chatStreaming = ref(false);
 const messagesViewport = ref(null);
+const thinkingExpanded = reactive({});
+function toggleThinking(id) {
+  thinkingExpanded[id] = !thinkingExpanded[id];
+}
 let activeTimer = null;
 let activeChatAbortController = null;
 let chatStopRequested = false;
@@ -447,6 +459,7 @@ async function submitMessage() {
     id: crypto.randomUUID(),
     role: "assistant",
     content: waitingMessage,
+    thinking: "",
     elapsedLabel: "",
     isStreaming: true,
     toolEvents: []
@@ -478,6 +491,10 @@ async function submitMessage() {
           assistantMessage.content += chunk;
           scrollMessagesToBottom();
         },
+        onReasoning(chunk) {
+          assistantMessage.thinking = (assistantMessage.thinking || "") + chunk;
+          scrollMessagesToBottom();
+        },
         onToolEvents(toolEvents) {
           assistantMessage.toolEvents = toolEvents || assistantMessage.toolEvents || [];
           scrollMessagesToBottom();
@@ -492,6 +509,7 @@ async function submitMessage() {
         onDone(payload) {
           const finalContent = assistantMessage.content.trim();
           assistantMessage.content = finalContent === waitingMessage ? "" : finalContent;
+          assistantMessage.thinking = (assistantMessage.thinking || "").trim();
           assistantMessage.isStreaming = false;
           assistantMessage.toolEvents = payload.tool_events || assistantMessage.toolEvents || [];
           scrollMessagesToBottom();
@@ -535,6 +553,7 @@ async function resolveApproval(approved) {
     id: crypto.randomUUID(),
     role: "assistant",
     content: approved ? "Executing approved action..." : "Approval denied. Letting the agent continue...",
+    thinking: "",
     elapsedLabel: "",
     isStreaming: true,
     toolEvents: []
@@ -564,6 +583,10 @@ async function resolveApproval(approved) {
           assistantMessage.content += chunk;
           scrollMessagesToBottom();
         },
+        onReasoning(chunk) {
+          assistantMessage.thinking = (assistantMessage.thinking || "") + chunk;
+          scrollMessagesToBottom();
+        },
         onToolEvents(toolEvents) {
           assistantMessage.toolEvents = toolEvents || assistantMessage.toolEvents || [];
           scrollMessagesToBottom();
@@ -577,6 +600,7 @@ async function resolveApproval(approved) {
         },
         onDone(payload) {
           assistantMessage.content = assistantMessage.content.trim();
+          assistantMessage.thinking = (assistantMessage.thinking || "").trim();
           assistantMessage.isStreaming = false;
           assistantMessage.toolEvents = payload.tool_events || assistantMessage.toolEvents || [];
           scrollMessagesToBottom();
@@ -1038,6 +1062,42 @@ onBeforeUnmount(() => {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.9rem;
   line-height: 1.55;
+}
+
+.thinking-block {
+  margin: 8px 0;
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.04), rgba(99, 102, 241, 0.02));
+  overflow: hidden;
+}
+
+.thinking-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  background: rgba(139, 92, 246, 0.06);
+  user-select: none;
+}
+
+.thinking-toggle-icon {
+  font-size: 10px;
+  color: #7c3aed;
+  opacity: 0.7;
+}
+
+.thinking-label {
+  font-weight: 700;
+  font-size: 13px;
+  color: #7c3aed;
+}
+
+.thinking-content {
+  padding: 12px 14px;
+  border-left: 3px solid rgba(139, 92, 246, 0.18);
 }
 
 .composer textarea {

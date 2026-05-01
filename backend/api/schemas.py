@@ -40,6 +40,7 @@ class LLMSettingsRequest(BaseModel):
     model: str
     base_url: str | None = None
     api_key: str | None = None
+    enable_reasoning: bool = False
 
 
 class LLMConnectionTestRequest(BaseModel):
@@ -47,6 +48,7 @@ class LLMConnectionTestRequest(BaseModel):
     model: str | None = None
     base_url: str | None = None
     api_key: str | None = None
+    enable_reasoning: bool = False
 
 
 class LLMProfileRequest(BaseModel):
@@ -55,6 +57,7 @@ class LLMProfileRequest(BaseModel):
     model: str
     base_url: str | None = None
     api_key: str | None = None
+    enable_reasoning: bool = False
 
 
 class BlackboardProfileRequest(BaseModel):

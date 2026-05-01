@@ -197,6 +197,12 @@
             </div>
             <template v-for="(part, i) in message.parts" :key="`${message.id}-${i}`">
               <div v-if="part.type === 'text'" class="markdown-body" v-html="renderMarkdown(part.content)" />
+              <details v-else-if="part.type === 'thinking'" class="thinking-block">
+                <summary class="thinking-summary">
+                  <span class="thinking-label">思考过程</span>
+                </summary>
+                <div class="markdown-body thinking-content" v-html="renderMarkdown(part.content)" />
+              </details>
               <details v-else-if="part.type === 'tool'" class="tool-event">
                 <summary class="tool-event-summary">
                   <span class="tool-event-name">{{ part.toolEvent.tool_name }}</span>
@@ -631,16 +637,30 @@ async function submitMessage() {
         workspace_root: conversation.workspaceRoot?.trim() || null
       },
       {
-        onChunk(chunk) {
+        onChunk(text) {
           const lastPart = assistantMessage.parts.at(-1);
-          if (!lastPart || lastPart.type !== "text" || lastPart.content === WAITING_TEXT) {
-            if (lastPart?.content === WAITING_TEXT) {
-              lastPart.content = "";
-            } else {
-              assistantMessage.parts.push({ type: "text", content: "" });
-            }
+          if (lastPart?.type === "text" && lastPart.content === WAITING_TEXT) {
+            lastPart.content = "";
           }
-          assistantMessage.parts.at(-1).content += chunk;
+          const appendPart = assistantMessage.parts.at(-1);
+          if (!appendPart || appendPart.type !== "text") {
+            assistantMessage.parts.push({ type: "text", content: text });
+          } else {
+            appendPart.content += text;
+          }
+          scrollToBottom();
+        },
+        onReasoning(thinking) {
+          const firstPart = assistantMessage.parts[0];
+          if (firstPart?.type === "text" && firstPart.content === WAITING_TEXT) {
+            assistantMessage.parts.shift();
+          }
+          const appendPart = assistantMessage.parts.at(-1);
+          if (!appendPart || appendPart.type !== "thinking") {
+            assistantMessage.parts.push({ type: "thinking", content: thinking });
+          } else {
+            appendPart.content += thinking;
+          }
           scrollToBottom();
         },
         onToolEvents(toolEvents) {
@@ -687,6 +707,10 @@ async function submitMessage() {
           const lastText = assistantMessage.parts.findLast((p) => p.type === "text");
           if (lastText) {
             lastText.content = lastText.content.trim();
+          }
+          const lastThinking = assistantMessage.parts.findLast((p) => p.type === "thinking");
+          if (lastThinking) {
+            lastThinking.content = lastThinking.content.trim();
           }
           scrollToBottom();
         }
@@ -745,6 +769,7 @@ async function resolveApproval(approved) {
   const stopTimer = startTimer(assistantMessage);
   scrollToBottom();
 
+
   try {
     await streamApprovalDecision(
       {
@@ -753,16 +778,30 @@ async function resolveApproval(approved) {
         approved
       },
       {
-        onChunk(chunk) {
+        onChunk(text) {
           const lastPart = assistantMessage.parts.at(-1);
-          if (!lastPart || lastPart.type !== "text" || lastPart.content === INITIAL_TEXT) {
-            if (lastPart?.content === INITIAL_TEXT) {
-              lastPart.content = "";
-            } else {
-              assistantMessage.parts.push({ type: "text", content: "" });
-            }
+          if (lastPart?.type === "text" && lastPart.content === INITIAL_TEXT) {
+            lastPart.content = "";
           }
-          assistantMessage.parts.at(-1).content += chunk;
+          const appendPart = assistantMessage.parts.at(-1);
+          if (!appendPart || appendPart.type !== "text") {
+            assistantMessage.parts.push({ type: "text", content: text });
+          } else {
+            appendPart.content += text;
+          }
+          scrollToBottom();
+        },
+        onReasoning(thinking) {
+          const firstPart = assistantMessage.parts[0];
+          if (firstPart?.type === "text" && firstPart.content === INITIAL_TEXT) {
+            assistantMessage.parts.shift();
+          }
+          const appendPart = assistantMessage.parts.at(-1);
+          if (!appendPart || appendPart.type !== "thinking") {
+            assistantMessage.parts.push({ type: "thinking", content: thinking });
+          } else {
+            appendPart.content += thinking;
+          }
           scrollToBottom();
         },
         onToolEvents(toolEvents) {
@@ -809,6 +848,10 @@ async function resolveApproval(approved) {
           const lastText = assistantMessage.parts.findLast((p) => p.type === "text");
           if (lastText) {
             lastText.content = lastText.content.trim();
+          }
+          const lastThinking = assistantMessage.parts.findLast((p) => p.type === "thinking");
+          if (lastThinking) {
+            lastThinking.content = lastThinking.content.trim();
           }
           scrollToBottom();
         }
@@ -1547,6 +1590,57 @@ body {
 
 .markdown-body :deep(a) {
   color: var(--accent);
+}
+
+/* Thinking Block */
+.thinking-block {
+  margin: 8px 0;
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.04), rgba(99, 102, 241, 0.02));
+  overflow: hidden;
+}
+
+.thinking-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  cursor: pointer;
+  list-style: none;
+  background: rgba(139, 92, 246, 0.06);
+  user-select: none;
+}
+
+.thinking-summary::-webkit-details-marker {
+  display: none;
+}
+
+.thinking-label {
+  font-weight: 700;
+  font-size: 13px;
+  color: #7c3aed;
+}
+
+.thinking-summary::after {
+  content: "▸";
+  margin-left: auto;
+  font-size: 12px;
+  color: #7c3aed;
+  transition: transform 0.2s ease;
+}
+
+.thinking-block[open] .thinking-summary::after {
+  transform: rotate(90deg);
+}
+
+.thinking-block[open] .thinking-summary {
+  border-bottom: 1px solid rgba(139, 92, 246, 0.1);
+}
+
+.thinking-content {
+  padding: 14px 16px;
+  border-left: 3px solid rgba(139, 92, 246, 0.18);
 }
 
 /* Tool Events */

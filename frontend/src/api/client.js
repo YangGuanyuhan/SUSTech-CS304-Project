@@ -274,6 +274,9 @@ async function consumeSSE(response, handlers) {
       if (eventName === "message") {
         handlers.onChunk?.(parsed.chunk);
       }
+      if (eventName === "reasoning") {
+        handlers.onReasoning?.(parsed.chunk);
+      }
       if (eventName === "approval_required") {
         handlers.onApprovalRequired?.(parsed);
       }
@@ -302,6 +305,7 @@ async function consumeSSE(response, handlers) {
         throw new Error(parsed.error || "Chat stream failed.");
       }
       if (eventName === "message") handlers.onChunk?.(parsed.chunk);
+      if (eventName === "reasoning") handlers.onReasoning?.(parsed.chunk);
       if (eventName === "approval_required") handlers.onApprovalRequired?.(parsed);
       if (eventName === "tool_events") handlers.onToolEvents?.(parsed.tool_events || []);
       if (eventName === "done") handlers.onDone?.(parsed);
