@@ -61,7 +61,7 @@ class RuntimeSettingsManager:
         self._model = settings.llm_model
         self._base_url = settings.llm_base_url
         self._api_key = settings.llm_api_key if settings.llm_api_key != "replace-me" else None
-        self._enable_reasoning = False
+        self._enable_reasoning = settings.llm_enable_reasoning
         # Blackboard config - load encrypted password from settings, file, or environment
         self._bb_student_id = settings.blackboard_student_id
         # Priority: env var > encrypted file > none

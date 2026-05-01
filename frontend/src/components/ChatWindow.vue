@@ -111,12 +111,13 @@
               </div>
             </details>
           </div>
-          <details v-if="message.thinking" class="thinking-block" open>
-            <summary class="thinking-summary">
+          <div v-show="message.thinking" class="thinking-block">
+            <div class="thinking-summary" @click="toggleThinking(message.id)">
               <span class="thinking-label">思考过程</span>
-            </summary>
-            <div class="markdown-body thinking-content" v-html="renderMarkdown(message.thinking)" />
-          </details>
+              <span class="thinking-toggle-icon">{{ thinkingExpanded[message.id] ? '▲' : '▼' }}</span>
+            </div>
+            <div v-show="thinkingExpanded[message.id]" class="markdown-body thinking-content" v-html="renderMarkdown(message.thinking)" />
+          </div>
           <div
             v-if="message.content && message.isStreaming"
             class="streaming-body"
@@ -252,6 +253,10 @@ const draft = ref("Show my Blackboard courses");
 const loading = ref(false);
 const chatStreaming = ref(false);
 const messagesViewport = ref(null);
+const thinkingExpanded = reactive({});
+function toggleThinking(id) {
+  thinkingExpanded[id] = !thinkingExpanded[id];
+}
 let activeTimer = null;
 let activeChatAbortController = null;
 let chatStopRequested = false;
@@ -1070,26 +1075,24 @@ onBeforeUnmount(() => {
 .thinking-summary {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
   padding: 10px 14px;
   cursor: pointer;
-  list-style: none;
   background: rgba(139, 92, 246, 0.06);
   user-select: none;
 }
 
-.thinking-summary::-webkit-details-marker {
-  display: none;
+.thinking-toggle-icon {
+  font-size: 10px;
+  color: #7c3aed;
+  opacity: 0.7;
 }
 
 .thinking-label {
   font-weight: 700;
   font-size: 13px;
   color: #7c3aed;
-}
-
-.thinking-block[open] .thinking-summary {
-  border-bottom: 1px solid rgba(139, 92, 246, 0.1);
 }
 
 .thinking-content {

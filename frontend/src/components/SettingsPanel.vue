@@ -414,7 +414,7 @@ const state = reactive({
   model: "gpt-4o-mini",
   base_url: "",
   api_key_configured: false,
-  enable_reasoning: false
+  enable_reasoning: true
 });
 
 const bbState = reactive({
@@ -429,7 +429,7 @@ const form = reactive({
   model: "gpt-4o-mini",
   base_url: "",
   api_key: "",
-  enable_reasoning: false
+  enable_reasoning: true
 });
 
 const bbForm = reactive({
@@ -649,7 +649,8 @@ async function saveProfile() {
       provider: form.provider,
       model: form.model,
       base_url: form.base_url || null,
-      api_key: form.api_key || null
+      api_key: form.api_key || null,
+      enable_reasoning: form.enable_reasoning
     });
     await refreshProfiles();
     closeLLMEditor();

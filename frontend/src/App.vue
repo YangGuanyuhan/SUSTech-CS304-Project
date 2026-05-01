@@ -197,7 +197,7 @@
             </div>
             <template v-for="(part, i) in message.parts" :key="`${message.id}-${i}`">
               <div v-if="part.type === 'text'" class="markdown-body" v-html="renderMarkdown(part.content)" />
-              <details v-else-if="part.type === 'thinking'" class="thinking-block" open>
+              <details v-else-if="part.type === 'thinking'" class="thinking-block">
                 <summary class="thinking-summary">
                   <span class="thinking-label">思考过程</span>
                 </summary>
@@ -1620,6 +1620,18 @@ body {
   font-weight: 700;
   font-size: 13px;
   color: #7c3aed;
+}
+
+.thinking-summary::after {
+  content: "▸";
+  margin-left: auto;
+  font-size: 12px;
+  color: #7c3aed;
+  transition: transform 0.2s ease;
+}
+
+.thinking-block[open] .thinking-summary::after {
+  transform: rotate(90deg);
 }
 
 .thinking-block[open] .thinking-summary {
