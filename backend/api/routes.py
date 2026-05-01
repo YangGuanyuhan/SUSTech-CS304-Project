@@ -162,7 +162,8 @@ async def _stream_agent_execution(*, session_id: str, execute):
         )
         await asyncio.sleep(0)
 
-    run_task = asyncio.create_task(execute(on_tool_events, on_response_chunk, on_thinking_chunk))
+    thinking_handler = on_thinking_chunk if runtime_settings.get_llm_config().enable_reasoning else None
+    run_task = asyncio.create_task(execute(on_tool_events, on_response_chunk, thinking_handler))
     response_streamed = False
     try:
         while True:
