@@ -6,7 +6,17 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from backend.db.types import JSONText
@@ -221,3 +231,56 @@ class QuizAnswerRecord(TimestampMixin, Base):
     feedback: Mapped[str] = mapped_column(Text, default="")
     attempt: Mapped[QuizAttemptRecord] = relationship(back_populates="answers")
     quiz_question: Mapped[QuizQuestionRecord] = relationship(back_populates="answers")
+
+
+class RAGSourceRecord(Base):
+    __tablename__ = "rag_sources"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "file_path", name="uq_rag_sources_owner_file_path"),
+        Index("ix_rag_sources_owner_status", "owner_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    owner_id: Mapped[str] = mapped_column(String(64), default="local-user", index=True)
+    file_path: Mapped[str] = mapped_column(Text)
+    relative_path: Mapped[str] = mapped_column(Text)
+    extension: Mapped[str] = mapped_column(String(16), index=True)
+    file_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    modified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider: Mapped[str] = mapped_column(String(64), default="raganything")
+    doc_id: Mapped[str] = mapped_column(String(128), index=True)
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+    chunks: Mapped[list[RAGChunkRecord]] = relationship(
+        back_populates="source",
+        cascade="all, delete-orphan",
+        order_by="RAGChunkRecord.position",
+    )
+
+
+class RAGChunkRecord(Base):
+    __tablename__ = "rag_chunks"
+    __table_args__ = (
+        Index("ix_rag_chunks_source_position", "source_id", "position"),
+        Index("ix_rag_chunks_owner_created", "owner_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    owner_id: Mapped[str] = mapped_column(String(64), default="local-user", index=True)
+    source_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("rag_sources.id", ondelete="CASCADE"),
+        index=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, index=True)
+    text: Mapped[str] = mapped_column(Text)
+    page_idx: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    extra: Mapped[dict[str, Any]] = mapped_column(JSONText, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    source: Mapped[RAGSourceRecord] = relationship(back_populates="chunks")

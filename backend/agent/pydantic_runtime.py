@@ -55,6 +55,9 @@ Tool usage rules:
     interface to begin.
 11. Use calendar tools for scheduling requests, event lookup, reminders, or timetable management.
 12. Blackboard calendar events are read-only. If the user wants to modify one, first copy it into a local event.
+13. When the user asks about indexed study materials, course notes, school information, PDFs,
+    slides, documents, or the local knowledge base, prefer rag_search or rag_answer before
+    answering from general knowledge. If the knowledge base has no relevant hit, say that plainly.
 Response style:
 - Be concise and practical.
 - Respond in Markdown when useful.
@@ -334,6 +337,27 @@ class PydanticAIRuntime:
             ctx: RunContext[AgentDeps], url: str, max_chars: int = 12000
         ) -> str:
             return await _execute_tool(ctx, "fetch_webpage", {"url": url, "max_chars": max_chars})
+
+        @agent.tool(name="rag_index_folder", requires_approval=True)
+        async def rag_index_folder(
+            ctx: RunContext[AgentDeps],
+            path: str = ".",
+            recursive: bool = True,
+            extensions: list[str] | None = None,
+        ) -> str:
+            return await _execute_tool(
+                ctx,
+                "rag_index_folder",
+                {"path": path, "recursive": recursive, "extensions": extensions or []},
+            )
+
+        @agent.tool(name="rag_search")
+        async def rag_search(ctx: RunContext[AgentDeps], query: str, top_k: int = 5) -> str:
+            return await _execute_tool(ctx, "rag_search", {"query": query, "top_k": top_k})
+
+        @agent.tool(name="rag_answer")
+        async def rag_answer(ctx: RunContext[AgentDeps], query: str, top_k: int = 5) -> str:
+            return await _execute_tool(ctx, "rag_answer", {"query": query, "top_k": top_k})
 
         @agent.tool(name="create_quiz")
         async def create_quiz(

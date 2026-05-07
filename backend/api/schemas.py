@@ -78,6 +78,18 @@ class BlackboardSettingsRequest(BaseModel):
     replace_password: bool = False
 
 
+class RAGIndexFolderRequest(BaseModel):
+    path: str
+    workspace_root: str
+    recursive: bool = True
+    extensions: list[str] | None = None
+
+
+class RAGQueryRequest(BaseModel):
+    query: str
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
 class CalendarEventCreateRequest(BaseModel):
     title: str
     start_at: datetime

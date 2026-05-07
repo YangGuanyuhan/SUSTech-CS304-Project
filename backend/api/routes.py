@@ -28,6 +28,8 @@ from backend.api.schemas import (
     LLMSettingsRequest,
     MemoryDeleteByQueryRequest,
     QuizAttemptRequest,
+    RAGIndexFolderRequest,
+    RAGQueryRequest,
 )
 from backend.config import get_settings
 from backend.db.database import get_db_session
@@ -43,6 +45,7 @@ from backend.services.email_service import EmailService, UnconfirmedSendError
 from backend.services.llm_service import LLMConnectionError, LLMService
 from backend.services.memory_service import MemoryService
 from backend.services.quiz_service import QuizService
+from backend.services.rag_service import RAGProviderError, RAGService, RAGServiceError
 from backend.services.runtime_settings import (
     RuntimeBlackboardUpdate,
     RuntimeLLMUpdate,
@@ -572,6 +575,60 @@ async def sync_blackboard_calendar(
 async def get_database_overview(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
     overview = await DatabaseInsightsService(session).get_overview()
     return ApiResponse(success=True, data=overview)
+
+
+@router.post("/rag/index-folder", response_model=ApiResponse[object])
+async def index_rag_folder(
+    request: RAGIndexFolderRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    try:
+        result = await RAGService(session).index_folder(
+            request.path,
+            workspace_root=request.workspace_root,
+            recursive=request.recursive,
+            extensions=request.extensions,
+        )
+    except RAGServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RAGProviderError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=result)
+
+
+@router.get("/rag/sources", response_model=ApiResponse[object])
+async def list_rag_sources(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    return ApiResponse(success=True, data=RAGService(session).list_sources())
+
+
+@router.get("/rag/status", response_model=ApiResponse[object])
+async def get_rag_status(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    return ApiResponse(success=True, data=RAGService(session).status())
+
+
+@router.post("/rag/query", response_model=ApiResponse[object])
+async def query_rag(
+    request: RAGQueryRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    try:
+        result = await RAGService(session).query(request.query, top_k=request.top_k)
+    except RAGServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RAGProviderError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=result)
+
+
+@router.delete("/rag/sources/{source_id}", response_model=ApiResponse[dict[str, bool]])
+async def delete_rag_source(
+    source_id: str,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[dict[str, bool]]:
+    deleted = RAGService(session).delete_source(source_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="RAG source not found")
+    return ApiResponse(success=True, data={"deleted": True})
 
 
 @router.get("/memory", response_model=ApiResponse[object])

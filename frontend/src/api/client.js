@@ -388,5 +388,21 @@ export const apiClient = {
       body: data ? JSON.stringify(data) : undefined
     });
     return { data: await parseJson(response) };
+  },
+
+  async delete(endpoint, options = {}) {
+    const url = new URL(`${API_BASE}${endpoint}`);
+    if (options.params) {
+      Object.entries(options.params).forEach(([key, value]) => {
+        if (value !== null && value !== undefined) {
+          url.searchParams.append(key, value);
+        }
+      });
+    }
+    const response = await fetch(url.toString(), {
+      method: "DELETE",
+      headers: options.headers || {}
+    });
+    return { data: await parseJson(response) };
   }
 };

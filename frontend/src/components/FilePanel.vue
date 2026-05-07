@@ -29,6 +29,50 @@
       <button v-if="statusType === 'error'" class="dismiss-btn" @click="clearStatus">×</button>
     </div>
 
+    <!-- Knowledge Base -->
+    <section class="knowledge-base">
+      <div class="kb-controls">
+        <div class="kb-field">
+          <label>Knowledge folder</label>
+          <input
+            v-model="ragFolderPath"
+            type="text"
+            placeholder="Folder path inside the chat workspace"
+          />
+        </div>
+        <label class="kb-check">
+          <input v-model="ragRecursive" type="checkbox" />
+          <span>Recursive</span>
+        </label>
+        <button class="refresh-btn" :disabled="ragIndexing || !ragFolderPath.trim()" @click="indexRagFolder">
+          {{ ragIndexing ? 'Indexing...' : 'Index' }}
+        </button>
+        <button class="refresh-btn secondary" :disabled="ragLoading" @click="loadRagSources">
+          Refresh
+        </button>
+      </div>
+      <div v-if="ragStatus && !ragStatus.ready" class="kb-warning">
+        RAG is not ready: {{ (ragStatus.issues || []).join(' ') }}
+      </div>
+      <div v-else-if="ragStatus" class="kb-ready">
+        RAG ready · {{ ragStatus.provider }} {{ ragStatus.raganything_version || '' }}
+      </div>
+
+      <div v-if="ragSources.length" class="kb-source-list">
+        <article v-for="source in ragSources" :key="source.id" class="kb-source">
+          <div>
+            <strong>{{ source.relative_path }}</strong>
+            <span>{{ source.extension }} · {{ source.status }}</span>
+            <small v-if="source.error">{{ source.error }}</small>
+          </div>
+          <button class="dismiss-btn" title="Remove from knowledge base" @click="deleteRagSource(source.id)">
+            x
+          </button>
+        </article>
+      </div>
+      <p v-else class="kb-empty">No indexed knowledge sources yet.</p>
+    </section>
+
     <!-- File Tree -->
     <div class="file-container">
       <div v-if="courses.length === 0 && !loading" class="empty-state">
@@ -115,6 +159,12 @@ const loading = ref(false)
 const statusMessage = ref('')
 const statusType = ref('info')
 const downloadStats = ref(null)
+const ragFolderPath = ref('')
+const ragRecursive = ref(true)
+const ragIndexing = ref(false)
+const ragLoading = ref(false)
+const ragSources = ref([])
+const ragStatus = ref(null)
 
 const clearStatus = () => {
   statusMessage.value = ''
@@ -173,6 +223,64 @@ const refreshCourses = async () => {
     console.error('Failed to fetch courses:', error)
   } finally {
     loading.value = false
+  }
+}
+
+const loadRagSources = async () => {
+  ragLoading.value = true
+  try {
+    await loadRagStatus()
+    const response = await apiClient.get('/rag/sources')
+    ragSources.value = response.data?.data || []
+  } catch (error) {
+    setStatus(`Knowledge base load failed: ${error.message}`, 'error')
+  } finally {
+    ragLoading.value = false
+  }
+}
+
+const loadRagStatus = async () => {
+  const response = await apiClient.get('/rag/status')
+  ragStatus.value = response.data?.data || null
+}
+
+const indexRagFolder = async () => {
+  const folder = ragFolderPath.value.trim()
+  if (!folder) return
+  await loadRagStatus()
+  if (ragStatus.value && !ragStatus.value.ready) {
+    setStatus(`RAG is not ready: ${(ragStatus.value.issues || []).join(' ')}`, 'error')
+    return
+  }
+  ragIndexing.value = true
+  try {
+    setStatus('Indexing knowledge folder...', 'info')
+    const response = await apiClient.post('/rag/index-folder', {
+      path: '.',
+      workspace_root: folder,
+      recursive: ragRecursive.value
+    })
+    const summary = response.data?.data
+    ragSources.value = summary?.sources || ragSources.value
+    setStatus(
+      `Indexed ${summary?.indexed || 0}, skipped ${summary?.skipped || 0}, failed ${summary?.failed || 0}`,
+      summary?.failed ? 'error' : 'success'
+    )
+    await loadRagSources()
+  } catch (error) {
+    setStatus(`Knowledge indexing failed: ${error.message}`, 'error')
+  } finally {
+    ragIndexing.value = false
+  }
+}
+
+const deleteRagSource = async (sourceId) => {
+  try {
+    await apiClient.delete(`/rag/sources/${encodeURIComponent(sourceId)}`)
+    ragSources.value = ragSources.value.filter((source) => source.id !== sourceId)
+    setStatus('Knowledge source removed', 'success')
+  } catch (error) {
+    setStatus(`Remove failed: ${error.message}`, 'error')
   }
 }
 
@@ -299,6 +407,7 @@ const findNodeInTree = (node, targetId) => {
 
 onMounted(() => {
   refreshCourses()
+  loadRagSources()
 })
 </script>
 
@@ -391,6 +500,113 @@ onMounted(() => {
 .status-bar.success {
   background-color: var(--vscode-inputValidation-validationBackground, rgba(76, 175, 80, 0.1));
   color: var(--vscode-inputValidation-validationForeground, #4caf50);
+}
+
+.knowledge-base {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--vscode-notebook-cellBorderColor);
+  background: var(--vscode-sideBar-background);
+}
+
+.kb-controls {
+  display: flex;
+  align-items: end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.kb-field {
+  display: grid;
+  gap: 0.35rem;
+  min-width: min(100%, 360px);
+  flex: 1;
+}
+
+.kb-field label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+}
+
+.kb-field input {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 4px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+}
+
+.kb-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 34px;
+  font-size: 0.875rem;
+  color: var(--vscode-descriptionForeground);
+}
+
+.refresh-btn.secondary {
+  background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
+}
+
+.kb-source-list {
+  display: grid;
+  gap: 0.45rem;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.kb-source {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--vscode-notebook-cellBorderColor);
+  border-radius: 6px;
+  background: var(--vscode-editor-background);
+}
+
+.kb-source div {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.kb-source strong,
+.kb-source small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-source span,
+.kb-empty {
+  font-size: 0.8rem;
+  color: var(--vscode-descriptionForeground);
+}
+
+.kb-warning,
+.kb-ready {
+  padding: 0.55rem 0.7rem;
+  border-radius: 4px;
+  font-size: 0.82rem;
+}
+
+.kb-warning {
+  background: var(--vscode-inputValidation-warningBackground, rgba(245, 158, 11, 0.12));
+  color: var(--vscode-inputValidation-warningForeground, #b45309);
+}
+
+.kb-ready {
+  background: var(--vscode-inputValidation-validationBackground, rgba(76, 175, 80, 0.1));
+  color: var(--vscode-inputValidation-validationForeground, #4caf50);
+}
+
+.kb-source small {
+  color: var(--vscode-inputValidation-errorForeground, #f44336);
 }
 
 .dismiss-btn {

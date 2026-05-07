@@ -282,9 +282,14 @@ class StudentProductivityAgent:
             if deferred_results is None:
                 deferred_results = result
             else:
-                # Merge additional tool results
-                if hasattr(deferred_results, "tool_results") and hasattr(result, "tool_results"):
-                    deferred_results.tool_results.extend(result.tool_results)
+                # DeferredToolResults stores approvals/calls as dictionaries keyed by
+                # tool_call_id. PydanticAI requires a result for every deferred call.
+                if hasattr(deferred_results, "approvals") and hasattr(result, "approvals"):
+                    deferred_results.approvals.update(result.approvals)
+                if hasattr(deferred_results, "calls") and hasattr(result, "calls"):
+                    deferred_results.calls.update(result.calls)
+                if hasattr(deferred_results, "metadata") and hasattr(result, "metadata"):
+                    deferred_results.metadata.update(result.metadata)
 
         if pending.deferred_metadata and deferred_results:
             deferred_results.metadata.update(pending.deferred_metadata)
