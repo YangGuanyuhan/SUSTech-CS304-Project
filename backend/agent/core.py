@@ -127,6 +127,7 @@ class StudentProductivityAgent:
         prior_tools_used: list[str] | None = None,
         on_tool_events: Callable[[list[ToolTrace]], Awaitable[None] | None] | None = None,
         on_response_chunk: Callable[[str], Awaitable[None] | None] | None = None,
+        on_thinking_chunk: Callable[[str], Awaitable[None] | None] | None = None,
     ) -> AgentTurnResult:
         llm_logger.log_event(
             session_id,
@@ -152,6 +153,7 @@ class StudentProductivityAgent:
             deferred_tool_results=deferred_tool_results,
             on_tool_events=runtime_tool_events_callback if on_tool_events else None,
             on_response_chunk=on_response_chunk,
+            on_thinking_chunk=on_thinking_chunk,
         )
         output = self.runtime.extract_text_or_requests(run_result)
         tool_events = prior_events_snapshot + deps.tool_events
@@ -221,6 +223,7 @@ class StudentProductivityAgent:
         workspace_root: str | None = None,
         on_tool_events: Callable[[list[ToolTrace]], Awaitable[None] | None] | None = None,
         on_response_chunk: Callable[[str], Awaitable[None] | None] | None = None,
+        on_thinking_chunk: Callable[[str], Awaitable[None] | None] | None = None,
     ) -> dict[str, object]:
         """Generate a response and record task history."""
 
@@ -232,6 +235,7 @@ class StudentProductivityAgent:
                 history=await self._build_history(session_id),
                 on_tool_events=on_tool_events,
                 on_response_chunk=on_response_chunk,
+                on_thinking_chunk=on_thinking_chunk,
             )
         except Exception as exc:
             llm_config = runtime_settings.get_llm_config()
@@ -260,6 +264,7 @@ class StudentProductivityAgent:
         approved: bool,
         on_tool_events: Callable[[list[ToolTrace]], Awaitable[None] | None] | None = None,
         on_response_chunk: Callable[[str], Awaitable[None] | None] | None = None,
+        on_thinking_chunk: Callable[[str], Awaitable[None] | None] | None = None,
     ) -> dict[str, object]:
         pending = approval_service.pop(approval_id)
         if pending is None:
@@ -277,9 +282,7 @@ class StudentProductivityAgent:
             if deferred_results is None:
                 deferred_results = result
             else:
-                # Merge additional tool results
-                if hasattr(deferred_results, "tool_results") and hasattr(result, "tool_results"):
-                    deferred_results.tool_results.extend(result.tool_results)
+                deferred_results.approvals.update(result.approvals)
 
         if pending.deferred_metadata and deferred_results:
             deferred_results.metadata.update(pending.deferred_metadata)
@@ -333,6 +336,7 @@ class StudentProductivityAgent:
                 prior_tools_used=pending.tools_used,
                 on_tool_events=on_tool_events,
                 on_response_chunk=on_response_chunk,
+                on_thinking_chunk=on_thinking_chunk,
             )
         except Exception as exc:
             result = AgentTurnResult(

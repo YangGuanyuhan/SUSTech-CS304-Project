@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     llm_api_key: str = "replace-me"
     llm_base_url: str | None = None
+    llm_enable_reasoning: bool = True
 
     blackboard_student_id: str | None = None
     blackboard_cas_password: str | None = None

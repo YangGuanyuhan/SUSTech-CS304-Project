@@ -50,6 +50,7 @@ class SettingsService:
                 "provider": profile.provider,
                 "model": profile.model,
                 "base_url": profile.base_url,
+                "enable_reasoning": getattr(profile, "enable_reasoning", False),
             },
             ensure_ascii=False,
         )
@@ -86,6 +87,7 @@ class SettingsService:
                 base_url=profile.base_url,
                 api_key=api_key,
                 replace_api_key=api_key is not None,
+                enable_reasoning=profile.enable_reasoning,
             )
         )
         profile.provider = config.provider
