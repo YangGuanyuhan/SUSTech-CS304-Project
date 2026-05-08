@@ -1201,7 +1201,7 @@ class AgentToolService:
                 ensure_ascii=False,
             )
 
-        count = int(arguments.get("count", 1))
+        count = min(int(arguments.get("count", 5)), 20)
 
         def _decode_header(value: str) -> str:
             parts = decode_header(value)

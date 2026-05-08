@@ -616,7 +616,7 @@ class PydanticAIRuntime:
             return await _execute_tool(ctx, "email_test_connection", {})
 
         @agent.tool(name="email_read_latest")
-        async def email_read_latest(ctx: RunContext[AgentDeps], count: int = 1) -> str:
+        async def email_read_latest(ctx: RunContext[AgentDeps], count: int = 5) -> str:
             return await _execute_tool(ctx, "email_read_latest", {"count": count})
 
         @agent.tool(name="email_send", requires_approval=True)

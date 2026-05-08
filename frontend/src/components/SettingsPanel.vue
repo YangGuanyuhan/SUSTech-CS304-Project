@@ -364,7 +364,7 @@
               </label>
               <label class="full">
                 <span>用户名 (邮箱地址)</span>
-                <input v-model="emailForm.smtp_user" placeholder="12311033@mail.sustech.edu.cn" autocomplete="off" />
+                <input v-model="emailForm.smtp_user" placeholder="12345678@mail.sustech.edu.cn" autocomplete="off" />
               </label>
               <label class="full">
                 <span>密码 / 授权码</span>
