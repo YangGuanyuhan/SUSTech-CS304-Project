@@ -23,6 +23,8 @@ from backend.api.schemas import (
     ChatRequest,
     EmailConfirmRequest,
     EmailDraftRequest,
+    EmailProfileRequest,
+    EmailSettingsRequest,
     LLMConnectionTestRequest,
     LLMProfileRequest,
     LLMSettingsRequest,
@@ -37,7 +39,7 @@ from backend.db.database import get_db_session
 from backend.models.calendar import CalendarEventCreate, CalendarEventMove, CalendarEventUpdate
 from backend.models.common import ApiResponse
 from backend.models.rag import RAGDirectorySettings
-from backend.models.settings import BlackboardProfile, LLMProfile
+from backend.models.settings import BlackboardProfile, EmailProfile, LLMProfile
 from backend.services.approval_service import approval_service
 from backend.services.blackboard_file_service import BBContent, BBFileManager
 from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
@@ -51,6 +53,7 @@ from backend.services.quiz_service import QuizService
 from backend.services.rag_service import RAGProviderError, RAGService, RAGServiceError
 from backend.services.runtime_settings import (
     RuntimeBlackboardUpdate,
+    RuntimeEmailUpdate,
     RuntimeLLMUpdate,
     runtime_settings,
 )
@@ -400,6 +403,118 @@ async def test_blackboard_settings(request: BlackboardSettingsRequest) -> ApiRes
         )
     except Exception as e:
         return ApiResponse(success=False, data={"error": str(e)})
+
+
+# Email Profile Settings
+@router.get("/settings/email/profiles", response_model=ApiResponse[object])
+async def list_email_profiles(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    profiles = await SettingsService(session).list_email_profiles()
+    return ApiResponse(success=True, data=profiles)
+
+
+@router.put("/settings/email/profiles", response_model=ApiResponse[object])
+async def save_email_profile(
+    request: EmailProfileRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    profile = await SettingsService(session).save_email_profile(
+        EmailProfile(
+            name=request.name,
+            smtp_host=request.smtp_host,
+            smtp_port=request.smtp_port,
+            smtp_user=request.smtp_user,
+            smtp_encryption=request.smtp_encryption,
+            imap_host=request.imap_host,
+            imap_port=request.imap_port,
+        ),
+        password=request.password,
+    )
+    return ApiResponse(success=True, data=profile)
+
+
+@router.delete("/settings/email/profiles/{name}", response_model=ApiResponse[dict[str, bool]])
+async def delete_email_profile(
+    name: str, session: Session = Depends(get_db_session)
+) -> ApiResponse[dict[str, bool]]:
+    deleted = await SettingsService(session).delete_email_profile(name)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return ApiResponse(success=True, data={"deleted": True})
+
+
+@router.post("/settings/email/profiles/{name}/apply", response_model=ApiResponse[object])
+async def apply_email_profile(
+    name: str, session: Session = Depends(get_db_session)
+) -> ApiResponse[object]:
+    profile = await SettingsService(session).apply_email_profile(name)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return ApiResponse(success=True, data=profile)
+
+
+# Email Settings
+@router.get("/settings/email", response_model=ApiResponse[object])
+async def get_email_settings() -> ApiResponse[object]:
+    return ApiResponse(success=True, data=runtime_settings.get_email_config())
+
+
+@router.put("/settings/email", response_model=ApiResponse[object])
+async def update_email_settings(request: EmailSettingsRequest) -> ApiResponse[object]:
+    config = runtime_settings.update_email_config(
+        RuntimeEmailUpdate.model_validate(request.model_dump())
+    )
+    return ApiResponse(success=True, data=config)
+
+
+@router.post("/settings/email/test", response_model=ApiResponse[object])
+async def test_email_settings(request: EmailSettingsRequest) -> ApiResponse[object]:
+    """Test email SMTP connection with provided credentials."""
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.utils import formatdate
+
+    # Use request values, falling back to runtime config
+    email_config = runtime_settings.get_email_config()
+    smtp_host = request.smtp_host or email_config.smtp_host
+    smtp_port = request.smtp_port or email_config.smtp_port
+    smtp_user = request.smtp_user or email_config.smtp_user
+    smtp_encryption = request.smtp_encryption or email_config.smtp_encryption
+
+    if request.replace_password and request.password:
+        password = request.password
+    elif request.password:
+        password = request.password
+    else:
+        password = runtime_settings.get_secret_email_password()
+
+    if not smtp_user or not password:
+        return ApiResponse(
+            success=False,
+            data={"error": "Missing credentials - username or password not configured"},
+        )
+
+    msg = MIMEText("This is a test email from Student Productivity Agent.", "plain", "utf-8")
+    msg["From"] = smtp_user
+    msg["To"] = smtp_user
+    msg["Subject"] = "[Agent Test] Email Configuration Check"
+    msg["Date"] = formatdate(localtime=True)
+
+    try:
+        if smtp_encryption == "ssl":
+            server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=15)
+        else:
+            server = smtplib.SMTP(smtp_host, smtp_port, timeout=15)
+            if smtp_encryption == "tls":
+                server.starttls()
+        server.login(smtp_user, password)
+        server.sendmail(smtp_user, [smtp_user], msg.as_string())
+        server.quit()
+        return ApiResponse(
+            success=True,
+            data={"message": "SMTP connection and authentication successful"},
+        )
+    except Exception as e:
+        return ApiResponse(success=False, data={"error": f"Email test failed: {e}"})
 
 
 @router.post("/chat")

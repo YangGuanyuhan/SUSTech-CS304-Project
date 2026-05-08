@@ -457,6 +457,17 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "email_test_connection",
+                "description": "Test whether the configured email SMTP server is reachable and credentials are valid.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
     ]
 
 
@@ -561,6 +572,8 @@ class AgentToolService:
             return await self._blackboard_test_api_available()
         if tool_name == "blackboard_get_calendar_items":
             return await self._blackboard_get_calendar_items()
+        if tool_name == "email_test_connection":
+            return await self._email_test_connection()
         raise ToolExecutionError(f"Unknown tool `{tool_name}`.")
 
     async def _memory_search(self, arguments: dict[str, Any]) -> str:
@@ -1102,6 +1115,48 @@ class AgentToolService:
         )
         items = await provider.get_calendar_items()
         return json.dumps({"items": items}, ensure_ascii=False)
+
+    async def _email_test_connection(self) -> str:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.utils import formatdate
+
+        from backend.services.runtime_settings import runtime_settings
+
+        config = runtime_settings.get_email_config()
+        password = runtime_settings.get_secret_email_password()
+
+        if not config.smtp_user or not password:
+            return json.dumps(
+                {"ok": False, "error": "Email not configured. Please set SMTP credentials in Settings > Email."},
+                ensure_ascii=False,
+            )
+
+        msg = MIMEText("This is a test email from Student Productivity Agent.", "plain", "utf-8")
+        msg["From"] = config.smtp_user
+        msg["To"] = config.smtp_user
+        msg["Subject"] = "[Agent Test] Email Configuration Check"
+        msg["Date"] = formatdate(localtime=True)
+
+        try:
+            if config.smtp_encryption == "ssl":
+                server = smtplib.SMTP_SSL(config.smtp_host, config.smtp_port, timeout=15)
+            else:
+                server = smtplib.SMTP(config.smtp_host, config.smtp_port, timeout=15)
+                if config.smtp_encryption == "tls":
+                    server.starttls()
+            server.login(config.smtp_user, password)
+            server.sendmail(config.smtp_user, [config.smtp_user], msg.as_string())
+            server.quit()
+            return json.dumps(
+                {"ok": True, "message": "SMTP connection and authentication successful"},
+                ensure_ascii=False,
+            )
+        except Exception as e:
+            return json.dumps(
+                {"ok": False, "error": f"Email test failed: {e}"},
+                ensure_ascii=False,
+            )
 
     def _workspace_root(self, workspace_root: str | None) -> Path:
         root = Path(workspace_root or "").expanduser()

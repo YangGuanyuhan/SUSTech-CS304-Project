@@ -22,11 +22,13 @@ class Settings(BaseSettings):
     blackboard_base_url: str = "https://bb.sustech.edu.cn/learn/api/public/v1"
     blackboard_token: str = "replace-me"
 
-    smtp_host: str = "smtp.example.com"
-    smtp_port: int = 587
+    smtp_host: str = "smtp.exmail.qq.com"
+    smtp_port: int = 465
     smtp_user: str = "student@example.com"
     smtp_password: str = "replace-me"
-    imap_host: str = "imap.example.com"
+    smtp_encryption: str = "ssl"
+    imap_host: str = "imap.exmail.qq.com"
+    imap_port: int = 993
 
     search_provider: str = "mock"
     brave_api_key: str | None = None

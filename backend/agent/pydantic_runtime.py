@@ -611,6 +611,10 @@ class PydanticAIRuntime:
         async def blackboard_get_calendar_items(ctx: RunContext[AgentDeps]) -> str:
             return await _execute_tool(ctx, "blackboard_get_calendar_items", {})
 
+        @agent.tool(name="email_test_connection")
+        async def email_test_connection(ctx: RunContext[AgentDeps]) -> str:
+            return await _execute_tool(ctx, "email_test_connection", {})
+
         return agent
 
     def _history_to_model_messages(self, history: list[dict[str, str]]):

@@ -266,6 +266,141 @@
           </section>
         </template>
 
+        <template v-else-if="activeSection === 'email'">
+          <section class="content-panel hero-panel email-hero">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Email</p>
+                <h3>SMTP 邮件服务配置</h3>
+              </div>
+              <span class="badge" :class="{ ready: emailState.password_configured }">
+                {{ emailState.password_configured ? "已配置密码" : "未配置密码" }}
+              </span>
+            </div>
+            <p class="hint">
+              配置 SMTP 服务器信息，用于邮件通知和测试连接。密码只存在后端运行时内存。
+            </p>
+
+            <div class="status-grid">
+              <article class="status-card">
+                <span>SMTP 服务器</span>
+                <strong>{{ emailState.smtp_host || "未设置" }}</strong>
+              </article>
+              <article class="status-card">
+                <span>端口</span>
+                <strong>{{ emailState.smtp_port }}</strong>
+              </article>
+              <article class="status-card">
+                <span>用户名</span>
+                <strong>{{ emailState.smtp_user || "未设置" }}</strong>
+              </article>
+              <article class="status-card">
+                <span>加密方式</span>
+                <strong>{{ emailState.smtp_encryption?.toUpperCase() || "未设置" }}</strong>
+              </article>
+              <article class="status-card">
+                <span>IMAP 服务器</span>
+                <strong>{{ emailState.imap_host || "未设置" }}</strong>
+              </article>
+              <article class="status-card">
+                <span>密码状态</span>
+                <strong>{{ emailState.password_configured ? "已存在" : "待输入" }}</strong>
+              </article>
+            </div>
+          </section>
+
+          <section class="content-panel">
+            <div class="section-top">
+              <div>
+                <strong>已保存的 Email 配置</strong>
+                <p class="hint compact">保存 SMTP/IMAP 服务器和账户信息，密码会加密存储，方便切换不同邮箱。</p>
+              </div>
+              <button type="button" :disabled="saving" @click="openEmailEditorForCreate">新建配置</button>
+            </div>
+
+            <div v-if="emailProfiles.length" class="profile-list">
+              <article v-for="profile in emailProfiles" :key="profile.name" class="profile-item">
+                <div class="profile-info">
+                  <strong>{{ profile.name }}</strong>
+                  <p>{{ profile.smtp_user }} / {{ profile.smtp_host }}:{{ profile.smtp_port }}</p>
+                  <small>{{ profile.smtp_encryption?.toUpperCase() }} | IMAP: {{ profile.imap_host }}:{{ profile.imap_port }}</small>
+                </div>
+                <div class="profile-actions">
+                  <button type="button" class="apply-btn" :disabled="saving" @click="useEmailProfile(profile)">应用</button>
+                  <button type="button" class="secondary action-btn" :disabled="saving" @click="openEmailEditorForEdit(profile)">编辑</button>
+                  <button type="button" class="delete-btn" :disabled="saving" @click="removeEmailProfile(profile.name)">删除</button>
+                </div>
+              </article>
+            </div>
+            <p v-else class="hint compact">暂无保存的配置。</p>
+
+            <div class="actions inline-actions panel-actions">
+              <button type="button" class="secondary" :disabled="saving" @click="refreshEmail">刷新运行时</button>
+              <button type="button" class="secondary" :disabled="saving" @click="testEmail">测试连接</button>
+            </div>
+          </section>
+
+          <section v-if="emailEditorOpen" class="content-panel editor-panel">
+            <div class="section-top">
+              <div>
+                <strong>{{ emailEditorMode === "create" ? "新增 Email 配置" : "编辑 Email 配置" }}</strong>
+                <p class="hint compact">填写后可保存为配置，也可直接应用到当前运行时。</p>
+              </div>
+              <button type="button" class="secondary" :disabled="saving" @click="closeEmailEditor">收起</button>
+            </div>
+
+            <form class="config-form" @submit.prevent="saveEmail">
+              <label class="full">
+                <span>配置名称</span>
+                <input v-model="emailForm.profile_name" placeholder="例如: sustech-mail" autocomplete="off" />
+              </label>
+              <label>
+                <span>SMTP 服务器地址</span>
+                <input v-model="emailForm.smtp_host" placeholder="smtp.exmail.qq.com" autocomplete="off" />
+              </label>
+              <label>
+                <span>SMTP 端口</span>
+                <input v-model.number="emailForm.smtp_port" type="number" placeholder="465" />
+              </label>
+              <label class="full">
+                <span>用户名 (邮箱地址)</span>
+                <input v-model="emailForm.smtp_user" placeholder="12311033@mail.sustech.edu.cn" autocomplete="off" />
+              </label>
+              <label class="full">
+                <span>密码 / 授权码</span>
+                <input
+                  v-model="emailForm.password"
+                  type="password"
+                  placeholder="留空以保持当前密码"
+                  autocomplete="new-password"
+                />
+              </label>
+              <label>
+                <span>加密方式</span>
+                <select v-model="emailForm.smtp_encryption">
+                  <option value="ssl">SSL</option>
+                  <option value="tls">TLS (STARTTLS)</option>
+                  <option value="none">无加密</option>
+                </select>
+              </label>
+              <label>
+                <span>IMAP 服务器地址</span>
+                <input v-model="emailForm.imap_host" placeholder="imap.exmail.qq.com" autocomplete="off" />
+              </label>
+              <label>
+                <span>IMAP 端口</span>
+                <input v-model.number="emailForm.imap_port" type="number" placeholder="993" />
+              </label>
+              <div class="actions full">
+                <button type="button" class="secondary" :disabled="saving" @click="saveEmailProfileToDb">
+                  {{ saving ? "保存中..." : "保存到列表" }}
+                </button>
+                <button type="submit" :disabled="saving">{{ saving ? "保存中..." : "应用到运行时" }}</button>
+              </div>
+            </form>
+          </section>
+        </template>
+
         <template v-else-if="activeSection === 'backend'">
           <section class="content-panel hero-panel backend-hero">
             <div class="panel-heading">
@@ -367,16 +502,23 @@ import {
   applyLLMProfile,
   deleteBBProfile,
   deleteLLMProfile,
+  applyEmailProfile,
+  deleteEmailProfile,
   getBBProfiles,
   getBlackboardSettings,
+  getEmailProfiles,
+  getEmailSettings,
   getHealth,
   getLLMProfiles,
   getLLMSettings,
   saveBBProfile as saveBBProfileAPI,
+  saveEmailProfile,
   saveLLMProfile,
   testBlackboardSettings,
+  testEmailSettings,
   testLLMSettings,
   updateBlackboardSettings,
+  updateEmailSettings,
   updateLLMSettings
 } from "../api/client";
 
@@ -400,6 +542,7 @@ let messageTimer = null;
 const sections = [
   { id: "llm", label: "LLM 后端", description: "模型、网关与密钥", icon: "AI" },
   { id: "bb", label: "Blackboard", description: "课程系统登录", icon: "BB" },
+  { id: "email", label: "Email 邮箱", description: "SMTP 邮件服务", icon: "@@" },
   { id: "backend", label: "后端服务", description: "状态与联通性", icon: "BE" },
   { id: "dev", label: "开发者工具", description: "数据库与调试入口", icon: "DV" }
 ];
@@ -439,6 +582,32 @@ const bbForm = reactive({
   base_url: "",
   replace_password: false
 });
+
+const emailState = reactive({
+  smtp_host: "smtp.exmail.qq.com",
+  smtp_port: 465,
+  smtp_user: "",
+  smtp_encryption: "ssl",
+  imap_host: "imap.exmail.qq.com",
+  imap_port: 993,
+  password_configured: false
+});
+
+const emailForm = reactive({
+  profile_name: "",
+  smtp_host: "smtp.exmail.qq.com",
+  smtp_port: 465,
+  smtp_user: "",
+  smtp_encryption: "ssl",
+  imap_host: "imap.exmail.qq.com",
+  imap_port: 993,
+  password: "",
+  replace_password: false
+});
+
+const emailEditorOpen = ref(false);
+const emailEditorMode = ref("create");
+const emailProfiles = ref([]);
 
 function clearMessage() {
   message.value = "";
@@ -741,6 +910,188 @@ async function removeBBProfile(name) {
   }
 }
 
+async function applyEmailState(payload) {
+  emailState.smtp_host = payload.smtp_host ?? "smtp.exmail.qq.com";
+  emailState.smtp_port = payload.smtp_port ?? 465;
+  emailState.smtp_user = payload.smtp_user ?? "";
+  emailState.smtp_encryption = payload.smtp_encryption ?? "ssl";
+  emailState.imap_host = payload.imap_host ?? "imap.exmail.qq.com";
+  emailState.imap_port = payload.imap_port ?? 993;
+  emailState.password_configured = Boolean(payload.password_configured);
+  emailForm.smtp_host = payload.smtp_host ?? "smtp.exmail.qq.com";
+  emailForm.smtp_port = payload.smtp_port ?? 465;
+  emailForm.smtp_user = payload.smtp_user ?? "";
+  emailForm.smtp_encryption = payload.smtp_encryption ?? "ssl";
+  emailForm.imap_host = payload.imap_host ?? "imap.exmail.qq.com";
+  emailForm.imap_port = payload.imap_port ?? 993;
+  emailForm.password = "";
+  emailForm.replace_password = false;
+}
+
+function closeEmailEditor() {
+  emailEditorOpen.value = false;
+}
+
+function openEmailEditorForCreate() {
+  emailEditorMode.value = "create";
+  emailEditorOpen.value = true;
+  emailForm.profile_name = "";
+  emailForm.smtp_host = "smtp.exmail.qq.com";
+  emailForm.smtp_port = 465;
+  emailForm.smtp_user = "";
+  emailForm.smtp_encryption = "ssl";
+  emailForm.imap_host = "imap.exmail.qq.com";
+  emailForm.imap_port = 993;
+  emailForm.password = "";
+  emailForm.replace_password = false;
+}
+
+function openEmailEditorForEdit(profile) {
+  emailEditorMode.value = "edit";
+  emailEditorOpen.value = true;
+  emailForm.profile_name = profile.name;
+  emailForm.smtp_host = profile.smtp_host;
+  emailForm.smtp_port = profile.smtp_port;
+  emailForm.smtp_user = profile.smtp_user;
+  emailForm.smtp_encryption = profile.smtp_encryption;
+  emailForm.imap_host = profile.imap_host;
+  emailForm.imap_port = profile.imap_port;
+  emailForm.password = "";
+  emailForm.replace_password = false;
+}
+
+async function refreshEmail() {
+  saving.value = true;
+  try {
+    const response = await getEmailSettings();
+    applyEmailState(response.data);
+    showMessage("Email 配置已加载。");
+  } catch (error) {
+    showMessage(`加载 Email 配置失败: ${error.message}`, "error");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function refreshEmailProfiles() {
+  const response = await getEmailProfiles();
+  emailProfiles.value = response.data ?? [];
+}
+
+async function saveEmail() {
+  saving.value = true;
+  try {
+    const response = await updateEmailSettings({
+      smtp_host: emailForm.smtp_host,
+      smtp_port: emailForm.smtp_port,
+      smtp_user: emailForm.smtp_user,
+      smtp_encryption: emailForm.smtp_encryption,
+      imap_host: emailForm.imap_host,
+      imap_port: emailForm.imap_port,
+      password: emailForm.password || null,
+      replace_password: emailForm.replace_password
+    });
+    applyEmailState(response.data);
+    closeEmailEditor();
+    showMessage("Email 配置已保存。密码仅存储在服务器内存中。");
+  } catch (error) {
+    showMessage(`保存失败: ${error.message}`, "error");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function testEmail() {
+  saving.value = true;
+  try {
+    const response = await testEmailSettings({
+      smtp_host: emailForm.smtp_host,
+      smtp_port: emailForm.smtp_port,
+      smtp_user: emailForm.smtp_user,
+      smtp_encryption: emailForm.smtp_encryption,
+      imap_host: emailForm.imap_host,
+      imap_port: emailForm.imap_port,
+      password: emailForm.password || null,
+      replace_password: emailForm.replace_password
+    });
+    if (response.success) {
+      showMessage("Email SMTP 连接测试成功。");
+    } else {
+      showMessage(`连接测试失败: ${response.data?.error || "未知错误"}`, "error");
+    }
+  } catch (error) {
+    showMessage(`测试失败: ${error.message}`, "error");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function saveEmailProfileToDb() {
+  if (!emailForm.profile_name.trim()) {
+    showMessage("请输入配置名称后再保存。", "error");
+    return;
+  }
+
+  saving.value = true;
+  try {
+    await saveEmailProfile({
+      name: emailForm.profile_name.trim(),
+      smtp_host: emailForm.smtp_host,
+      smtp_port: emailForm.smtp_port,
+      smtp_user: emailForm.smtp_user,
+      smtp_encryption: emailForm.smtp_encryption,
+      imap_host: emailForm.imap_host,
+      imap_port: emailForm.imap_port,
+      password: emailForm.password || null
+    });
+    await refreshEmailProfiles();
+    closeEmailEditor();
+    showMessage(`Email 配置 "${emailForm.profile_name.trim()}" 已保存。${emailForm.password ? "密码已加密保存。" : "密码未更改。"}`);
+  } catch (error) {
+    showMessage(`保存配置失败: ${error.message}`, "error");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function useEmailProfile(profile) {
+  saving.value = true;
+  try {
+    emailForm.profile_name = profile.name;
+    emailForm.smtp_host = profile.smtp_host;
+    emailForm.smtp_port = profile.smtp_port;
+    emailForm.smtp_user = profile.smtp_user;
+    emailForm.smtp_encryption = profile.smtp_encryption;
+    emailForm.imap_host = profile.imap_host;
+    emailForm.imap_port = profile.imap_port;
+    emailForm.password = "";
+    const response = await applyEmailProfile(profile.name);
+    applyEmailState(response.data);
+    closeEmailEditor();
+    showMessage(`配置 "${profile.name}" 已应用到运行时。`);
+  } catch (error) {
+    showMessage(`应用失败: ${error.message}`, "error");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function removeEmailProfile(name) {
+  saving.value = true;
+  try {
+    await deleteEmailProfile(name);
+    await refreshEmailProfiles();
+    showMessage(`配置 "${name}" 已删除。`);
+    if (emailForm.profile_name === name) {
+      emailForm.profile_name = "";
+    }
+  } catch (error) {
+    showMessage(`删除失败: ${error.message}`, "error");
+  } finally {
+    saving.value = false;
+  }
+}
+
 async function save() {
   saving.value = true;
   try {
@@ -783,18 +1134,22 @@ async function testConnection() {
 async function refreshAll() {
   saving.value = true;
   try {
-    const [llmResponse, bbResponse, llmProfilesResponse, bbProfilesResponse, healthResponse] = await Promise.all([
+    const [llmResponse, bbResponse, emailResponse, llmProfilesResponse, bbProfilesResponse, emailProfilesResponse, healthResponse] = await Promise.all([
       getLLMSettings(),
       getBlackboardSettings(),
+      getEmailSettings(),
       getLLMProfiles(),
       getBBProfiles(),
+      getEmailProfiles(),
       getHealth()
     ]);
 
     applyState(llmResponse.data);
     applyBBState(bbResponse.data);
+    applyEmailState(emailResponse.data);
     profiles.value = llmProfilesResponse.data ?? [];
     bbProfiles.value = bbProfilesResponse.data ?? [];
+    emailProfiles.value = emailProfilesResponse.data ?? [];
     backendStatus.healthy = true;
     backendStatus.message = healthResponse.status || "服务响应正常";
     showMessage("所有配置与后端状态已刷新。");
@@ -812,7 +1167,7 @@ watch(activeSection, () => {
 });
 
 onMounted(async () => {
-  await Promise.all([refresh(), refreshBlackboard(), refreshBBProfiles(), checkBackendHealth()]);
+  await Promise.all([refresh(), refreshBlackboard(), refreshBBProfiles(), refreshEmail(), refreshEmailProfiles(), checkBackendHealth()]);
 });
 
 onBeforeUnmount(() => {
