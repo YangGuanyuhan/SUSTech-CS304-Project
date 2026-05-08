@@ -30,6 +30,8 @@ from sqlalchemy.orm import Session
 
 from backend.models.tooling import ToolTrace
 from backend.services.agent_tool_service import AgentToolService
+from backend.services.chat_file_service import ChatFileService
+from backend.services.rag_service import RAGServiceError
 from backend.services.runtime_settings import runtime_settings
 from backend.services.tool_learning_service import ToolLearningService, get_static_examples
 
@@ -60,7 +62,13 @@ Tool usage rules:
 13. When the user asks about indexed study materials, course notes, school information, PDFs,
     slides, documents, or the local knowledge base, prefer rag_search or rag_answer before
     answering from general knowledge. If the knowledge base has no relevant hit, say that plainly.
-14. RAG indexing is limited to directories configured in the Knowledge Base page. Use
+14. Uploaded files in the current chat are NOT local workspace files. When the user says
+    "uploaded file", "my PDF", "this PPT", "attached document", "课件", "上传的资料",
+    or similar, you must use rag_answer for analysis/summary/QA or rag_search for snippets.
+    Do not call list_local_files, read_local_file, run_local_command, or rag_index_folder for
+    current chat uploads unless the user explicitly asks about the local workspace.
+    The RAG tools search current chat uploads before the broader knowledge base.
+15. RAG indexing is limited to directories configured in the Knowledge Base page. Use
     rag_index_folder with a relative path under the default RAG directory whenever possible.
     Do not ask to index arbitrary computer paths outside the configured RAG roots.
 
@@ -69,6 +77,46 @@ Response style:
 - Respond in Markdown when useful.
 - Do not invent file contents, command output, or webpage content.
 """.strip()
+
+
+def build_chat_uploads_prompt(session: Session, session_id: str) -> str:
+    """Describe current-chat uploads so the model treats them as direct context."""
+
+    try:
+        files = ChatFileService(session).list_files(session_id)
+    except RAGServiceError as exc:
+        return f"Current chat upload context could not be loaded: {exc}"
+    except Exception:
+        return ""
+
+    if not files:
+        return (
+            "Current chat has no uploaded PDF/PPTX/DOCX files indexed. If the user asks "
+            "about an uploaded file, call rag_search or rag_answer to confirm before saying "
+            "there is no uploaded content. Do not inspect local workspace files for that request."
+        )
+
+    indexed = [item for item in files if item.status == "indexed"]
+    processing = [item for item in files if item.status == "processing"]
+    failed = [item for item in files if item.status == "failed"]
+    lines = [
+        "Current chat uploaded-file context:",
+        "Use rag_answer for summaries, analysis, and questions about these uploads; use rag_search only when raw snippets are needed.",
+        "Do not use local file tools for these uploaded files.",
+    ]
+    if indexed:
+        names = ", ".join(item.relative_path or item.file_path for item in indexed[:8])
+        lines.append(f"Indexed uploads available now ({len(indexed)}): {names}.")
+    if processing:
+        names = ", ".join(item.relative_path or item.file_path for item in processing[:5])
+        lines.append(f"Uploads still processing ({len(processing)}): {names}.")
+    if failed:
+        names = ", ".join(
+            f"{item.relative_path or item.file_path} ({item.error or 'failed'})"
+            for item in failed[:5]
+        )
+        lines.append(f"Uploads that failed indexing ({len(failed)}): {names}.")
+    return "\n".join(lines)
 
 
 async def build_tool_examples_prompt(session: Session, user_query: str) -> str:
@@ -94,9 +142,32 @@ async def build_tool_examples_prompt(session: Session, user_query: str) -> str:
         relevant_tools.append("memory_save")
     if any(word in query_lower for word in ["schedule", "calendar", "event", "meeting"]):
         relevant_tools.append("calendar_list_events")
+    upload_terms = [
+        "uploaded",
+        "attached",
+        "pdf",
+        "ppt",
+        "pptx",
+        "docx",
+        "document",
+        "slide",
+        "slides",
+        "上传",
+        "附件",
+        "课件",
+        "资料",
+        "文档",
+        "分析",
+        "总结",
+    ]
     if any(word in query_lower for word in ["course", "material", "notes", "lecture"]):
         relevant_tools.append("rag_search")
-    if any(word in query_lower for word in ["file", "code", "read", "show"]):
+    if any(word in query_lower for word in upload_terms):
+        relevant_tools.append("rag_search")
+        relevant_tools.append("rag_answer")
+    if any(word in query_lower for word in ["file", "code", "read", "show"]) and not any(
+        word in query_lower for word in upload_terms
+    ):
         relevant_tools.append("read_local_file")
     if any(word in query_lower for word in ["class", "courses"]):
         relevant_tools.append("blackboard_get_all_courses")
@@ -201,6 +272,10 @@ class PydanticAIRuntime:
                 "No workspace root is configured yet. "
                 "Do not use local file or command tools until the user sets one."
             )
+
+        @agent.system_prompt(dynamic=True)
+        def chat_upload_instruction(ctx: RunContext[AgentDeps]) -> str:
+            return build_chat_uploads_prompt(ctx.deps.session, ctx.deps.session_id)
 
         async def _notify_tool_events(ctx: RunContext[AgentDeps]) -> None:
             callback = ctx.deps.on_tool_events
@@ -402,6 +477,8 @@ class PydanticAIRuntime:
             recursive: bool = False,
             max_entries: int = 50,
         ) -> str:
+            """List files in the approved local workspace, not current-chat uploaded files."""
+
             return await _execute_tool(
                 ctx,
                 "list_local_files",
@@ -412,6 +489,8 @@ class PydanticAIRuntime:
         async def read_local_file(
             ctx: RunContext[AgentDeps], path: str, max_chars: int = 12000
         ) -> str:
+            """Read a UTF-8 text file from the approved local workspace, not uploaded PDFs/PPTs."""
+
             return await _execute_tool(
                 ctx, "read_local_file", {"path": path, "max_chars": max_chars}
             )
@@ -462,10 +541,14 @@ class PydanticAIRuntime:
 
         @agent.tool(name="rag_search")
         async def rag_search(ctx: RunContext[AgentDeps], query: str, top_k: int = 5) -> str:
+            """Search current-chat uploaded PDF/PPTX/DOCX content first, then global RAG."""
+
             return await _execute_tool(ctx, "rag_search", {"query": query, "top_k": top_k})
 
         @agent.tool(name="rag_answer")
         async def rag_answer(ctx: RunContext[AgentDeps], query: str, top_k: int = 5) -> str:
+            """Answer using current-chat uploaded files first; best for uploaded PDF/PPT analysis."""
+
             return await _execute_tool(ctx, "rag_answer", {"query": query, "top_k": top_k})
 
         @agent.tool(name="create_quiz")

@@ -9,7 +9,13 @@ from pydantic_ai.messages import (
 )
 
 from backend.agent.core import StudentProductivityAgent
-from backend.agent.pydantic_runtime import PydanticAIRuntime
+from backend.agent.pydantic_runtime import (
+    PydanticAIRuntime,
+    build_chat_uploads_prompt,
+    build_tool_examples_prompt,
+)
+from backend.services.chat_file_service import ChatFileService
+from backend.services.rag_service import RAGService
 
 
 async def test_agent_returns_llm_response(db_session):
@@ -72,3 +78,31 @@ async def test_runtime_stream_handler_emits_all_text_chunks_immediately(db_sessi
 
     await handler(None, final_text_stream())
     assert streamed_chunks == ["Hello", " world"]
+
+
+async def test_runtime_injects_current_chat_upload_context(db_session, tmp_path):
+    upload_root = tmp_path / "uploads"
+    upload_root.mkdir()
+    (upload_root / "course.pdf.md").write_text(
+        "The uploaded syllabus covers NLP grading and weekly schedule.",
+        encoding="utf-8",
+    )
+    await RAGService(db_session).index_folder(
+        ".",
+        workspace_root=str(upload_root),
+        owner_id=ChatFileService.chat_owner_id("chat-upload"),
+    )
+
+    prompt = build_chat_uploads_prompt(db_session, "chat-upload")
+
+    assert "Current chat uploaded-file context" in prompt
+    assert "course.pdf.md" in prompt
+    assert "Do not use local file tools" in prompt
+
+
+async def test_uploaded_file_queries_get_rag_examples_not_local_file_examples(db_session):
+    prompt = await build_tool_examples_prompt(db_session, "分析一下我上传的 PDF")
+
+    assert "rag_search" in prompt
+    assert "rag_answer" in prompt
+    assert "read_local_file" not in prompt

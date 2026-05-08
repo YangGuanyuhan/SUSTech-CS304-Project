@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import sys
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -556,20 +557,47 @@ class RAGService:
         summary.failed = len([source for source in summary.sources if source.status == "failed"])
         return summary
 
+    async def index_file(
+        self,
+        file_path: Path,
+        *,
+        workspace_root: str,
+        owner_id: str = "local-user",
+        relative_path: str | None = None,
+    ) -> RAGSource:
+        extension = file_path.suffix.lower()
+        source, _changed = await self._index_file(
+            file_path,
+            workspace_root=workspace_root,
+            owner_id=owner_id,
+            relative_path=relative_path,
+        )
+        return self._source_model(source)
+
     async def query(
         self,
         query: str,
         *,
         top_k: int | None = None,
         owner_id: str = "local-user",
+        owner_ids: Sequence[str] | None = None,
+        prefer_owner_context: bool = False,
+        context_limit: int | None = None,
     ) -> RAGQueryResult:
         normalized_query = query.strip()
         if not normalized_query:
             raise RAGServiceError("`query` is required.")
-        citations = self.search(normalized_query, top_k=top_k, owner_id=owner_id)
+        scoped_owner_ids = self._owner_ids(owner_id=owner_id, owner_ids=owner_ids)
+        citations = (
+            self.sample_chunks(owner_id=scoped_owner_ids[0], limit=context_limit or top_k)
+            if prefer_owner_context and scoped_owner_ids and scoped_owner_ids[0] != "local-user"
+            else self.search(normalized_query, top_k=top_k, owner_ids=scoped_owner_ids)
+        )
+        if not citations and scoped_owner_ids and scoped_owner_ids[0] != "local-user":
+            citations = self.sample_chunks(owner_id=scoped_owner_ids[0], limit=top_k)
         raw_result: Any | None = None
         provider_error: str | None = None
-        if self.settings.rag_enable_raganything_query:
+        if self.settings.rag_enable_raganything_query and scoped_owner_ids == ["local-user"]:
             try:
                 raw_result = await self._with_query_timeout(
                     self.provider.answer(normalized_query, mode="hybrid")
@@ -616,35 +644,72 @@ class RAGService:
         *,
         top_k: int | None = None,
         owner_id: str = "local-user",
+        owner_ids: Sequence[str] | None = None,
     ) -> list[RAGChunkHit]:
         limit = top_k or self.settings.rag_top_k
         terms = self._tokenize(query)
         if not terms:
             return []
+        hits: list[RAGChunkHit] = []
+        for scoped_owner_id in self._owner_ids(owner_id=owner_id, owner_ids=owner_ids):
+            stmt = (
+                select(RAGChunkRecord, RAGSourceRecord)
+                .join(RAGSourceRecord, RAGChunkRecord.source_id == RAGSourceRecord.id)
+                .where(
+                    RAGChunkRecord.owner_id == scoped_owner_id,
+                    RAGSourceRecord.status == "indexed",
+                )
+            )
+            owner_hits: list[RAGChunkHit] = []
+            for chunk, source in self.session.execute(stmt).all():
+                score = self._score_text(chunk.text, terms)
+                if score <= 0:
+                    continue
+                owner_hits.append(
+                    RAGChunkHit(
+                        source_id=source.id,
+                        source_path=source.file_path,
+                        relative_path=source.relative_path,
+                        chunk_id=chunk.id,
+                        position=chunk.position,
+                        page_idx=chunk.page_idx,
+                        score=score,
+                        text=chunk.text[:1200],
+                    )
+                )
+            owner_hits.sort(key=lambda hit: hit.score, reverse=True)
+            hits.extend(owner_hits[: max(limit - len(hits), 0)])
+            if len(hits) >= limit:
+                break
+        return hits[:limit]
+
+    def sample_chunks(
+        self,
+        *,
+        owner_id: str,
+        limit: int | None = None,
+    ) -> list[RAGChunkHit]:
+        max_items = limit or self.settings.rag_top_k
         stmt = (
             select(RAGChunkRecord, RAGSourceRecord)
             .join(RAGSourceRecord, RAGChunkRecord.source_id == RAGSourceRecord.id)
             .where(RAGChunkRecord.owner_id == owner_id, RAGSourceRecord.status == "indexed")
+            .order_by(RAGSourceRecord.updated_at.desc(), RAGSourceRecord.relative_path.asc(), RAGChunkRecord.position.asc())
+            .limit(max_items)
         )
-        hits: list[RAGChunkHit] = []
-        for chunk, source in self.session.execute(stmt).all():
-            score = self._score_text(chunk.text, terms)
-            if score <= 0:
-                continue
-            hits.append(
-                RAGChunkHit(
-                    source_id=source.id,
-                    source_path=source.file_path,
-                    relative_path=source.relative_path,
-                    chunk_id=chunk.id,
-                    position=chunk.position,
-                    page_idx=chunk.page_idx,
-                    score=score,
-                    text=chunk.text[:1200],
-                )
+        return [
+            RAGChunkHit(
+                source_id=source.id,
+                source_path=source.file_path,
+                relative_path=source.relative_path,
+                chunk_id=chunk.id,
+                position=chunk.position,
+                page_idx=chunk.page_idx,
+                score=0.0,
+                text=chunk.text[:1200],
             )
-        hits.sort(key=lambda hit: hit.score, reverse=True)
-        return hits[:limit]
+            for chunk, source in self.session.execute(stmt).all()
+        ]
 
     def delete_source(self, source_id: str, *, owner_id: str = "local-user") -> bool:
         stmt = delete(RAGSourceRecord).where(
@@ -661,6 +726,7 @@ class RAGService:
         *,
         workspace_root: str,
         owner_id: str,
+        relative_path: str | None = None,
     ) -> tuple[RAGSourceRecord, bool]:
         extension = file_path.suffix.lower()
         file_hash = self._hash_file(file_path)
@@ -670,6 +736,7 @@ class RAGService:
             file_path,
             workspace_root=workspace_root,
             owner_id=owner_id,
+            relative_path=relative_path,
         )
         if source.status == "indexed" and source.file_hash == file_hash:
             return source, False
@@ -932,6 +999,7 @@ class RAGService:
         *,
         workspace_root: str,
         owner_id: str,
+        relative_path: str | None = None,
     ) -> RAGSourceRecord:
         file_path_text = str(file_path)
         stmt = select(RAGSourceRecord).where(
@@ -940,12 +1008,19 @@ class RAGService:
         )
         source = self.session.execute(stmt).scalar_one_or_none()
         if source is not None:
+            if relative_path and source.relative_path != relative_path:
+                source.relative_path = relative_path
+                self.session.add(source)
+                self.session.commit()
+                self.session.refresh(source)
             return source
-        relative_path = file_path.relative_to(self._workspace_root(workspace_root)).as_posix()
+        display_path = relative_path or file_path.relative_to(
+            self._workspace_root(workspace_root)
+        ).as_posix()
         source = RAGSourceRecord(
             owner_id=owner_id,
             file_path=file_path_text,
-            relative_path=relative_path,
+            relative_path=display_path,
             extension=file_path.suffix.lower(),
             provider=self.provider.name,
             doc_id=f"local-{hashlib.sha1(file_path_text.encode('utf-8')).hexdigest()}",
@@ -954,6 +1029,23 @@ class RAGService:
         self.session.commit()
         self.session.refresh(source)
         return source
+
+    def _owner_ids(
+        self,
+        *,
+        owner_id: str = "local-user",
+        owner_ids: Sequence[str] | None = None,
+    ) -> list[str]:
+        raw_owner_ids = list(owner_ids) if owner_ids is not None else [owner_id]
+        scoped: list[str] = []
+        seen: set[str] = set()
+        for raw_owner_id in raw_owner_ids:
+            candidate = str(raw_owner_id or "").strip()
+            if not candidate or candidate in seen:
+                continue
+            scoped.append(candidate)
+            seen.add(candidate)
+        return scoped or ["local-user"]
 
     def _mark_failed_file(
         self,

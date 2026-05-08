@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
@@ -45,6 +45,7 @@ from backend.services.approval_service import approval_service
 from backend.services.blackboard_file_service import BBContent, BBFileManager
 from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
 from backend.services.calendar_service import CalendarService
+from backend.services.chat_file_service import CHAT_FILE_CONTEXT_CHUNK_LIMIT, ChatFileService
 from backend.services.database_insights_service import DatabaseInsightsService
 from backend.services.email_service import EmailService, UnconfirmedSendError
 from backend.services.llm_service import LLMConnectionError, LLMService
@@ -718,13 +719,69 @@ async def get_rag_status(session: Session = Depends(get_db_session)) -> ApiRespo
     return ApiResponse(success=True, data=RAGService(session).status())
 
 
+@router.post("/rag/session-files/upload", response_model=ApiResponse[object])
+async def upload_rag_session_files(
+    session_id: str = Form(...),
+    files: list[UploadFile] = File(...),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    try:
+        result = await ChatFileService(session).upload_and_index(
+            session_id=session_id,
+            files=files,
+        )
+    except RAGServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RAGProviderError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=result)
+
+
+@router.get("/rag/session-files", response_model=ApiResponse[object])
+async def list_rag_session_files(
+    session_id: str = Query(...),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    try:
+        sources = ChatFileService(session).list_files(session_id)
+    except RAGServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=sources)
+
+
+@router.delete("/rag/session-files/{source_id}", response_model=ApiResponse[dict[str, bool]])
+async def delete_rag_session_file(
+    source_id: str,
+    session_id: str = Query(...),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[dict[str, bool]]:
+    try:
+        deleted = ChatFileService(session).delete_file(session_id=session_id, source_id=source_id)
+    except RAGServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Chat file source not found")
+    return ApiResponse(success=True, data={"deleted": True})
+
+
 @router.post("/rag/query", response_model=ApiResponse[object])
 async def query_rag(
     request: RAGQueryRequest,
     session: Session = Depends(get_db_session),
 ) -> ApiResponse[object]:
     try:
-        result = await RAGService(session).query(request.query, top_k=request.top_k)
+        owner_ids = (
+            ChatFileService(session).query_owner_ids(request.session_id)
+            if request.session_id
+            else None
+        )
+        result = await RAGService(session).query(
+            request.query,
+            top_k=request.top_k,
+            owner_ids=owner_ids,
+            prefer_owner_context=bool(request.session_id),
+            context_limit=CHAT_FILE_CONTEXT_CHUNK_LIMIT,
+        )
     except RAGServiceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RAGProviderError as exc:

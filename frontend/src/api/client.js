@@ -376,6 +376,23 @@ export const apiClient = {
     return { data: await parseJson(response) };
   },
 
+  async postForm(endpoint, formData, options = {}) {
+    const url = new URL(`${API_BASE}${endpoint}`);
+    if (options.params) {
+      Object.entries(options.params).forEach(([key, value]) => {
+        if (value !== null && value !== undefined) {
+          url.searchParams.append(key, value);
+        }
+      });
+    }
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      headers: options.headers || {},
+      body: formData
+    });
+    return { data: await parseJson(response) };
+  },
+
   async put(endpoint, data, options = {}) {
     const url = new URL(`${API_BASE}${endpoint}`);
     if (options.params) {

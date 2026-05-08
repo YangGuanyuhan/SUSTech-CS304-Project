@@ -10,6 +10,7 @@ from backend.models.rag import RAGDirectorySettings
 from backend.models.tooling import AgentTurnResult
 from backend.services.agent_tool_service import AgentToolService, ToolExecutionError
 from backend.services.approval_service import approval_service
+from backend.services.chat_file_service import ChatFileService
 from backend.services.rag_service import RAGService
 
 
@@ -34,7 +35,8 @@ async def test_memory_tool_round_trip(db_session):
         workspace_root=None,
     )
     saved = json.loads(saved_raw)
-    assert saved["key"] == "favorite_editor"
+    assert saved["saved"] is True
+    assert "favorite_editor" in saved["content"]
 
     search_raw = await service.execute(
         "memory_search",
@@ -43,7 +45,7 @@ async def test_memory_tool_round_trip(db_session):
         workspace_root=None,
     )
     results = json.loads(search_raw)
-    assert results[0]["key"] == "favorite_editor"
+    assert results["long_term"][0]["metadata"]["key"] == "favorite_editor"
 
 
 async def test_file_tool_rejects_path_escape(db_session, tmp_path):
@@ -128,6 +130,88 @@ async def test_rag_index_folder_rejects_path_outside_authorized_roots(db_session
             chat_session_id="chat-1",
             workspace_root=str(outside),
         )
+
+
+async def test_rag_search_prefers_current_chat_upload_scope(db_session, tmp_path):
+    local_root = tmp_path / "local"
+    chat_root = tmp_path / "chat"
+    local_root.mkdir()
+    chat_root.mkdir()
+    (local_root / "global.md").write_text("The deadline is Monday.", encoding="utf-8")
+    (chat_root / "upload.md").write_text("The deadline is Friday.", encoding="utf-8")
+    await RAGService(db_session).index_folder(
+        ".",
+        workspace_root=str(local_root),
+        owner_id="local-user",
+    )
+    await RAGService(db_session).index_folder(
+        ".",
+        workspace_root=str(chat_root),
+        owner_id=ChatFileService.chat_owner_id("chat-1"),
+    )
+    service = AgentToolService(db_session)
+
+    result_raw = await service.execute(
+        "rag_search",
+        {"query": "deadline", "top_k": 2},
+        chat_session_id="chat-1",
+        workspace_root=None,
+    )
+
+    result = json.loads(result_raw)
+    assert [hit["relative_path"] for hit in result] == ["upload.md"]
+
+
+async def test_rag_search_returns_all_uploaded_chunks_before_keyword_search(db_session, tmp_path):
+    chat_root = tmp_path / "chat"
+    chat_root.mkdir()
+    (chat_root / "upload.md").write_text(
+        "First uploaded section about scheduling.\n\nSecond uploaded section about memory.",
+        encoding="utf-8",
+    )
+    await RAGService(db_session).index_folder(
+        ".",
+        workspace_root=str(chat_root),
+        owner_id=ChatFileService.chat_owner_id("chat-1"),
+    )
+    service = AgentToolService(db_session)
+
+    result_raw = await service.execute(
+        "rag_search",
+        {"query": "something unrelated", "top_k": 1},
+        chat_session_id="chat-1",
+        workspace_root=None,
+    )
+
+    result = json.loads(result_raw)
+    assert result[0]["relative_path"] == "upload.md"
+    assert "scheduling" in result[0]["text"]
+
+
+async def test_rag_search_returns_uploaded_chunks_for_generic_file_question(db_session, tmp_path):
+    chat_root = tmp_path / "chat"
+    chat_root.mkdir()
+    (chat_root / "upload.md").write_text(
+        "The uploaded file explains page replacement algorithms.",
+        encoding="utf-8",
+    )
+    await RAGService(db_session).index_folder(
+        ".",
+        workspace_root=str(chat_root),
+        owner_id=ChatFileService.chat_owner_id("chat-1"),
+    )
+    service = AgentToolService(db_session)
+
+    result_raw = await service.execute(
+        "rag_search",
+        {"query": "uploaded PDF", "top_k": 2},
+        chat_session_id="chat-1",
+        workspace_root=None,
+    )
+
+    result = json.loads(result_raw)
+    assert result[0]["relative_path"] == "upload.md"
+    assert "page replacement" in result[0]["text"]
 
 
 async def test_agent_returns_approval_request_for_local_file_tools(db_session, tmp_path):
