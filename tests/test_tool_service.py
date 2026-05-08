@@ -59,7 +59,9 @@ async def test_file_tool_rejects_path_escape(db_session, tmp_path):
         )
 
 
-async def test_file_tool_accepts_approved_absolute_directory_without_workspace(db_session, tmp_path):
+async def test_file_tool_accepts_approved_absolute_directory_without_workspace(
+    db_session, tmp_path
+):
     (tmp_path / "notes.md").write_text("hello", encoding="utf-8")
     service = AgentToolService(db_session)
 

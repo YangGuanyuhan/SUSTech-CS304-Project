@@ -214,7 +214,7 @@ class RAGAnythingProvider:
         if shutil.which("mineru") is None:
             raise RAGProviderError(
                 "PDF indexing requires the MinerU command. Install it with "
-                "`uv pip install -U \"mineru[core]\"`, or index converted md/txt/docx/pptx files."
+                '`uv pip install -U "mineru[core]"`, or index converted md/txt/docx/pptx files.'
             )
         output_dir.mkdir(parents=True, exist_ok=True)
         await self._call_supported(
@@ -416,10 +416,16 @@ class RAGService:
         requested_text = (path or ".").strip() or "."
         requested = Path(requested_text).expanduser()
         if workspace_root and workspace_root.strip():
-            workspace = self._resolve_existing_directory(workspace_root, field_name="workspace_root")
+            workspace = self._resolve_existing_directory(
+                workspace_root, field_name="workspace_root"
+            )
             if not self._find_authorized_root(workspace, directory_settings.allowed_roots):
                 raise RAGServiceError("Workspace root is not inside an authorized RAG directory.")
-            candidate = requested.resolve() if requested.is_absolute() else (workspace / requested).resolve()
+            candidate = (
+                requested.resolve()
+                if requested.is_absolute()
+                else (workspace / requested).resolve()
+            )
         elif requested.is_absolute():
             candidate = requested.resolve()
         else:

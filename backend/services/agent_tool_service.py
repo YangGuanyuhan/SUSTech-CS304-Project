@@ -760,9 +760,7 @@ class AgentToolService:
         }
         return json.dumps(payload, ensure_ascii=False)
 
-    async def _rag_index_folder(
-        self, arguments: dict[str, Any], workspace_root: str | None
-    ) -> str:
+    async def _rag_index_folder(self, arguments: dict[str, Any], workspace_root: str | None) -> str:
         path = str(arguments.get("path", ".")).strip() or "."
         service = RAGService(self.session)
         try:
