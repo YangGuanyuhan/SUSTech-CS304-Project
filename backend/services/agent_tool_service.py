@@ -25,8 +25,6 @@ from backend.services.rag_service import RAGProviderError, RAGService, RAGServic
 _TAG_RE = re.compile(r"<[^>]+>")
 _WHITESPACE_RE = re.compile(r"\s+")
 _APPROVAL_REQUIRED_TOOLS = {
-    "list_local_files",
-    "read_local_file",
     "write_local_file",
     "run_local_command",
     "fetch_webpage",
@@ -569,45 +567,171 @@ class AgentToolService:
         limit = int(arguments.get("limit", 5))
         if not query:
             raise ToolExecutionError("`query` is required for memory_search.")
-        memories = await self.memory_service.get_relevant_memories(query, limit=limit)
-        if not memories:
+
+        # Optional memory_type filter (string -> MemoryType)
+        from backend.models.memory import MemoryType
+
+        raw_types = arguments.get("memory_types") or []
+        memory_types: list[MemoryType] | None = None
+        if raw_types:
+            memory_types = []
+            for t in raw_types:
+                try:
+                    memory_types.append(MemoryType(t))
+                except ValueError:
+                    continue
+            memory_types = memory_types or None
+
+        # Primary path: long-term memory semantic search (cross-session)
+        ltm_results = await self.memory_service.search_long_term_memories(
+            query=query,
+            memory_types=memory_types,
+            limit=limit,
+            semantic_threshold=float(arguments.get("threshold", 0.5)),
+            use_hybrid=True,
+        )
+
+        # Fallback path: legacy keyword memories (still useful for older entries)
+        legacy_results = []
+        if len(ltm_results) < limit:
+            legacy_remaining = limit - len(ltm_results)
+            legacy_results = await self.memory_service.get_relevant_memories(
+                query, limit=legacy_remaining
+            )
+
+        if not ltm_results and not legacy_results:
             return "No matching memories were found."
-        payload = [
-            {
-                "id": item.id,
-                "key": item.key,
-                "category": item.category,
-                "tags": item.tags,
-                "value": item.value,
-            }
-            for item in memories
-        ]
+
+        payload = {
+            "long_term": [
+                {
+                    "id": m.id,
+                    "memory_type": m.memory_type.value,
+                    "content": m.content,
+                    "importance_score": m.importance_score,
+                    "access_count": m.access_count,
+                    "metadata": m.metadata,
+                }
+                for m in ltm_results
+            ],
+            "legacy": [
+                {
+                    "id": m.id,
+                    "key": m.key,
+                    "category": m.category,
+                    "tags": m.tags,
+                    "value": m.value,
+                }
+                for m in legacy_results
+            ],
+        }
         return json.dumps(payload, ensure_ascii=False)
 
     async def _memory_save(self, arguments: dict[str, Any]) -> str:
+        from backend.models.memory import MemoryType
+
+        # Two save modes:
+        #  - key/value (legacy compatibility) -> stored as both legacy memory and LTM
+        #  - content/memory_type (new style) -> LTM only
+        content = arguments.get("content")
+        memory_type_raw = arguments.get("memory_type")
         key = str(arguments.get("key", "")).strip()
-        if not key:
-            raise ToolExecutionError("`key` is required for memory_save.")
-        record = await self.memory_service.save_memory(
-            key=key,
-            value=arguments.get("value"),
-            category=str(arguments.get("category", "general")),
-            tags=[str(tag) for tag in arguments.get("tags", [])],
+
+        if not content and not key:
+            raise ToolExecutionError(
+                "memory_save requires either `content` (+optional `memory_type`) "
+                "or `key`+`value` for legacy mode."
+            )
+
+        # Resolve memory type
+        if memory_type_raw:
+            try:
+                memory_type = MemoryType(memory_type_raw)
+            except ValueError as exc:
+                raise ToolExecutionError(
+                    f"Invalid memory_type `{memory_type_raw}`. "
+                    f"Valid: {[t.value for t in MemoryType]}"
+                ) from exc
+        else:
+            # Map legacy category to a memory type
+            category = str(arguments.get("category", "general")).lower()
+            category_map = {
+                "user_preference": MemoryType.USER_PREFERENCE,
+                "preference": MemoryType.USER_PREFERENCE,
+                "factual": MemoryType.FACTUAL,
+                "fact": MemoryType.FACTUAL,
+                "procedural": MemoryType.PROCEDURAL,
+                "how_to": MemoryType.PROCEDURAL,
+                "episodic": MemoryType.EPISODIC,
+                "event": MemoryType.EPISODIC,
+                "tool_usage": MemoryType.TOOL_USAGE,
+            }
+            memory_type = category_map.get(category, MemoryType.FACTUAL)
+
+        # Build content from key/value if needed
+        if not content:
+            content = f"{key}: {arguments.get('value')}"
+
+        importance = float(arguments.get("importance_score", 0.8))
+        ltm = await self.memory_service.save_long_term_memory(
+            content=str(content),
+            memory_type=memory_type,
+            metadata={
+                "tags": [str(tag) for tag in arguments.get("tags", [])],
+                "key": key or None,
+                "source": "memory_save_tool",
+            },
+            importance_score=importance,
+            generate_embedding=True,
         )
-        return json.dumps(record.model_dump(mode="json"), ensure_ascii=False)
+        return json.dumps(
+            {
+                "saved": True,
+                "id": ltm.id,
+                "memory_type": ltm.memory_type.value,
+                "content": ltm.content,
+            },
+            ensure_ascii=False,
+        )
 
     async def _memory_delete(self, arguments: dict[str, Any]) -> str:
+        # Two delete modes:
+        #  - id: precise deletion of one LTM record
+        #  - query: keyword sweep across both LTM and legacy memories
+        memory_id = str(arguments.get("id", "")).strip()
+        if memory_id:
+            ltm_deleted = await self.memory_service.delete_long_term_memory(memory_id)
+            legacy_deleted = await self.memory_service.delete_memory(memory_id)
+            return json.dumps(
+                {"deleted": ltm_deleted or legacy_deleted, "id": memory_id},
+                ensure_ascii=False,
+            )
+
         query = str(arguments.get("query", "")).strip()
         if not query:
-            raise ToolExecutionError("`query` is required for memory_delete.")
-        deleted = await self.memory_service.delete_memories_by_query(query)
-        return json.dumps({"deleted": deleted}, ensure_ascii=False)
+            raise ToolExecutionError("memory_delete requires either `id` or `query`.")
+
+        # Sweep LTM via semantic search, then legacy via keyword
+        ltm_hits = await self.memory_service.search_long_term_memories(
+            query=query, limit=20, semantic_threshold=0.6
+        )
+        ltm_deleted_count = 0
+        for hit in ltm_hits:
+            if await self.memory_service.delete_long_term_memory(hit.id):
+                ltm_deleted_count += 1
+        legacy_deleted_count = await self.memory_service.delete_memories_by_query(query)
+
+        return json.dumps(
+            {"long_term_deleted": ltm_deleted_count, "legacy_deleted": legacy_deleted_count},
+            ensure_ascii=False,
+        )
 
     async def _list_local_files(self, arguments: dict[str, Any], workspace_root: str | None) -> str:
         effective_root = self._effective_workspace_root_for_path(
             workspace_root,
             str(arguments.get("path", ".")),
             directory_request=True,
+            allow_rag_roots=True,
         )
         base = self._resolve_path(effective_root, str(arguments.get("path", ".")))
         recursive = bool(arguments.get("recursive", False))
@@ -630,6 +754,7 @@ class AgentToolService:
             workspace_root,
             str(arguments.get("path", "")),
             directory_request=False,
+            allow_rag_roots=True,
         )
         path = self._resolve_path(effective_root, str(arguments.get("path", "")))
         max_chars = int(arguments.get("max_chars", 12000))
@@ -982,13 +1107,24 @@ class AgentToolService:
         requested_path: str,
         *,
         directory_request: bool,
+        allow_rag_roots: bool = False,
     ) -> str | None:
         if workspace_root:
             return workspace_root
         requested = Path(requested_path).expanduser()
         if not requested.is_absolute():
+            # For read operations, try RAG authorized roots as fallback
+            if allow_rag_roots:
+                rag_root = self._find_rag_root_for_relative_path(requested_path)
+                if rag_root:
+                    return rag_root
             return workspace_root
         resolved = requested.resolve()
+        # For read operations, check if path is inside an authorized RAG root
+        if allow_rag_roots:
+            rag_root = self._find_rag_root_containing(resolved)
+            if rag_root:
+                return rag_root
         if directory_request:
             if not resolved.is_dir():
                 raise ToolExecutionError(f"`{requested_path}` is not a directory.")
@@ -997,6 +1133,49 @@ class AgentToolService:
         if not parent.is_dir():
             raise ToolExecutionError(f"Parent directory for `{requested_path}` does not exist.")
         return str(parent)
+
+    def _find_rag_root_containing(self, resolved_path: Path) -> str | None:
+        """Return a RAG authorized root containing `resolved_path`, or None."""
+        try:
+            from backend.services.rag_service import RAGService
+
+            directory_settings = RAGService(self.session).get_directory_settings()
+        except Exception:
+            return None
+        for root_str in directory_settings.allowed_roots or []:
+            try:
+                root = Path(root_str).expanduser().resolve()
+            except Exception:
+                continue
+            try:
+                resolved_path.relative_to(root)
+                return str(root)
+            except ValueError:
+                continue
+        return None
+
+    def _find_rag_root_for_relative_path(self, requested_path: str) -> str | None:
+        """For a relative path, return the default RAG root if the path exists under it."""
+        try:
+            from backend.services.rag_service import RAGService
+
+            directory_settings = RAGService(self.session).get_directory_settings()
+        except Exception:
+            return None
+        candidate_roots: list[str] = []
+        if directory_settings.default_root:
+            candidate_roots.append(directory_settings.default_root)
+        candidate_roots.extend(directory_settings.allowed_roots or [])
+        for root_str in candidate_roots:
+            try:
+                root = Path(root_str).expanduser().resolve()
+                candidate = (root / requested_path).resolve()
+                candidate.relative_to(root)
+                if candidate.exists():
+                    return str(root)
+            except Exception:
+                continue
+        return None
 
     def _resolve_path(self, workspace_root: str | None, requested_path: str) -> Path:
         root = self._workspace_root(workspace_root)

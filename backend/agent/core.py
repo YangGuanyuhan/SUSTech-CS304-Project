@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import threading
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -10,11 +12,81 @@ from pydantic_ai.tools import DeferredToolRequests
 from sqlalchemy.orm import Session
 
 from backend.agent.pydantic_runtime import PydanticAIRuntime
+from backend.db.database import SessionLocal
 from backend.models.tooling import AgentTurnResult, ToolTrace
 from backend.services.approval_service import approval_service
+from backend.services.context_manager import ContextWindowManager
 from backend.services.llm_logging_service import llm_logger
+from backend.services.memory_consolidator import MemoryConsolidator
+from backend.services.memory_service import MemoryService
 from backend.services.runtime_settings import runtime_settings
 from backend.services.task_service import TaskHistoryService
+from backend.services.tool_learning_service import ToolLearningService
+
+# Context budget tuned for large-context models (e.g., DeepSeek 128K+, Gemini 1M+, Claude 200K+).
+# Designed around a 500K effective context envelope, leaving plenty of room for tools,
+# system prompt, injected memories, and model output.
+DEFAULT_MAX_CONTEXT_TOKENS = 500_000
+DEFAULT_MIN_RECENT_MESSAGES = 20
+DEFAULT_HISTORY_LIMIT = 200  # recent user/assistant pairs pulled from task_history
+DEFAULT_LTM_INJECT_LIMIT = 5  # long-term memories injected per turn
+DEFAULT_LTM_THRESHOLD = 0.5  # semantic threshold for cross-conversation memory recall
+# Auto-injecting LTM on every turn calls the embedding API synchronously, which adds
+# real latency (often >30s) to every user message. Off by default — the agent can
+# always call memory_search explicitly when cross-session recall is actually needed.
+# Set env STUDYAI_AUTO_LTM_INJECT=1 to re-enable.
+import os
+_AUTO_LTM_INJECT = os.environ.get("STUDYAI_AUTO_LTM_INJECT", "0") == "1"
+# Auto-injecting LTM on every turn calls the embedding API synchronously, which adds
+# real latency (often >30s) to every user message. Off by default — the agent can
+# always call memory_search explicitly when cross-session recall is actually needed.
+# Set env STUDYAI_AUTO_LTM_INJECT=1 to re-enable.
+import os
+_AUTO_LTM_INJECT = os.environ.get("STUDYAI_AUTO_LTM_INJECT", "0") == "1"
+
+# Auto-maintenance: run consolidate/prune/importance-update every N successful turns.
+# Process-wide counter; fire-and-forget so the user-facing turn never waits on it.
+_MAINTENANCE_INTERVAL = 25
+_maintenance_lock = threading.Lock()
+_turn_counter = 0
+_maintenance_in_flight = False
+
+
+def _should_run_maintenance() -> bool:
+    """Increment the turn counter and decide whether to launch a maintenance pass."""
+    global _turn_counter, _maintenance_in_flight
+    with _maintenance_lock:
+        _turn_counter += 1
+        if _maintenance_in_flight:
+            return False
+        if _turn_counter % _MAINTENANCE_INTERVAL != 0:
+            return False
+        _maintenance_in_flight = True
+        return True
+
+
+def _release_maintenance_flag() -> None:
+    global _maintenance_in_flight
+    with _maintenance_lock:
+        _maintenance_in_flight = False
+
+
+async def _run_maintenance_in_background() -> None:
+    """Run consolidate/prune/importance-update on a fresh DB session."""
+    own_session: Session | None = None
+    try:
+        own_session = SessionLocal()
+        consolidator = MemoryConsolidator(own_session)
+        results = await consolidator.run_maintenance(
+            consolidate=True, prune=True, update_importance=True
+        )
+        llm_logger.log_event("system", "memory_maintenance", results)
+    except Exception as exc:
+        llm_logger.log_event("system", "memory_maintenance_error", {"error": str(exc)})
+    finally:
+        if own_session is not None:
+            own_session.close()
+        _release_maintenance_flag()
 
 
 class StudentProductivityAgent:
@@ -23,9 +95,98 @@ class StudentProductivityAgent:
     def __init__(self, session: Session):
         self.session = session
         self.runtime = PydanticAIRuntime(session)
+        self.context_manager = ContextWindowManager(session)
+        self.tool_learning = ToolLearningService(session)
+        self.memory_consolidator = MemoryConsolidator(session)
+        self.memory_service = MemoryService(session)
 
-    async def _build_history(self, session_id: str) -> list[dict[str, str]]:
-        return await TaskHistoryService(self.session).get_recent_messages(session_id, limit=10)
+    async def _build_history(
+        self,
+        session_id: str,
+        *,
+        current_user_input: str | None = None,
+        max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
+    ) -> list[dict[str, str]]:
+        """Build conversation history with context management and cross-session memory.
+
+        Pulls recent messages for this session, injects relevant long-term memories
+        (retrieved semantically across all sessions), and applies token-aware
+        compression if the combined context exceeds the budget.
+        """
+        # 1. Pull this session's recent messages
+        raw_messages = await TaskHistoryService(self.session).get_recent_messages(
+            session_id, limit=DEFAULT_HISTORY_LIMIT
+        )
+
+        # 2. Retrieve cross-session long-term memories relevant to the current turn.
+        # Disabled by default because the embedding call is a synchronous network
+        # round-trip on the hot path. The agent can call memory_search on demand instead.
+        memory_system_message = None
+        if _AUTO_LTM_INJECT and current_user_input and current_user_input.strip():
+            try:
+                relevant = await self.memory_service.search_long_term_memories(
+                    query=current_user_input,
+                    limit=DEFAULT_LTM_INJECT_LIMIT,
+                    semantic_threshold=DEFAULT_LTM_THRESHOLD,
+                    use_hybrid=True,
+                )
+                if relevant:
+                    lines = [
+                        f"- [{m.memory_type.value}] {m.content}" for m in relevant
+                    ]
+                    memory_system_message = {
+                        "role": "system",
+                        "content": (
+                            "Relevant long-term memories from previous conversations "
+                            "(use them only if they actually apply to the current request):\n"
+                            + "\n".join(lines)
+                        ),
+                    }
+                    llm_logger.log_event(
+                        session_id,
+                        "ltm_injection",
+                        {
+                            "count": len(relevant),
+                            "types": [m.memory_type.value for m in relevant],
+                        },
+                    )
+            except Exception:
+                # LTM retrieval should never block the main turn
+                memory_system_message = None
+
+        if not raw_messages and not memory_system_message:
+            return []
+
+        # 3. Combine (system memory prefix + session history)
+        combined: list[dict[str, str]] = []
+        if memory_system_message:
+            combined.append(memory_system_message)
+        combined.extend(raw_messages)
+
+        # 4. Apply context window management
+        prepared_messages, stats = await self.context_manager.prepare_context(
+            combined,
+            max_context_tokens=max_context_tokens,
+            min_recent_messages=DEFAULT_MIN_RECENT_MESSAGES,
+            session_id=session_id,
+        )
+
+        # 5. Log compression stats if compression occurred
+        if stats["compression_ratio"] < 1.0:
+            llm_logger.log_event(
+                session_id,
+                "context_compression",
+                {
+                    "original_messages": stats["original_message_count"],
+                    "final_messages": stats["final_message_count"],
+                    "original_tokens": stats["original_tokens"],
+                    "final_tokens": stats["final_tokens"],
+                    "tokens_saved": stats["tokens_saved"],
+                    "compression_ratio": round(stats["compression_ratio"], 3),
+                },
+            )
+
+        return prepared_messages
 
     async def _emit_tool_events(
         self,
@@ -232,7 +393,9 @@ class StudentProductivityAgent:
                 user_input=message,
                 session_id=session_id,
                 workspace_root=workspace_root,
-                history=await self._build_history(session_id),
+                history=await self._build_history(
+                    session_id, current_user_input=message
+                ),
                 on_tool_events=on_tool_events,
                 on_response_chunk=on_response_chunk,
                 on_thinking_chunk=on_thinking_chunk,
@@ -255,6 +418,29 @@ class StudentProductivityAgent:
                 result.response,
                 result.tools_used,
             )
+
+            # Learn from successful tool usage
+            if result.tool_events:
+                await self.tool_learning.extract_patterns_from_tool_events(
+                    user_query=message,
+                    tool_events=result.tool_events,
+                )
+
+            # Extract memories from conversation
+            try:
+                await self.memory_consolidator.extract_memory_from_conversation(
+                    user_input=message,
+                    agent_response=result.response,
+                    session_id=session_id,
+                )
+            except Exception:
+                # Don't fail the request if memory extraction fails
+                pass
+
+            # Periodic auto-maintenance (consolidate similar / prune old / update importance)
+            if _should_run_maintenance():
+                asyncio.create_task(_run_maintenance_in_background())
+
         return result.model_dump(mode="json")
 
     async def resume_approval(
@@ -359,6 +545,14 @@ class StudentProductivityAgent:
                 result.response,
                 result.tools_used,
             )
+
+            # Learn from successful tool usage after approval
+            if result.tool_events:
+                await self.tool_learning.extract_patterns_from_tool_events(
+                    user_query=pending.user_input,
+                    tool_events=result.tool_events,
+                )
+
         return result.model_dump(mode="json")
 
 

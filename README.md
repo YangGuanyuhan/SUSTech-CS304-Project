@@ -9,19 +9,31 @@ Student Productivity Agent is a modular software engineering project for SUSTech
 - Human-in-the-loop email draft and send flow
 - Local file summary and batch rename workflow
 - Local knowledge-base RAG with RAG-Anything-backed indexing
+- **Intelligent memory system with semantic search and context management**
+- **Tool learning and pattern recognition**
 - Memory CRUD and task history persistence
 - Minimal Vue frontend shell
 
 ## Quick start
 
-### Backend
+### One-command start (Recommended)
+
+```bash
+./start-dev.sh
+```
+
+This starts both backend (port 8000) and frontend (port 5173).
+
+### Manual start
+
+#### Backend
 
 ```bash
 uv sync
 uv run uvicorn backend.main:app --reload
 ```
 
-### Frontend
+#### Frontend
 
 ```bash
 cd frontend
@@ -41,16 +53,54 @@ uv run pytest
 backend/
   agent/       Agent orchestration and tool wrappers
   api/         FastAPI routers and request models
-  db/          Async database engine, ORM models, repositories
+  db/          Database engine, ORM models, repositories, migrations
   models/      Shared Pydantic contracts
   services/    Domain services and provider adapters
 frontend/      Vue 3 + Vite client
 tests/         Backend test suite
+docs/          Documentation
+  architecture/  System design and architecture docs
+  development/   Development guides and refactoring notes
+  features/      Feature implementation documentation
 ```
+
+## Documentation
+
+### Architecture
+- [Technical Design](docs/architecture/TECHNICAL_DESIGN.md) - Overall system architecture
+- [Design Document](docs/architecture/design-26s-8.md) - Detailed design with UI mockups
+- [Database Overview](docs/architecture/DATABASE_CURRENT_OVERVIEW.md) - Current database schema
+- [Project Proposal](docs/architecture/proposal-26s-8.md) - Original project proposal
+
+### Features
+- [Memory System](docs/features/MEMORY_SYSTEM_IMPLEMENTATION.md) - Intelligent memory with semantic search
+- [RAG System](docs/RAG_README.md) - Knowledge base and RAG setup
+
+### Development
+- [Database Refactoring](docs/development/DATABASE_REFACTOR_SUMMARY.md) - Database migration history
+- [Contributing Guide](CONTRIBUTING.md) - How to contribute
+
+## Key Features
+
+### 🧠 Intelligent Memory System
+- **Semantic Search**: Hybrid search combining embeddings + keywords + recency
+- **Context Management**: Token-aware compression with LLM summarization
+- **Tool Learning**: Automatically learns from successful tool usage patterns
+- **Lifecycle Management**: Auto-extraction, consolidation, and pruning
+
+### 📚 Knowledge Base (RAG)
+- Local document indexing with RAG-Anything
+- Support for PDF, DOCX, PPTX, Markdown, and text files
+- Semantic search across indexed materials
+
+### 📅 Calendar & Tasks
+- Unified calendar with Blackboard integration
+- Task history and conversation persistence
+- Event management and reminders
 
 ## Notes
 
 - Secrets are loaded from environment variables only.
 - Blackboard V1 defaults to a mock provider behind a stable interface.
 - Production migration to PostgreSQL is driven by `DATABASE_URL`.
-- RAG setup and usage notes live in `docs/RAG_README.md`.
+- First-time setup may take 10-20 minutes to download ML dependencies (PyTorch, CUDA libraries for RAG).
