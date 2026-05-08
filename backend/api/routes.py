@@ -30,11 +30,13 @@ from backend.api.schemas import (
     QuizAttemptRequest,
     RAGIndexFolderRequest,
     RAGQueryRequest,
+    RAGSettingsRequest,
 )
 from backend.config import get_settings
 from backend.db.database import get_db_session
 from backend.models.calendar import CalendarEventCreate, CalendarEventMove, CalendarEventUpdate
 from backend.models.common import ApiResponse
+from backend.models.rag import RAGDirectorySettings
 from backend.models.settings import BlackboardProfile, LLMProfile
 from backend.services.approval_service import approval_service
 from backend.services.blackboard_file_service import BBContent, BBFileManager
@@ -577,16 +579,45 @@ async def get_database_overview(session: Session = Depends(get_db_session)) -> A
     return ApiResponse(success=True, data=overview)
 
 
+@router.get("/rag/settings", response_model=ApiResponse[object])
+async def get_rag_settings(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    return ApiResponse(success=True, data=RAGService(session).get_directory_settings())
+
+
+@router.put("/rag/settings", response_model=ApiResponse[object])
+async def update_rag_settings(
+    request: RAGSettingsRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    try:
+        settings = RAGService(session).save_directory_settings(
+            RAGDirectorySettings.model_validate(request.model_dump())
+        )
+    except RAGServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=settings)
+
+
 @router.post("/rag/index-folder", response_model=ApiResponse[object])
 async def index_rag_folder(
     request: RAGIndexFolderRequest,
     session: Session = Depends(get_db_session),
 ) -> ApiResponse[object]:
+    service = RAGService(session)
     try:
-        result = await RAGService(session).index_folder(
-            request.path,
+        workspace_root, path = service.resolve_index_scope(
+            path=request.path,
             workspace_root=request.workspace_root,
-            recursive=request.recursive,
+        )
+        directory_settings = service.get_directory_settings()
+        result = await service.index_folder(
+            path,
+            workspace_root=workspace_root,
+            recursive=(
+                request.recursive
+                if request.recursive is not None
+                else directory_settings.recursive_default
+            ),
             extensions=request.extensions,
         )
     except RAGServiceError as exc:

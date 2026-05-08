@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from backend.db.models import RAGSourceRecord
+from backend.models.rag import RAGDirectorySettings
 from backend.services.rag_service import RAGAnythingProvider, RAGService, RAGServiceError
 
 
@@ -87,6 +88,74 @@ async def test_rag_rejects_path_escape(db_session, tmp_path):
 
     with pytest.raises(RAGServiceError):
         await service.index_folder(str(outside), workspace_root=str(tmp_path))
+
+
+async def test_rag_directory_settings_round_trip(db_session, tmp_path):
+    root = tmp_path / "notes"
+    default = root / "course-a"
+    default.mkdir(parents=True)
+    service = RAGService(db_session, provider=FakeRAGProvider())
+
+    saved = service.save_directory_settings(
+        RAGDirectorySettings(
+            allowed_roots=[str(root)],
+            default_root=str(default),
+            recursive_default=False,
+        )
+    )
+    loaded = service.get_directory_settings()
+
+    assert saved.allowed_roots == [str(root.resolve())]
+    assert loaded.default_root == str(default.resolve())
+    assert loaded.recursive_default is False
+
+
+async def test_rag_directory_settings_reject_invalid_paths(db_session, tmp_path):
+    root = tmp_path / "notes"
+    root.mkdir()
+    file_path = tmp_path / "not-a-folder.md"
+    file_path.write_text("hello", encoding="utf-8")
+    service = RAGService(db_session, provider=FakeRAGProvider())
+
+    with pytest.raises(RAGServiceError):
+        service.save_directory_settings(RAGDirectorySettings(allowed_roots=[str(file_path)]))
+
+    with pytest.raises(RAGServiceError):
+        service.save_directory_settings(
+            RAGDirectorySettings(
+                allowed_roots=[str(root)],
+                default_root=str(tmp_path.parent),
+            )
+        )
+
+
+async def test_rag_resolve_index_scope_uses_default_root(db_session, tmp_path):
+    root = tmp_path / "notes"
+    default = root / "course-a"
+    default.mkdir(parents=True)
+    service = RAGService(db_session, provider=FakeRAGProvider())
+    service.save_directory_settings(
+        RAGDirectorySettings(allowed_roots=[str(root)], default_root=str(default))
+    )
+
+    workspace_root, path = service.resolve_index_scope(path=None)
+
+    assert workspace_root == str(root.resolve())
+    assert path == "course-a"
+
+
+async def test_rag_resolve_index_scope_rejects_unauthorized_absolute_path(db_session, tmp_path):
+    root = tmp_path / "notes"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    service = RAGService(db_session, provider=FakeRAGProvider())
+    service.save_directory_settings(
+        RAGDirectorySettings(allowed_roots=[str(root)], default_root=str(root))
+    )
+
+    with pytest.raises(RAGServiceError):
+        service.resolve_index_scope(path=str(outside))
 
 
 async def test_rag_marks_legacy_office_as_failed(db_session, tmp_path):

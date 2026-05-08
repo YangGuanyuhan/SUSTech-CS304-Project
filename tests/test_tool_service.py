@@ -6,9 +6,11 @@ import pytest
 from pydantic_ai.tools import DeferredToolRequests
 
 from backend.agent.core import StudentProductivityAgent
+from backend.models.rag import RAGDirectorySettings
 from backend.models.tooling import AgentTurnResult
 from backend.services.agent_tool_service import AgentToolService, ToolExecutionError
 from backend.services.approval_service import approval_service
+from backend.services.rag_service import RAGService
 
 
 def _fake_tool_call(name: str, arguments: dict[str, object], tool_call_id: str = "tool-1"):
@@ -71,6 +73,59 @@ async def test_file_tool_accepts_approved_absolute_directory_without_workspace(d
     result = json.loads(result_raw)
     assert result["directory"] == tmp_path.as_posix()
     assert result["entries"][0]["path"] == "notes.md"
+
+
+async def test_rag_index_folder_requires_configured_directory(db_session, tmp_path):
+    (tmp_path / "notes.md").write_text("hello", encoding="utf-8")
+    service = AgentToolService(db_session)
+
+    with pytest.raises(ToolExecutionError):
+        await service.execute(
+            "rag_index_folder",
+            {"path": str(tmp_path)},
+            chat_session_id="chat-1",
+            workspace_root=None,
+        )
+
+
+async def test_rag_index_folder_uses_authorized_default_directory(db_session, tmp_path):
+    notes_root = tmp_path / "notes"
+    notes_root.mkdir()
+    (notes_root / "policy.md").write_text("The add/drop deadline is Friday.", encoding="utf-8")
+    RAGService(db_session).save_directory_settings(
+        RAGDirectorySettings(allowed_roots=[str(notes_root)], default_root=str(notes_root))
+    )
+    service = AgentToolService(db_session)
+
+    result_raw = await service.execute(
+        "rag_index_folder",
+        {"path": "."},
+        chat_session_id="chat-1",
+        workspace_root=str(tmp_path.parent),
+    )
+
+    result = json.loads(result_raw)
+    assert result["indexed"] == 1
+    assert result["sources"][0]["relative_path"] == "policy.md"
+
+
+async def test_rag_index_folder_rejects_path_outside_authorized_roots(db_session, tmp_path):
+    notes_root = tmp_path / "notes"
+    outside = tmp_path / "outside"
+    notes_root.mkdir()
+    outside.mkdir()
+    RAGService(db_session).save_directory_settings(
+        RAGDirectorySettings(allowed_roots=[str(notes_root)], default_root=str(notes_root))
+    )
+    service = AgentToolService(db_session)
+
+    with pytest.raises(ToolExecutionError):
+        await service.execute(
+            "rag_index_folder",
+            {"path": str(outside)},
+            chat_session_id="chat-1",
+            workspace_root=str(outside),
+        )
 
 
 async def test_agent_returns_approval_request_for_local_file_tools(db_session, tmp_path):

@@ -189,11 +189,15 @@ def get_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "rag_index_folder",
-                "description": "Index a local folder into the knowledge base using RAG-Anything.",
+                "description": "Index a configured RAG directory or authorized subdirectory into the knowledge base.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "default": "."},
+                        "path": {
+                            "type": "string",
+                            "default": ".",
+                            "description": "Relative path under the default RAG directory, or an absolute path inside an authorized RAG root.",
+                        },
                         "recursive": {"type": "boolean", "default": True},
                         "extensions": {"type": "array", "items": {"type": "string"}},
                     },
@@ -496,7 +500,7 @@ class AgentToolService:
         if tool_name == "rag_index_folder":
             return (
                 f"Index local folder `{arguments.get('path', '.')}` into the knowledge base "
-                f"from workspace `{workspace_root or '<unset>'}`."
+                "using the configured RAG directory permissions."
             )
         return f"Execute tool `{tool_name}`."
 
@@ -760,16 +764,18 @@ class AgentToolService:
         self, arguments: dict[str, Any], workspace_root: str | None
     ) -> str:
         path = str(arguments.get("path", ".")).strip() or "."
-        effective_root = self._effective_workspace_root_for_path(
-            workspace_root,
-            path,
-            directory_request=True,
-        )
+        service = RAGService(self.session)
         try:
-            result = await RAGService(self.session).index_folder(
-                path,
+            effective_root, safe_path = service.resolve_index_scope(path=path)
+            directory_settings = service.get_directory_settings()
+            result = await service.index_folder(
+                safe_path,
                 workspace_root=effective_root,
-                recursive=bool(arguments.get("recursive", True)),
+                recursive=(
+                    bool(arguments["recursive"])
+                    if "recursive" in arguments
+                    else directory_settings.recursive_default
+                ),
                 extensions=arguments.get("extensions"),
             )
         except (RAGProviderError, RAGServiceError) as exc:

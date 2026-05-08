@@ -3,6 +3,7 @@ __pycache__/
 .vscode/
 .idea/
 .pytest_cache/
+.tmp/
 .ruff_cache/
 .coverage
 htmlcov/

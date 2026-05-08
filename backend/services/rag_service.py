@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import importlib.util
 import inspect
+import json
 import os
 import re
 import shutil
@@ -19,7 +20,14 @@ from sqlalchemy.orm import Session
 
 from backend.config import get_settings
 from backend.db.models import RAGChunkRecord, RAGSourceRecord
-from backend.models.rag import RAGChunkHit, RAGIndexSummary, RAGQueryResult, RAGSource
+from backend.db.repositories import UserPreferenceRepository
+from backend.models.rag import (
+    RAGChunkHit,
+    RAGDirectorySettings,
+    RAGIndexSummary,
+    RAGQueryResult,
+    RAGSource,
+)
 from backend.services.llm_service import LLMService
 from backend.services.runtime_settings import runtime_settings
 
@@ -32,6 +40,7 @@ except ImportError:  # pragma: no cover - optional at test time
 SUPPORTED_EXTENSIONS = {".md", ".txt", ".pdf", ".docx", ".pptx", ".doc", ".ppt"}
 OLD_OFFICE_EXTENSIONS = {".doc", ".ppt"}
 _WORD_RE = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
+RAG_DIRECTORY_SETTINGS_KEY = "rag_directory_settings"
 
 
 class RAGServiceError(ValueError):
@@ -244,6 +253,7 @@ class RAGService:
         self.session = session
         self.settings = get_settings()
         self.provider = provider or RAGAnythingProvider()
+        self.preferences = UserPreferenceRepository(session)
 
     def status(self) -> dict[str, Any]:
         llm_config = runtime_settings.get_llm_config()
@@ -325,6 +335,130 @@ class RAGService:
                 "scanned or image-heavy PDFs and may be slow on laptops."
             ),
         }
+
+    def get_directory_settings(self) -> RAGDirectorySettings:
+        record = next(
+            (
+                item
+                for item in self.preferences.list(key_prefix=RAG_DIRECTORY_SETTINGS_KEY)
+                if item.key == RAG_DIRECTORY_SETTINGS_KEY
+            ),
+            None,
+        )
+        if record is None:
+            return RAGDirectorySettings()
+        try:
+            return self._normalize_directory_settings(
+                RAGDirectorySettings.model_validate(json.loads(record.value))
+            )
+        except Exception:
+            return RAGDirectorySettings()
+
+    def save_directory_settings(
+        self,
+        settings: RAGDirectorySettings,
+        *,
+        owner_id: str = "local-user",
+    ) -> RAGDirectorySettings:
+        normalized = self._normalize_directory_settings(settings)
+        self.preferences.upsert(
+            key=RAG_DIRECTORY_SETTINGS_KEY,
+            value=normalized.model_dump_json(),
+            owner_id=owner_id,
+        )
+        return normalized
+
+    def _normalize_directory_settings(
+        self,
+        settings: RAGDirectorySettings,
+    ) -> RAGDirectorySettings:
+        allowed_roots: list[str] = []
+        seen: set[str] = set()
+        for raw_root in settings.allowed_roots:
+            if not str(raw_root).strip():
+                continue
+            root = self._resolve_existing_directory(str(raw_root), field_name="allowed_root")
+            key = os.path.normcase(str(root))
+            if key in seen:
+                continue
+            seen.add(key)
+            allowed_roots.append(str(root))
+
+        default_root: str | None = None
+        if settings.default_root and settings.default_root.strip():
+            default_path = self._resolve_existing_directory(
+                settings.default_root,
+                field_name="default_root",
+            )
+            if not self._find_authorized_root(default_path, allowed_roots):
+                raise RAGServiceError("Default RAG directory must be inside an authorized root.")
+            default_root = str(default_path)
+
+        return RAGDirectorySettings(
+            allowed_roots=allowed_roots,
+            default_root=default_root,
+            recursive_default=bool(settings.recursive_default),
+        )
+
+    def resolve_index_scope(
+        self,
+        *,
+        path: str | None = None,
+        workspace_root: str | None = None,
+    ) -> tuple[str, str]:
+        directory_settings = self.get_directory_settings()
+        if not directory_settings.allowed_roots:
+            raise RAGServiceError(
+                "No RAG directories are authorized. Configure an authorized directory in the "
+                "Knowledge Base page first."
+            )
+
+        requested_text = (path or ".").strip() or "."
+        requested = Path(requested_text).expanduser()
+        if workspace_root and workspace_root.strip():
+            workspace = self._resolve_existing_directory(workspace_root, field_name="workspace_root")
+            if not self._find_authorized_root(workspace, directory_settings.allowed_roots):
+                raise RAGServiceError("Workspace root is not inside an authorized RAG directory.")
+            candidate = requested.resolve() if requested.is_absolute() else (workspace / requested).resolve()
+        elif requested.is_absolute():
+            candidate = requested.resolve()
+        else:
+            if not directory_settings.default_root:
+                raise RAGServiceError(
+                    "No default RAG directory is configured. Set one in the Knowledge Base page."
+                )
+            candidate = (Path(directory_settings.default_root) / requested).resolve()
+
+        if not candidate.is_dir():
+            raise RAGServiceError(f"`{candidate}` is not a directory.")
+        authorized_root = self._find_authorized_root(candidate, directory_settings.allowed_roots)
+        if authorized_root is None:
+            raise RAGServiceError("Requested RAG path is outside the authorized directories.")
+
+        relative = candidate.relative_to(authorized_root)
+        return str(authorized_root), "." if str(relative) == "." else relative.as_posix()
+
+    def _resolve_existing_directory(self, value: str, *, field_name: str) -> Path:
+        try:
+            path = Path(value).expanduser().resolve(strict=True)
+        except FileNotFoundError as exc:
+            raise RAGServiceError(f"`{field_name}` directory `{value}` does not exist.") from exc
+        if not path.is_dir():
+            raise RAGServiceError(f"`{field_name}` must be a directory.")
+        return path
+
+    def _find_authorized_root(self, candidate: Path, allowed_roots: list[str]) -> Path | None:
+        matches: list[Path] = []
+        for raw_root in allowed_roots:
+            root = Path(raw_root).resolve()
+            try:
+                candidate.relative_to(root)
+            except ValueError:
+                continue
+            matches.append(root)
+        if not matches:
+            return None
+        return max(matches, key=lambda item: len(str(item)))
 
     def _fast_pdf_parser_name(self) -> str | None:
         if importlib.util.find_spec("pymupdf4llm") is not None:

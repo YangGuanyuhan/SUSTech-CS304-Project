@@ -31,12 +31,14 @@
             </svg>
             <span>测验</span>
           </button>
-          <button :class="['tab-item', { active: activeView === 'files' }]" @click="activeView = 'files'">
+          <button :class="['tab-item', { active: activeView === 'rag' }]" @click="activeView = 'rag'">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
-              <polyline points="13 2 13 9 20 9"/>
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+              <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/>
+              <path d="M8 7h8"/>
+              <path d="M8 11h6"/>
             </svg>
-            <span>文件</span>
+            <span>知识库</span>
           </button>
           <button :class="['tab-item', { active: activeView === 'calendar' }]" @click="activeView = 'calendar'">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -281,7 +283,7 @@
       </div>
       </template>
 
-      <FilePanel v-else-if="activeView === 'files'" />
+      <RagPanel v-else-if="activeView === 'rag'" />
       <CalendarPanel v-else />
     </section>
 
@@ -315,7 +317,7 @@ import CalendarPanel from "./components/CalendarPanel.vue";
 import QuizPanel from "./components/QuizPanel.vue";
 import DatabaseOverviewPanel from "./components/DatabaseOverviewPanel.vue";
 import QuizHistoryPanel from "./components/QuizHistoryPanel.vue";
-import FilePanel from "./components/FilePanel.vue";
+import RagPanel from "./components/RagPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import { getCourses, getHealth, streamApprovalDecision, streamChat } from "./api/client";
 

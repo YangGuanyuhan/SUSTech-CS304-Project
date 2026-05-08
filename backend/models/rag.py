@@ -49,3 +49,9 @@ class RAGQueryResult(BaseModel):
     citations: list[RAGChunkHit] = Field(default_factory=list)
     provider: str = "raganything"
     raw_result: Any | None = None
+
+
+class RAGDirectorySettings(BaseModel):
+    allowed_roots: list[str] = Field(default_factory=list)
+    default_root: str | None = None
+    recursive_default: bool = True
