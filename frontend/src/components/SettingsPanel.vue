@@ -457,7 +457,7 @@ function showMessage(text, type = "info") {
   messageTimer = window.setTimeout(() => {
     message.value = "";
     messageTimer = null;
-  }, 10000);
+  }, 3000);
 }
 
 function applyState(payload) {
