@@ -13,12 +13,14 @@ from backend.db.models import (
     BlackboardCacheRecord,
     CalendarEventRecord,
     EmailDraftRecord,
+    LongTermMemoryRecord,
     MemoryRecord,
     QuizAnswerRecord,
     QuizAttemptRecord,
     QuizQuestionRecord,
     QuizSessionRecord,
     TaskHistoryRecord,
+    ToolUsagePatternRecord,
     UserPreferenceRecord,
 )
 
@@ -151,6 +153,8 @@ class TaskHistoryRepository(Repository):
         user_input: str,
         agent_response: str,
         tools_used: list[str] | None = None,
+        token_count: int = 0,
+        importance_score: float = 1.0,
         owner_id: str = "local-user",
     ) -> TaskHistoryRecord:
         return self._persist(
@@ -160,6 +164,8 @@ class TaskHistoryRepository(Repository):
                 user_input=user_input,
                 agent_response=agent_response,
                 tools_used=tools_used or [],
+                token_count=token_count,
+                importance_score=importance_score,
             )
         )
 
@@ -560,3 +566,158 @@ class DatabaseAnalyticsRepository(Repository):
                 "typed_json_ready": True,
             },
         }
+
+
+class LongTermMemoryRepository(Repository):
+    """Repository for enhanced long-term memories with semantic search."""
+
+    def create(
+        self,
+        *,
+        memory_type: str,
+        content: str,
+        embedding: list[float] | None = None,
+        meta_data: dict[str, Any] | None = None,
+        source_session_id: str | None = None,
+        importance_score: float = 1.0,
+        owner_id: str = "local-user",
+    ) -> LongTermMemoryRecord:
+        return self._persist(
+            LongTermMemoryRecord(
+                owner_id=owner_id,
+                memory_type=memory_type,
+                content=content,
+                embedding=embedding,
+                meta_data=meta_data or {},
+                source_session_id=source_session_id,
+                importance_score=importance_score,
+            )
+        )
+
+    def list(
+        self,
+        *,
+        memory_type: str | None = None,
+        owner_id: str = "local-user",
+        limit: int | None = None,
+    ) -> list[LongTermMemoryRecord]:
+        stmt = select(LongTermMemoryRecord).where(LongTermMemoryRecord.owner_id == owner_id)
+        if memory_type:
+            stmt = stmt.where(LongTermMemoryRecord.memory_type == memory_type)
+        stmt = stmt.order_by(LongTermMemoryRecord.created_at.desc())
+        if limit:
+            stmt = stmt.limit(limit)
+        return list(self.session.execute(stmt).scalars())
+
+    def get(self, memory_id: str, *, owner_id: str = "local-user") -> LongTermMemoryRecord | None:
+        stmt = select(LongTermMemoryRecord).where(
+            LongTermMemoryRecord.id == memory_id,
+            LongTermMemoryRecord.owner_id == owner_id,
+        )
+        return self.session.execute(stmt).scalar_one_or_none()
+
+    def update_access(self, memory_id: str, *, owner_id: str = "local-user") -> bool:
+        """Update access count and last_accessed timestamp."""
+        memory = self.get(memory_id, owner_id=owner_id)
+        if memory is None:
+            return False
+        memory.access_count += 1
+        memory.last_accessed = datetime.now(UTC)
+        self.session.commit()
+        return True
+
+    def delete(self, memory_id: str, *, owner_id: str = "local-user") -> bool:
+        stmt = delete(LongTermMemoryRecord).where(
+            LongTermMemoryRecord.id == memory_id,
+            LongTermMemoryRecord.owner_id == owner_id,
+        )
+        result = self.session.execute(stmt)
+        self.session.commit()
+        return result.rowcount > 0
+
+
+class ToolUsagePatternRepository(Repository):
+    """Repository for learned tool usage patterns."""
+
+    def create(
+        self,
+        *,
+        tool_name: str,
+        user_query: str,
+        tool_arguments: dict[str, Any],
+        outcome: str,
+        success: bool = True,
+        confidence_score: float = 1.0,
+        owner_id: str = "local-user",
+    ) -> ToolUsagePatternRecord:
+        return self._persist(
+            ToolUsagePatternRecord(
+                owner_id=owner_id,
+                tool_name=tool_name,
+                user_query=user_query,
+                tool_arguments=tool_arguments,
+                outcome=outcome,
+                success=success,
+                confidence_score=confidence_score,
+            )
+        )
+
+    def find_similar(
+        self,
+        *,
+        tool_name: str,
+        owner_id: str = "local-user",
+        min_confidence: float = 0.6,
+        limit: int = 5,
+    ) -> list[ToolUsagePatternRecord]:
+        """Find successful patterns for a specific tool."""
+        stmt = (
+            select(ToolUsagePatternRecord)
+            .where(
+                ToolUsagePatternRecord.owner_id == owner_id,
+                ToolUsagePatternRecord.tool_name == tool_name,
+                ToolUsagePatternRecord.success == True,  # noqa: E712
+                ToolUsagePatternRecord.confidence_score >= min_confidence,
+            )
+            .order_by(
+                ToolUsagePatternRecord.confidence_score.desc(),
+                ToolUsagePatternRecord.usage_count.desc(),
+            )
+            .limit(limit)
+        )
+        return list(self.session.execute(stmt).scalars())
+
+    def increment_usage(self, pattern_id: str, *, owner_id: str = "local-user") -> bool:
+        """Increment usage count and update last_used timestamp."""
+        stmt = select(ToolUsagePatternRecord).where(
+            ToolUsagePatternRecord.id == pattern_id,
+            ToolUsagePatternRecord.owner_id == owner_id,
+        )
+        pattern = self.session.execute(stmt).scalar_one_or_none()
+        if pattern is None:
+            return False
+        pattern.usage_count += 1
+        pattern.last_used = datetime.now(UTC)
+        # Increase confidence slightly with each successful use
+        pattern.confidence_score = min(1.0, pattern.confidence_score + 0.05)
+        self.session.commit()
+        return True
+
+    def list_by_tool(
+        self,
+        *,
+        tool_name: str,
+        owner_id: str = "local-user",
+        limit: int = 10,
+    ) -> list[ToolUsagePatternRecord]:
+        stmt = (
+            select(ToolUsagePatternRecord)
+            .where(
+                ToolUsagePatternRecord.owner_id == owner_id,
+                ToolUsagePatternRecord.tool_name == tool_name,
+            )
+            .order_by(ToolUsagePatternRecord.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.execute(stmt).scalars())
+

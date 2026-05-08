@@ -12,9 +12,12 @@ from sqlalchemy.orm import Session
 from backend.agent.pydantic_runtime import PydanticAIRuntime
 from backend.models.tooling import AgentTurnResult, ToolTrace
 from backend.services.approval_service import approval_service
+from backend.services.context_manager import ContextWindowManager
 from backend.services.llm_logging_service import llm_logger
+from backend.services.memory_consolidator import MemoryConsolidator
 from backend.services.runtime_settings import runtime_settings
 from backend.services.task_service import TaskHistoryService
+from backend.services.tool_learning_service import ToolLearningService
 
 
 class StudentProductivityAgent:
@@ -23,9 +26,43 @@ class StudentProductivityAgent:
     def __init__(self, session: Session):
         self.session = session
         self.runtime = PydanticAIRuntime(session)
+        self.context_manager = ContextWindowManager(session)
+        self.tool_learning = ToolLearningService(session)
+        self.memory_consolidator = MemoryConsolidator(session)
 
-    async def _build_history(self, session_id: str) -> list[dict[str, str]]:
-        return await TaskHistoryService(self.session).get_recent_messages(session_id, limit=10)
+    async def _build_history(
+        self, session_id: str, max_context_tokens: int = 8000
+    ) -> list[dict[str, str]]:
+        """Build conversation history with intelligent context management."""
+        # Get recent messages from database
+        raw_messages = await TaskHistoryService(self.session).get_recent_messages(
+            session_id, limit=20
+        )
+
+        if not raw_messages:
+            return []
+
+        # Apply context window management
+        prepared_messages, stats = await self.context_manager.prepare_context(
+            raw_messages, max_context_tokens=max_context_tokens, min_recent_messages=5
+        )
+
+        # Log compression stats if compression occurred
+        if stats["compression_ratio"] < 1.0:
+            llm_logger.log_event(
+                session_id,
+                "context_compression",
+                {
+                    "original_messages": stats["original_message_count"],
+                    "final_messages": stats["final_message_count"],
+                    "original_tokens": stats["original_tokens"],
+                    "final_tokens": stats["final_tokens"],
+                    "tokens_saved": stats["tokens_saved"],
+                    "compression_ratio": round(stats["compression_ratio"], 3),
+                },
+            )
+
+        return prepared_messages
 
     async def _emit_tool_events(
         self,
@@ -255,6 +292,25 @@ class StudentProductivityAgent:
                 result.response,
                 result.tools_used,
             )
+
+            # Learn from successful tool usage
+            if result.tool_events:
+                await self.tool_learning.extract_patterns_from_tool_events(
+                    user_query=message,
+                    tool_events=result.tool_events,
+                )
+
+            # Extract memories from conversation
+            try:
+                await self.memory_consolidator.extract_memory_from_conversation(
+                    user_input=message,
+                    agent_response=result.response,
+                    session_id=session_id,
+                )
+            except Exception:
+                # Don't fail the request if memory extraction fails
+                pass
+
         return result.model_dump(mode="json")
 
     async def resume_approval(
@@ -359,6 +415,14 @@ class StudentProductivityAgent:
                 result.response,
                 result.tools_used,
             )
+
+            # Learn from successful tool usage after approval
+            if result.tool_events:
+                await self.tool_learning.extract_patterns_from_tool_events(
+                    user_query=pending.user_input,
+                    tool_events=result.tool_events,
+                )
+
         return result.model_dump(mode="json")
 
 

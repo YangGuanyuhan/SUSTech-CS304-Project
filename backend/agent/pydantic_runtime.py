@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from backend.models.tooling import ToolTrace
 from backend.services.agent_tool_service import AgentToolService
 from backend.services.runtime_settings import runtime_settings
+from backend.services.tool_learning_service import ToolLearningService, get_static_examples
 
 SYSTEM_PROMPT = """
 You are Student Productivity Agent, a study assistant for SUSTech students.
@@ -48,10 +49,10 @@ Tool usage rules:
 6. Use memory tools to save durable user preferences, project facts, and useful follow-up context when appropriate.
 7. If a tool result reports an error, explain that error plainly and suggest the next step.
 8. Do NOT guess or hallucinate timestamps or dates. If the user does not explicitly mention a specific time, do not include unverified times when saving memories.
-9. When saving memories, only record what actually happened in this conversation. 
+9. When saving memories, only record what actually happened in this conversation.
    Do not infer or assume actions that were not explicitly performed or confirmed by a tool result.
-10. After successfully creating a quiz, do NOT present questions in chat. 
-    Instead, inform the user that the quiz is ready and direct them to the quiz 
+10. After successfully creating a quiz, do NOT present questions in chat.
+    Instead, inform the user that the quiz is ready and direct them to the quiz
     interface to begin.
 11. Use calendar tools for scheduling requests, event lookup, reminders, or timetable management.
 12. Blackboard calendar events are read-only. If the user wants to modify one, first copy it into a local event.
@@ -61,11 +62,63 @@ Tool usage rules:
 14. RAG indexing is limited to directories configured in the Knowledge Base page. Use
     rag_index_folder with a relative path under the default RAG directory whenever possible.
     Do not ask to index arbitrary computer paths outside the configured RAG roots.
+
 Response style:
 - Be concise and practical.
 - Respond in Markdown when useful.
 - Do not invent file contents, command output, or webpage content.
 """.strip()
+
+
+def build_tool_examples_prompt(session: Session, user_query: str) -> str:
+    """
+    Build dynamic tool examples based on learned patterns and static examples.
+
+    Args:
+        session: Database session
+        user_query: Current user query
+
+    Returns:
+        Formatted tool examples string
+    """
+    tool_learning = ToolLearningService(session)
+
+    # Identify potentially relevant tools based on query keywords
+    query_lower = user_query.lower()
+    relevant_tools = []
+
+    if any(word in query_lower for word in ["remember", "recall", "discussed", "said"]):
+        relevant_tools.append("memory_search")
+    if any(word in query_lower for word in ["save", "remember", "store", "keep"]):
+        relevant_tools.append("memory_save")
+    if any(word in query_lower for word in ["schedule", "calendar", "event", "meeting"]):
+        relevant_tools.append("calendar_list_events")
+    if any(word in query_lower for word in ["course", "material", "notes", "lecture"]):
+        relevant_tools.append("rag_search")
+    if any(word in query_lower for word in ["file", "code", "read", "show"]):
+        relevant_tools.append("read_local_file")
+    if any(word in query_lower for word in ["class", "courses"]):
+        relevant_tools.append("blackboard_get_all_courses")
+
+    if not relevant_tools:
+        return ""
+
+    # Build examples prompt
+    examples_parts = ["\n\nTool Usage Examples:"]
+
+    for tool_name in relevant_tools[:3]:  # Limit to 3 tools to save tokens
+        # Get static examples
+        static_examples = get_static_examples(tool_name)
+        if static_examples:
+            examples_parts.append(f"\n{tool_name}:")
+            for ex in static_examples[:2]:  # Max 2 examples per tool
+                examples_parts.append(
+                    f"  - When: {ex['scenario']}\n"
+                    f"    Example: \"{ex['example_query']}\"\n"
+                    f"    Result: {ex['expected_outcome']}"
+                )
+
+    return "\n".join(examples_parts) if len(examples_parts) > 1 else ""
 
 
 @dataclass
@@ -108,12 +161,12 @@ class PydanticAIRuntime:
             return OpenAIModel(config.model, provider=provider, profile=profile)
         return OpenAIModel(config.model, provider=provider)
 
-    def _build_agent(self) -> Agent[AgentDeps, str | DeferredToolRequests]:
+    def _build_agent(self, system_prompt: str = SYSTEM_PROMPT) -> Agent[AgentDeps, str | DeferredToolRequests]:
         agent = Agent[AgentDeps, str | DeferredToolRequests](
             model=self._build_model(),
             deps_type=AgentDeps,
             output_type=str | DeferredToolRequests,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             retries=1,
             defer_model_check=True,
         )
@@ -493,7 +546,16 @@ class PydanticAIRuntime:
             tool_service=self.tool_service,
             on_tool_events=on_tool_events,
         )
-        agent = self._build_agent()
+
+        # Build dynamic system prompt with tool examples
+        dynamic_prompt = SYSTEM_PROMPT
+        if user_input:
+            tool_examples = build_tool_examples_prompt(self.session, user_input)
+            if tool_examples:
+                dynamic_prompt = SYSTEM_PROMPT + tool_examples
+
+        # Build agent with dynamic prompt
+        agent = self._build_agent(system_prompt=dynamic_prompt)
         final_history = message_history or self._history_to_model_messages(history or [])
         run_result = await agent.run(
             user_prompt=user_input,
