@@ -176,6 +176,12 @@ STATIC_TOOL_EXAMPLES = {
     ],
     "rag_search": [
         {
+            "scenario": "When user asks about an uploaded file in the current chat",
+            "example_query": "分析一下我上传的 PDF",
+            "tool_call": {"query": "uploaded PDF summary main points", "top_k": 10},
+            "expected_outcome": "Retrieves content from current-chat uploaded files before any local workspace search",
+        },
+        {
             "scenario": "When user asks about course materials",
             "example_query": "What does the lecture say about algorithms?",
             "tool_call": {"query": "algorithms", "top_k": 5},
@@ -186,6 +192,14 @@ STATIC_TOOL_EXAMPLES = {
             "example_query": "Find information about data structures in my notes",
             "tool_call": {"query": "data structures", "top_k": 5},
             "expected_outcome": "Retrieves relevant sections from indexed notes",
+        },
+    ],
+    "rag_answer": [
+        {
+            "scenario": "When user wants a summary or analysis of an uploaded PDF/PPT",
+            "example_query": "总结一下我上传的课件",
+            "tool_call": {"query": "summarize uploaded course material", "top_k": 10},
+            "expected_outcome": "Answers from current-chat uploaded file content with citations",
         },
     ],
     "read_local_file": [
