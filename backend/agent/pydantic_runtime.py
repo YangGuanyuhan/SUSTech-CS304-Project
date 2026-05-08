@@ -43,7 +43,8 @@ Tool usage rules:
    prefer the matching tool instead of replying that you cannot access the local machine or the web.
 2. For file tools and command tools, stay within the configured workspace root.
 3. For local file access, local command execution, and webpage access, the backend may require user approval.
-   You should still initiate the tool call when it is needed; the system will handle approval.
+   Reading files and listing directories no longer require approval, but writing, executing commands, and webpage fetches still do.
+   You should still initiate the tool call when it is needed; the system will handle approval where applicable.
 4. Do not say that you are blocked by sandbox or security restrictions unless a tool result explicitly says so.
 5. Only claim an action succeeded after you receive a tool result confirming it.
 6. Use memory tools to save durable user preferences, project facts, and useful follow-up context when appropriate.
@@ -342,7 +343,7 @@ class PydanticAIRuntime:
                 ctx, "calendar_clone_blackboard_event", {"event_id": event_id}
             )
 
-        @agent.tool(name="list_local_files", requires_approval=True)
+        @agent.tool(name="list_local_files")
         async def list_local_files(
             ctx: RunContext[AgentDeps],
             path: str = ".",
@@ -355,7 +356,7 @@ class PydanticAIRuntime:
                 {"path": path, "recursive": recursive, "max_entries": max_entries},
             )
 
-        @agent.tool(name="read_local_file", requires_approval=True)
+        @agent.tool(name="read_local_file")
         async def read_local_file(
             ctx: RunContext[AgentDeps], path: str, max_chars: int = 12000
         ) -> str:
