@@ -94,6 +94,33 @@
       </article>
     </section>
 
+    <section class="content-panel workspace-panel">
+      <div class="panel-heading">
+        <div class="heading-icon teal-bg">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+        </div>
+        <div>
+          <h3>工作目录</h3>
+          <p>设置当前对话使用的本地项目目录。</p>
+        </div>
+      </div>
+      <div class="workspace-config">
+        <label class="workspace-field">
+          <span>工作目录</span>
+          <WorkspaceDirectoryPicker
+            v-model="workspaceRootModel"
+            placeholder="E:\2026_Spring\Course Notes"
+            @error="handleDirectoryPickerError"
+          />
+        </label>
+        <button class="primary" type="button" :disabled="!workspaceRootModel.trim()" @click="saveWorkspaceRoot">
+          保存目录
+        </button>
+      </div>
+    </section>
+
     <!-- Two Column Layout -->
     <main class="rag-layout">
       <!-- Directory Permissions -->
@@ -113,9 +140,15 @@
         <form class="config-form" @submit.prevent="addAllowedRoot">
           <label class="full">
             <span>授权目录</span>
-            <input v-model="newRoot" type="text" placeholder="E:\\2026_Spring\\Course Notes" />
+            <input v-model="newRoot" type="text" placeholder="E:\2026_Spring\Course Notes" />
           </label>
           <div class="actions full">
+            <WorkspaceDirectoryPicker
+              v-model="newRoot"
+              button-only
+              :disabled="saving"
+              @error="handleDirectoryPickerError"
+            />
             <button type="submit" class="primary" :disabled="saving || !newRoot.trim()">添加目录</button>
           </div>
         </form>
@@ -318,7 +351,17 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from "vue";
+import WorkspaceDirectoryPicker from "./WorkspaceDirectoryPicker.vue";
 import { apiClient } from "../api/client";
+
+const props = defineProps({
+  workspaceRoot: {
+    type: String,
+    default: ""
+  }
+});
+
+const emit = defineEmits(["update:workspaceRoot"]);
 
 const loading = ref(false);
 const saving = ref(false);
@@ -339,6 +382,11 @@ const settings = reactive({
   recursive_default: true
 });
 const message = reactive({ text: "", type: "info" });
+
+const workspaceRootModel = computed({
+  get: () => props.workspaceRoot || "",
+  set: (value) => emit("update:workspaceRoot", value)
+});
 
 const canIndex = computed(() => Boolean(settings.default_root || indexPath.value.trim()));
 const sourceCounts = computed(() => {
@@ -361,6 +409,17 @@ watch(
 function showMessage(text, type = "info") {
   message.text = text;
   message.type = type;
+}
+
+function handleDirectoryPickerError(error) {
+  showMessage(`目录选择失败：${error.message}`, "error");
+}
+
+function saveWorkspaceRoot() {
+  const root = workspaceRootModel.value.trim();
+  if (!root) return;
+  emit("update:workspaceRoot", root);
+  showMessage("工作目录已保存。", "success");
 }
 
 function applySettings(payload) {
@@ -773,6 +832,21 @@ onMounted(loadAll);
 
 .content-panel.full {
   width: 100%;
+}
+
+.workspace-panel {
+  gap: 18px;
+}
+
+.workspace-config {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: end;
+}
+
+.workspace-field {
+  min-width: 0;
 }
 
 .panel-heading {
@@ -1273,6 +1347,10 @@ button.danger:hover {
 
   .status-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workspace-config {
+    grid-template-columns: 1fr;
   }
 
   .source-thead,

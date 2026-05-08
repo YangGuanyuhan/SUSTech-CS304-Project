@@ -143,18 +143,6 @@
             <span class="meta-chip subtle">{{ activeConversation.messages.length }} 条消息</span>
           </div>
         </div>
-        <div v-if="headerExpanded" class="header-right">
-          <div class="workspace-field">
-            <span>工作目录</span>
-            <WorkspaceDirectoryPicker
-              v-model="activeConversation.workspaceRoot"
-              @error="handleWorkspacePickerError"
-            />
-          </div>
-          <button class="header-btn" :disabled="loading" @click="loadCourses">
-            加载课程
-          </button>
-        </div>
         <button
           :class="['header-toggle', { collapsed: !headerExpanded }]"
           type="button"
@@ -305,7 +293,11 @@
       </div>
       </template>
 
-      <RagPanel v-else-if="activeView === 'rag'" />
+      <RagPanel
+        v-else-if="activeView === 'rag'"
+        :workspace-root="activeConversation.workspaceRoot"
+        @update:workspace-root="updateActiveWorkspaceRoot"
+      />
       <CalendarPanel v-else />
     </section>
 
@@ -341,9 +333,7 @@ import DatabaseOverviewPanel from "./components/DatabaseOverviewPanel.vue";
 import QuizHistoryPanel from "./components/QuizHistoryPanel.vue";
 import RagPanel from "./components/RagPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
-import WorkspaceDirectoryPicker from "./components/WorkspaceDirectoryPicker.vue";
 import {
-  getCourses,
   getHealth,
   streamApprovalDecision,
   streamChat
@@ -609,22 +599,10 @@ function appendMessage(role, content) {
   scrollToBottom();
 }
 
-function handleWorkspacePickerError(error) {
-  appendMessage("assistant", `工作目录选择失败: ${error.message}`);
-}
-
-async function loadCourses() {
-  loading.value = true;
-  try {
-    const response = await getCourses();
-    const courses = response.data?.data ?? [];
-    const summary = courses.map((item) => `- ${item.name} (${item.blackboard_course_id})`).join("\n");
-    appendMessage("assistant", summary || "没有返回课程。");
-  } catch (error) {
-    appendMessage("assistant", `课程请求失败: ${error.message}`);
-  } finally {
-    loading.value = false;
-  }
+function updateActiveWorkspaceRoot(path) {
+  activeConversation.value.workspaceRoot = path;
+  activeConversation.value.updatedAt = Date.now();
+  persistConversations();
 }
 
 async function submitMessage() {

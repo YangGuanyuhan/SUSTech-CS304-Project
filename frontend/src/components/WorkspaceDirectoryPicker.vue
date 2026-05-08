@@ -1,11 +1,12 @@
 <template>
-  <div class="workspace-picker">
+  <div :class="['workspace-picker', { 'button-only': buttonOnly }]">
     <input
+      v-if="!buttonOnly"
       :value="modelValue"
       type="text"
-      readonly
-      placeholder="Select a project directory"
+      :placeholder="placeholder"
       title="Selected workspace root"
+      @input="emit('update:modelValue', $event.target.value)"
     />
     <button
       class="workspace-picker-btn"
@@ -124,6 +125,14 @@ const props = defineProps({
   disabled: {
     type: Boolean,
     default: false
+  },
+  buttonOnly: {
+    type: Boolean,
+    default: false
+  },
+  placeholder: {
+    type: String,
+    default: "E:\\2026_Spring\\Course Notes"
   }
 });
 
@@ -185,17 +194,20 @@ function selectDirectory(path) {
   width: 100%;
 }
 
+.workspace-picker.button-only {
+  width: auto;
+}
+
 .workspace-picker input {
   width: 280px;
   min-width: 0;
   flex: 1;
   padding: 12px 14px;
   border: 1px solid rgba(53, 62, 72, 0.08);
-  border-radius: 16px;
+  border-radius: 14px;
   background: rgba(255, 255, 255, 0.88);
   font: inherit;
   font-size: 13px;
-  cursor: default;
   transition: all 0.2s ease;
 }
 
