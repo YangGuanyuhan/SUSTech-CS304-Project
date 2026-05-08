@@ -1,163 +1,171 @@
-"""Embedding generation service using configured LLM API."""
+"""Embedding generation service using configured LLM API.
+
+Design principle: never silently return a fake embedding. Many OpenAI-compatible
+endpoints (DashScope chat models, Claude, etc.) don't support /embeddings at all.
+If real embeddings aren't available we return None and let the caller fall back
+to pure keyword search, instead of poisoning the DB with hash-based vectors that
+look like embeddings but carry no semantic information.
+"""
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import logging
+import time
 
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
 from backend.services.runtime_settings import runtime_settings
 
+logger = logging.getLogger(__name__)
+
 
 class EmbeddingService:
-    """Generate embeddings using the configured LLM API."""
+    """Generate embeddings using the configured LLM API, or admit it can't.
 
-    def __init__(self):
-        """Initialize embedding service."""
+    Probes the endpoint once and caches the verdict per (base_url, model) tuple
+    so we don't pay the probe cost on every call.
+    """
+
+    # Class-level cache: key=(base_url, embedding_model) -> bool support
+    _support_cache: dict[tuple[str, str], bool] = {}
+    _probe_lock = asyncio.Lock()
+
+    def __init__(self) -> None:
         pass
 
-    def _build_client(self) -> tuple[AsyncOpenAI, str]:
-        """Build OpenAI client from runtime settings."""
+    def _resolve_embedding_model(self, chat_model: str) -> str:
+        """Pick a likely embedding model name based on the configured chat model.
+
+        These are heuristics — if they're wrong, the probe will catch it and
+        we'll mark the endpoint unsupported.
+        """
+        m = chat_model.lower()
+        if "gpt" in m or m.startswith("o1") or m.startswith("o3"):
+            return "text-embedding-3-small"
+        if "qwen" in m or "dashscope" in m:
+            return "text-embedding-v3"
+        if "glm" in m or "zhipu" in m:
+            return "embedding-3"
+        if "deepseek" in m:
+            # DeepSeek as of late 2024 has no public embedding endpoint.
+            # The probe will return False and we'll skip embeddings entirely.
+            return "deepseek-embedding"
+        # Default guess for OpenAI-compatible endpoints.
+        return "text-embedding-3-small"
+
+    def _build_client(self) -> tuple[AsyncOpenAI, str, str]:
+        """Return (client, embedding_model, base_url_key)."""
         config = runtime_settings.get_llm_config()
         api_key = runtime_settings.get_secret_api_key()
-
         if not api_key:
-            raise ValueError("No API key configured for embedding generation")
+            raise ValueError("No API key configured")
 
         client = AsyncOpenAI(
             api_key=api_key,
             base_url=config.base_url or None,
             http_client=DefaultAsyncHttpxClient(trust_env=False),
         )
+        return client, self._resolve_embedding_model(config.model), config.base_url or ""
 
-        # Try to use a dedicated embedding model if available
-        # Otherwise fall back to using the chat model
-        embedding_model = config.model
-        if "gpt" in config.model.lower():
-            # For OpenAI models, use text-embedding-3-small
-            embedding_model = "text-embedding-3-small"
-        elif "claude" in config.model.lower():
-            # Claude doesn't have embedding models, would need to use chat
-            embedding_model = config.model
+    async def _probe_support(self) -> bool:
+        """Lazily check whether the configured endpoint actually supports embeddings.
 
-        return client, embedding_model
-
-    async def generate_embedding(self, text: str) -> list[float]:
+        Cached per (base_url, embedding_model). One real call, with a short timeout.
         """
-        Generate embedding for a single text.
+        try:
+            client, model, base_url = self._build_client()
+        except ValueError:
+            return False
 
-        Args:
-            text: Text to embed
+        cache_key = (base_url, model)
+        if cache_key in self._support_cache:
+            return self._support_cache[cache_key]
 
-        Returns:
-            Embedding vector as list of floats
+        async with self._probe_lock:
+            if cache_key in self._support_cache:
+                return self._support_cache[cache_key]
+
+            started = time.perf_counter()
+            try:
+                # Tiny payload, short timeout — we just want a yes/no.
+                await asyncio.wait_for(
+                    client.embeddings.create(input="ok", model=model),
+                    timeout=8.0,
+                )
+                supported = True
+                logger.info(
+                    "Embeddings supported on %s (model=%s, %.0fms)",
+                    base_url or "<default>",
+                    model,
+                    (time.perf_counter() - started) * 1000,
+                )
+            except Exception as exc:
+                supported = False
+                logger.warning(
+                    "Embeddings unavailable on %s (model=%s): %s. "
+                    "Long-term memory will use keyword search only.",
+                    base_url or "<default>",
+                    model,
+                    type(exc).__name__,
+                )
+
+            self._support_cache[cache_key] = supported
+            return supported
+
+    @classmethod
+    def reset_probe_cache(cls) -> None:
+        """Forget the probe verdict. Call this when LLM settings change."""
+        cls._support_cache.clear()
+
+    async def generate_embedding(self, text: str) -> list[float] | None:
+        """Return a real embedding vector, or None if the endpoint can't produce one.
+
+        Callers MUST handle None — never assume an embedding is always available.
         """
-        if not text.strip():
-            # Return zero vector for empty text
-            return [0.0] * 1536  # Standard embedding dimension
+        if not text or not text.strip():
+            return None
+
+        if not await self._probe_support():
+            return None
 
         try:
-            client, model = self._build_client()
+            client, model, _ = self._build_client()
+            response = await asyncio.wait_for(
+                client.embeddings.create(input=text, model=model),
+                timeout=15.0,
+            )
+            return list(response.data[0].embedding)
+        except Exception as exc:
+            logger.warning("Embedding call failed: %s", exc)
+            return None
 
-            # Try using embeddings API
-            response = await client.embeddings.create(input=text, model=model)
-            return response.data[0].embedding
-
-        except Exception as e:
-            # Fallback: use a simple hash-based embedding for compatibility
-            # This is not semantic but allows the system to work
-            return self._fallback_embedding(text)
-
-    async def generate_embeddings(self, texts: list[str]) -> list[list[float]]:
-        """
-        Generate embeddings for multiple texts in batch.
-
-        Args:
-            texts: List of texts to embed
-
-        Returns:
-            List of embedding vectors
-        """
+    async def generate_embeddings(self, texts: list[str]) -> list[list[float] | None]:
+        """Batch version. Each slot is either a real vector or None."""
         if not texts:
             return []
 
+        if not await self._probe_support():
+            return [None] * len(texts)
+
         try:
-            client, model = self._build_client()
-
-            # Batch embedding generation
-            response = await client.embeddings.create(input=texts, model=model)
-            return [item.embedding for item in response.data]
-
-        except Exception as e:
-            # Fallback to individual generation
-            embeddings = []
-            for text in texts:
-                try:
-                    embedding = await self.generate_embedding(text)
-                    embeddings.append(embedding)
-                except Exception:
-                    embeddings.append(self._fallback_embedding(text))
-            return embeddings
-
-    def _fallback_embedding(self, text: str, dimension: int = 1536) -> list[float]:
-        """
-        Generate a simple fallback embedding when API is unavailable.
-
-        This uses a deterministic hash-based approach that's not semantic
-        but allows the system to function.
-
-        Args:
-            text: Text to embed
-            dimension: Embedding dimension
-
-        Returns:
-            Pseudo-embedding vector
-        """
-        import hashlib
-        import math
-
-        # Use hash to generate deterministic values
-        hash_obj = hashlib.sha256(text.encode())
-        hash_bytes = hash_obj.digest()
-
-        # Convert hash bytes to floats
-        embedding = []
-        for i in range(dimension):
-            # Use different parts of the hash for each dimension
-            byte_idx = (i * 2) % len(hash_bytes)
-            value = int.from_bytes(hash_bytes[byte_idx : byte_idx + 2], "big")
-            # Normalize to [-1, 1]
-            normalized = (value / 65535.0) * 2 - 1
-            embedding.append(normalized)
-
-        # Normalize to unit vector
-        magnitude = math.sqrt(sum(x * x for x in embedding))
-        if magnitude > 0:
-            embedding = [x / magnitude for x in embedding]
-
-        return embedding
+            client, model, _ = self._build_client()
+            response = await asyncio.wait_for(
+                client.embeddings.create(input=texts, model=model),
+                timeout=30.0,
+            )
+            return [list(item.embedding) for item in response.data]
+        except Exception as exc:
+            logger.warning("Batch embedding call failed: %s", exc)
+            return [None] * len(texts)
 
     @staticmethod
     def cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
-        """
-        Calculate cosine similarity between two vectors.
-
-        Args:
-            vec1: First vector
-            vec2: Second vector
-
-        Returns:
-            Similarity score between -1 and 1
-        """
         if len(vec1) != len(vec2):
             raise ValueError("Vectors must have same dimension")
-
-        dot_product = sum(a * b for a, b in zip(vec1, vec2))
-        magnitude1 = sum(a * a for a in vec1) ** 0.5
-        magnitude2 = sum(b * b for b in vec2) ** 0.5
-
-        if magnitude1 == 0 or magnitude2 == 0:
+        dot = sum(a * b for a, b in zip(vec1, vec2))
+        m1 = sum(a * a for a in vec1) ** 0.5
+        m2 = sum(b * b for b in vec2) ** 0.5
+        if m1 == 0 or m2 == 0:
             return 0.0
-
-        return dot_product / (magnitude1 * magnitude2)
+        return dot / (m1 * m2)

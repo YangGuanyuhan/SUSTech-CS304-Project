@@ -31,6 +31,18 @@ DEFAULT_MIN_RECENT_MESSAGES = 20
 DEFAULT_HISTORY_LIMIT = 200  # recent user/assistant pairs pulled from task_history
 DEFAULT_LTM_INJECT_LIMIT = 5  # long-term memories injected per turn
 DEFAULT_LTM_THRESHOLD = 0.5  # semantic threshold for cross-conversation memory recall
+# Auto-injecting LTM on every turn calls the embedding API synchronously, which adds
+# real latency (often >30s) to every user message. Off by default — the agent can
+# always call memory_search explicitly when cross-session recall is actually needed.
+# Set env STUDYAI_AUTO_LTM_INJECT=1 to re-enable.
+import os
+_AUTO_LTM_INJECT = os.environ.get("STUDYAI_AUTO_LTM_INJECT", "0") == "1"
+# Auto-injecting LTM on every turn calls the embedding API synchronously, which adds
+# real latency (often >30s) to every user message. Off by default — the agent can
+# always call memory_search explicitly when cross-session recall is actually needed.
+# Set env STUDYAI_AUTO_LTM_INJECT=1 to re-enable.
+import os
+_AUTO_LTM_INJECT = os.environ.get("STUDYAI_AUTO_LTM_INJECT", "0") == "1"
 
 # Auto-maintenance: run consolidate/prune/importance-update every N successful turns.
 # Process-wide counter; fire-and-forget so the user-facing turn never waits on it.
@@ -106,9 +118,11 @@ class StudentProductivityAgent:
             session_id, limit=DEFAULT_HISTORY_LIMIT
         )
 
-        # 2. Retrieve cross-session long-term memories relevant to the current turn
+        # 2. Retrieve cross-session long-term memories relevant to the current turn.
+        # Disabled by default because the embedding call is a synchronous network
+        # round-trip on the hot path. The agent can call memory_search on demand instead.
         memory_system_message = None
-        if current_user_input and current_user_input.strip():
+        if _AUTO_LTM_INJECT and current_user_input and current_user_input.strip():
             try:
                 relevant = await self.memory_service.search_long_term_memories(
                     query=current_user_input,

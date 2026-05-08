@@ -29,28 +29,16 @@ def test_cosine_similarity():
 
 
 @pytest.mark.asyncio
-async def test_fallback_embedding():
-    """Test fallback embedding generation."""
+async def test_embedding_returns_none_when_unavailable():
+    """When the configured endpoint can't produce embeddings, the service
+    should return None rather than silently substituting a hash-based vector.
+    The whole point of the redesign: never poison the DB with fake semantics.
+    """
     service = EmbeddingService()
-
-    # Generate fallback embeddings
-    text1 = "Hello world"
-    text2 = "Hello world"
-    text3 = "Different text"
-
-    emb1 = service._fallback_embedding(text1)
-    emb2 = service._fallback_embedding(text2)
-    emb3 = service._fallback_embedding(text3)
-
-    # Same text should produce same embedding
-    assert emb1 == emb2
-
-    # Different text should produce different embedding
-    assert emb1 != emb3
-
-    # Embeddings should be normalized (unit vectors)
-    magnitude1 = sum(x * x for x in emb1) ** 0.5
-    assert abs(magnitude1 - 1.0) < 0.001
+    # In tests there is no live endpoint configured, so probing should fail and
+    # the service should report 'unavailable' by returning None.
+    result = await service.generate_embedding("any text")
+    assert result is None
 
 
 @pytest.mark.asyncio
@@ -72,9 +60,10 @@ async def test_save_long_term_memory(db_session):
     assert memory.memory_type == MemoryType.FACTUAL
     assert memory.metadata == {"topic": "programming"}
     assert memory.importance_score == 0.9
-    # Embedding should be generated (either real or fallback)
-    assert memory.embedding is not None
-    assert len(memory.embedding) > 0
+    # Embedding may be None when no real embedding endpoint is available.
+    # We deliberately do NOT generate fake hash vectors anymore.
+    if memory.embedding is not None:
+        assert len(memory.embedding) > 0
 
 
 @pytest.mark.asyncio
