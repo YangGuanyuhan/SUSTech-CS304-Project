@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-class MemoryType(str, Enum):
+class MemoryType(StrEnum):
     """Types of long-term memories."""
 
     USER_PREFERENCE = "user_preference"  # User habits, preferences

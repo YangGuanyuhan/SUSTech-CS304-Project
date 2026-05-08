@@ -250,6 +250,12 @@
               <p class="eyebrow">需要审批</p>
               <h3>{{ activeConversation.pendingApproval.tool_name }}</h3>
               <p>{{ activeConversation.pendingApproval.summary }}</p>
+              <EmailConfirm
+                v-if="pendingApprovalEmail"
+                :to="pendingApprovalEmail.to"
+                :subject="pendingApprovalEmail.subject"
+                :body="pendingApprovalEmail.body"
+              />
               <code v-if="activeConversation.pendingApproval.workspace_root">
                 {{ activeConversation.pendingApproval.workspace_root }}
               </code>
@@ -418,6 +424,7 @@ import DatabaseOverviewPanel from "./components/DatabaseOverviewPanel.vue";
 import QuizHistoryPanel from "./components/QuizHistoryPanel.vue";
 import RagPanel from "./components/RagPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
+import EmailConfirm from "./components/EmailConfirm.vue";
 import { apiClient, getHealth, streamApprovalDecision, streamChat } from "./api/client";
 
 const CHAT_CONVERSATIONS_KEY = "spa-conversations";
@@ -538,6 +545,14 @@ function resizeComposer(target) {
 function autoResizeComposer(event) {
   resizeComposer(event.target);
 }
+
+const pendingApprovalEmail = computed(() => {
+  const approval = activeConversation.value?.pendingApproval;
+  if (!approval?.approvals?.[0]) return null;
+  const first = approval.approvals[0];
+  if (first.tool_name !== "email_send") return null;
+  return first.arguments;
+});
 
 const activeConversation = computed(() => {
   const conversation =

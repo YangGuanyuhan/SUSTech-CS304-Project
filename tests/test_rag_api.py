@@ -112,7 +112,9 @@ def test_rag_session_file_upload_and_query(api_client, tmp_path, monkeypatch):
     monkeypatch.setattr(
         RAGService,
         "_extract_content_list",
-        lambda self, file_path: [{"type": "text", "text": "The uploaded deck covers preemption.", "page_idx": 0}],
+        lambda self, file_path: [
+            {"type": "text", "text": "The uploaded deck covers preemption.", "page_idx": 0}
+        ],
     )
 
     upload_response = api_client.post(

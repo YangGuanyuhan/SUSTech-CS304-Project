@@ -303,7 +303,9 @@ class LongTermMemoryRecord(TimestampMixin, Base):
     memory_type: Mapped[str] = mapped_column(String(32), index=True)  # MemoryType enum value
     content: Mapped[str] = mapped_column(Text)
     embedding: Mapped[list[float] | None] = mapped_column(JSONText, nullable=True)
-    meta_data: Mapped[dict[str, Any]] = mapped_column(JSONText, default=dict)  # Renamed from metadata
+    meta_data: Mapped[dict[str, Any]] = mapped_column(
+        JSONText, default=dict
+    )  # Renamed from metadata
     source_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     access_count: Mapped[int] = mapped_column(Integer, default=0)
     last_accessed: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -327,5 +329,7 @@ class ToolUsagePatternRecord(TimestampMixin, Base):
     outcome: Mapped[str] = mapped_column(Text)  # What happened
     success: Mapped[bool] = mapped_column(Boolean, default=True)
     confidence_score: Mapped[float] = mapped_column(Float, default=1.0)
-    usage_count: Mapped[int] = mapped_column(Integer, default=1)  # How many times this pattern worked
+    usage_count: Mapped[int] = mapped_column(
+        Integer, default=1
+    )  # How many times this pattern worked
     last_used: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

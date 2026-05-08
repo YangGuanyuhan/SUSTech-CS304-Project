@@ -14,15 +14,15 @@ def _upload(filename: str, content: bytes = b"fake"):
     return UploadFile(file=io.BytesIO(content), filename=filename)
 
 
-async def test_chat_file_upload_indexes_session_source(
-    db_session, tmp_path, monkeypatch
-):
+async def test_chat_file_upload_indexes_session_source(db_session, tmp_path, monkeypatch):
     get_settings.cache_clear()
     monkeypatch.setenv("RAG_STORAGE_DIR", str(tmp_path / "rag"))
     monkeypatch.setattr(
         RAGService,
         "_extract_content_list",
-        lambda self, file_path: [{"type": "text", "text": "Slides explain preemption.", "page_idx": 0}],
+        lambda self, file_path: [
+            {"type": "text", "text": "Slides explain preemption.", "page_idx": 0}
+        ],
     )
     service = ChatFileService(db_session)
 
@@ -54,7 +54,9 @@ async def test_chat_file_delete_removes_source_from_session(db_session, tmp_path
     monkeypatch.setattr(
         RAGService,
         "_extract_content_list",
-        lambda self, file_path: [{"type": "text", "text": "The quiz is about threads.", "page_idx": 0}],
+        lambda self, file_path: [
+            {"type": "text", "text": "The quiz is about threads.", "page_idx": 0}
+        ],
     )
     service = ChatFileService(db_session)
     summary = await service.upload_and_index(

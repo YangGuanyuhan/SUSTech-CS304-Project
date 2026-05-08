@@ -186,21 +186,19 @@ async def build_tool_examples_prompt(session: Session, user_query: str) -> str:
         for ex in static_examples[:3]:
             section.append(
                 f"  - When: {ex['scenario']}\n"
-                f"    Example: \"{ex['example_query']}\"\n"
+                f'    Example: "{ex["example_query"]}"\n'
                 f"    Result: {ex['expected_outcome']}"
             )
 
         # 2) Learned patterns (real successful past usage)
         try:
-            learned = await tool_learning.get_tool_examples(
-                tool_name, limit=2, min_confidence=0.6
-            )
+            learned = await tool_learning.get_tool_examples(tool_name, limit=2, min_confidence=0.6)
         except Exception:
             learned = []
         for pat in learned:
             section.append(
                 f"  - Learned (used {pat['usage_count']}x, confidence {pat['confidence']:.2f}):\n"
-                f"    Query: \"{pat['user_query']}\"\n"
+                f'    Query: "{pat["user_query"]}"\n'
                 f"    Args: {pat['tool_arguments']}"
             )
 
@@ -251,7 +249,9 @@ class PydanticAIRuntime:
             return OpenAIModel(config.model, provider=provider, profile=profile)
         return OpenAIModel(config.model, provider=provider)
 
-    def _build_agent(self, system_prompt: str = SYSTEM_PROMPT) -> Agent[AgentDeps, str | DeferredToolRequests]:
+    def _build_agent(
+        self, system_prompt: str = SYSTEM_PROMPT
+    ) -> Agent[AgentDeps, str | DeferredToolRequests]:
         agent = Agent[AgentDeps, str | DeferredToolRequests](
             model=self._build_model(),
             deps_type=AgentDeps,
@@ -370,9 +370,7 @@ class PydanticAIRuntime:
             id: str | None = None,
         ) -> str:
             """Delete memories. Use `id` for precise deletion or `query` for keyword sweep."""
-            return await _execute_tool(
-                ctx, "memory_delete", {"query": query or "", "id": id or ""}
-            )
+            return await _execute_tool(ctx, "memory_delete", {"query": query or "", "id": id or ""})
 
         @agent.tool(name="calendar_list_events")
         async def calendar_list_events(
@@ -610,6 +608,27 @@ class PydanticAIRuntime:
         @agent.tool(name="blackboard_get_calendar_items")
         async def blackboard_get_calendar_items(ctx: RunContext[AgentDeps]) -> str:
             return await _execute_tool(ctx, "blackboard_get_calendar_items", {})
+
+        @agent.tool(name="email_test_connection")
+        async def email_test_connection(ctx: RunContext[AgentDeps]) -> str:
+            return await _execute_tool(ctx, "email_test_connection", {})
+
+        @agent.tool(name="email_read_latest")
+        async def email_read_latest(ctx: RunContext[AgentDeps], count: int = 5) -> str:
+            return await _execute_tool(ctx, "email_read_latest", {"count": count})
+
+        @agent.tool(name="email_send", requires_approval=True)
+        async def email_send(ctx: RunContext[AgentDeps], to: str, subject: str, body: str) -> str:
+            """Send an email. Requires approval before sending.
+
+            Args:
+                to: Recipient email address.
+                subject: Email subject line.
+                body: Full email body content (plain text).
+            """
+            return await _execute_tool(
+                ctx, "email_send", {"to": to, "subject": subject, "body": body}
+            )
 
         return agent
 

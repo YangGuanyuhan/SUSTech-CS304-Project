@@ -731,4 +731,3 @@ class ToolUsagePatternRepository(Repository):
             .limit(limit)
         )
         return list(self.session.execute(stmt).scalars())
-

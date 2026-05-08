@@ -14,7 +14,6 @@ from backend.config import get_settings
 from backend.models.rag import RAGIndexSummary, RAGSource
 from backend.services.rag_service import RAGService, RAGServiceError
 
-
 CHAT_FILE_EXTENSIONS = {".pdf", ".docx", ".pptx", ".md", ".txt"}
 MAX_CHAT_FILE_BYTES = 50 * 1024 * 1024
 MAX_CHAT_FILES_PER_UPLOAD = 10

@@ -457,6 +457,36 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "email_test_connection",
+                "description": "Test whether the configured email SMTP server is reachable and credentials are valid.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "email_read_latest",
+                "description": "Read the most recent emails from the configured IMAP inbox.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "count": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10,
+                            "default": 1,
+                            "description": "Number of latest emails to fetch.",
+                        },
+                    },
+                },
+            },
+        },
     ]
 
 
@@ -501,6 +531,10 @@ class AgentToolService:
                 f"Index local folder `{arguments.get('path', '.')}` into the knowledge base "
                 "using the configured RAG directory permissions."
             )
+        if tool_name == "email_send":
+            to = arguments.get("to", "")
+            subject = arguments.get("subject", "")
+            return f"Send email to {to}: {subject}"
         return f"Execute tool `{tool_name}`."
 
     async def execute(
@@ -561,6 +595,12 @@ class AgentToolService:
             return await self._blackboard_test_api_available()
         if tool_name == "blackboard_get_calendar_items":
             return await self._blackboard_get_calendar_items()
+        if tool_name == "email_test_connection":
+            return await self._email_test_connection()
+        if tool_name == "email_read_latest":
+            return await self._email_read_latest(arguments)
+        if tool_name == "email_send":
+            return await self._email_send(arguments)
         raise ToolExecutionError(f"Unknown tool `{tool_name}`.")
 
     async def _memory_search(self, arguments: dict[str, Any]) -> str:
@@ -1102,6 +1142,194 @@ class AgentToolService:
         )
         items = await provider.get_calendar_items()
         return json.dumps({"items": items}, ensure_ascii=False)
+
+    async def _email_test_connection(self) -> str:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.utils import formatdate
+
+        from backend.services.runtime_settings import runtime_settings
+
+        config = runtime_settings.get_email_config()
+        password = runtime_settings.get_secret_email_password()
+
+        if not config.smtp_user or not password:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "error": "Email not configured. Please set SMTP credentials in Settings > Email.",
+                },
+                ensure_ascii=False,
+            )
+
+        msg = MIMEText("This is a test email from Student Productivity Agent.", "plain", "utf-8")
+        msg["From"] = config.smtp_user
+        msg["To"] = config.smtp_user
+        msg["Subject"] = "[Agent Test] Email Configuration Check"
+        msg["Date"] = formatdate(localtime=True)
+
+        try:
+            if config.smtp_encryption == "ssl":
+                server = smtplib.SMTP_SSL(config.smtp_host, config.smtp_port, timeout=15)
+            else:
+                server = smtplib.SMTP(config.smtp_host, config.smtp_port, timeout=15)
+                if config.smtp_encryption == "tls":
+                    server.starttls()
+            server.login(config.smtp_user, password)
+            server.sendmail(config.smtp_user, [config.smtp_user], msg.as_string())
+            server.quit()
+            return json.dumps(
+                {"ok": True, "message": "SMTP connection and authentication successful"},
+                ensure_ascii=False,
+            )
+        except Exception as e:
+            return json.dumps(
+                {"ok": False, "error": f"Email test failed: {e}"},
+                ensure_ascii=False,
+            )
+
+    async def _email_read_latest(self, arguments: dict[str, Any]) -> str:
+        import email
+        import imaplib
+        from email.header import decode_header
+
+        from backend.services.runtime_settings import runtime_settings
+
+        config = runtime_settings.get_email_config()
+        password = runtime_settings.get_secret_email_password()
+
+        if not config.smtp_user or not password:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "error": "Email not configured. Please set SMTP/IMAP credentials in Settings > Email.",
+                },
+                ensure_ascii=False,
+            )
+
+        count = min(int(arguments.get("count", 5)), 20)
+
+        def _decode_header(value: str) -> str:
+            parts = decode_header(value)
+            decoded = ""
+            for part, charset in parts:
+                if isinstance(part, bytes):
+                    decoded += part.decode(charset or "utf-8", errors="ignore")
+                else:
+                    decoded += part
+            return decoded
+
+        def _get_body(msg: email.message.Message) -> str:
+            body = ""
+            if msg.is_multipart():
+                for part in msg.walk():
+                    content_type = part.get_content_type()
+                    if content_type == "text/plain":
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            charset = part.get_content_charset() or "utf-8"
+                            return payload.decode(charset, errors="ignore")
+                    elif content_type == "text/html" and not body:
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            charset = part.get_content_charset() or "utf-8"
+                            body = payload.decode(charset, errors="ignore")
+            else:
+                payload = msg.get_payload(decode=True)
+                if payload:
+                    charset = msg.get_content_charset() or "utf-8"
+                    body = payload.decode(charset, errors="ignore")
+            return body[:2000]
+
+        try:
+            server = imaplib.IMAP4_SSL(config.imap_host, config.imap_port, timeout=15)
+            server.login(config.smtp_user, password)
+            server.select("INBOX")
+
+            status, data = server.search(None, "ALL")
+            if status != "OK" or not data[0]:
+                server.logout()
+                return json.dumps(
+                    {"ok": True, "emails": [], "message": "Inbox is empty."}, ensure_ascii=False
+                )
+
+            all_ids = data[0].split()
+            latest_ids = all_ids[-count:] if len(all_ids) >= count else all_ids
+
+            emails = []
+            for mid in reversed(latest_ids):
+                status, msg_data = server.fetch(mid, "(RFC822)")
+                if status != "OK":
+                    continue
+                raw = msg_data[0][1]
+                msg = email.message_from_bytes(raw)
+                emails.append(
+                    {
+                        "subject": _decode_header(msg["Subject"] or "(no subject)"),
+                        "from": _decode_header(msg["From"] or ""),
+                        "to": _decode_header(msg["To"] or ""),
+                        "date": msg["Date"] or "",
+                        "body": _get_body(msg),
+                    }
+                )
+
+            server.logout()
+            return json.dumps({"ok": True, "emails": emails}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps(
+                {"ok": False, "error": f"IMAP read failed: {e}"},
+                ensure_ascii=False,
+            )
+
+    async def _email_send(self, arguments: dict[str, Any]) -> str:
+        import smtplib
+        from email.mime.text import MIMEText
+
+        from backend.services.runtime_settings import runtime_settings
+
+        config = runtime_settings.get_email_config()
+        password = runtime_settings.get_secret_email_password()
+
+        to = arguments["to"]
+        subject = arguments["subject"]
+        body = arguments["body"]
+
+        if not config.smtp_user or not password:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "error": "SMTP not configured. Please set credentials in Settings > Email.",
+                },
+                ensure_ascii=False,
+            )
+
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["From"] = config.smtp_user
+        msg["To"] = to
+        msg["Subject"] = subject
+
+        def _send() -> None:
+            if config.smtp_encryption == "ssl":
+                server = smtplib.SMTP_SSL(config.smtp_host, config.smtp_port, timeout=15)
+            else:
+                server = smtplib.SMTP(config.smtp_host, config.smtp_port, timeout=15)
+                if config.smtp_encryption == "tls":
+                    server.starttls()
+            server.login(config.smtp_user, password)
+            server.sendmail(config.smtp_user, [to], msg.as_string())
+            server.quit()
+
+        try:
+            await asyncio.to_thread(_send)
+            return json.dumps(
+                {"ok": True, "message": f"Email sent to {to}."},
+                ensure_ascii=False,
+            )
+        except Exception as e:
+            return json.dumps(
+                {"ok": False, "error": f"Send failed: {e}"},
+                ensure_ascii=False,
+            )
 
     def _workspace_root(self, workspace_root: str | None) -> Path:
         root = Path(workspace_root or "").expanduser()

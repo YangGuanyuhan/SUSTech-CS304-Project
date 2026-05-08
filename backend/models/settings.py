@@ -19,3 +19,14 @@ class BlackboardProfile(BaseModel):
     student_id: str
     base_url: str | None = None
     password_configured: bool = False
+
+
+class EmailProfile(BaseModel):
+    name: str
+    smtp_host: str
+    smtp_port: int
+    smtp_user: str
+    smtp_encryption: str = "ssl"
+    imap_host: str
+    imap_port: int
+    password_configured: bool = False

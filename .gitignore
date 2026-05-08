@@ -21,3 +21,4 @@ data/
 frontend/dist/
 .history/
 CLAUDE.md
+.claude

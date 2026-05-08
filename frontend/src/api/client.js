@@ -190,6 +190,57 @@ export async function applyBBProfile(name) {
   return parseJson(response);
 }
 
+export async function getEmailSettings() {
+  const response = await fetch(`${API_BASE}/settings/email`);
+  return parseJson(response);
+}
+
+export async function updateEmailSettings(payload) {
+  const response = await fetch(`${API_BASE}/settings/email`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function testEmailSettings(payload) {
+  const response = await fetch(`${API_BASE}/settings/email/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function getEmailProfiles() {
+  const response = await fetch(`${API_BASE}/settings/email/profiles`);
+  return parseJson(response);
+}
+
+export async function saveEmailProfile(payload) {
+  const response = await fetch(`${API_BASE}/settings/email/profiles`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function deleteEmailProfile(name) {
+  const response = await fetch(`${API_BASE}/settings/email/profiles/${encodeURIComponent(name)}`, {
+    method: "DELETE"
+  });
+  return parseJson(response);
+}
+
+export async function applyEmailProfile(name) {
+  const response = await fetch(`${API_BASE}/settings/email/profiles/${encodeURIComponent(name)}/apply`, {
+    method: "POST"
+  });
+  return parseJson(response);
+}
+
 export async function getDatabaseOverview() {
   const response = await fetch(`${API_BASE}/database/overview`);
   return parseJson(response);
