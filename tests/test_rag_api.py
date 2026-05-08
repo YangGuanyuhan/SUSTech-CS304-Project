@@ -112,7 +112,9 @@ def test_rag_session_file_upload_and_query(api_client, tmp_path, monkeypatch):
     monkeypatch.setattr(
         RAGService,
         "_extract_content_list",
-        lambda self, file_path: [{"type": "text", "text": "The uploaded deck covers preemption.", "page_idx": 0}],
+        lambda self, file_path: [
+            {"type": "text", "text": "The uploaded deck covers preemption.", "page_idx": 0}
+        ],
     )
 
     upload_response = api_client.post(
@@ -158,5 +160,5 @@ def test_rag_session_file_upload_rejects_old_ppt(api_client, tmp_path, monkeypat
     )
 
     assert response.status_code == 400
-    assert "Only PDF, PPTX, and DOCX" in response.json()["detail"]
+    assert "Only PDF, PPTX, DOCX, MD, and TXT" in response.json()["detail"]
     get_settings.cache_clear()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 import threading
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -35,13 +36,6 @@ DEFAULT_LTM_THRESHOLD = 0.5  # semantic threshold for cross-conversation memory 
 # real latency (often >30s) to every user message. Off by default — the agent can
 # always call memory_search explicitly when cross-session recall is actually needed.
 # Set env STUDYAI_AUTO_LTM_INJECT=1 to re-enable.
-import os
-_AUTO_LTM_INJECT = os.environ.get("STUDYAI_AUTO_LTM_INJECT", "0") == "1"
-# Auto-injecting LTM on every turn calls the embedding API synchronously, which adds
-# real latency (often >30s) to every user message. Off by default — the agent can
-# always call memory_search explicitly when cross-session recall is actually needed.
-# Set env STUDYAI_AUTO_LTM_INJECT=1 to re-enable.
-import os
 _AUTO_LTM_INJECT = os.environ.get("STUDYAI_AUTO_LTM_INJECT", "0") == "1"
 
 # Auto-maintenance: run consolidate/prune/importance-update every N successful turns.
@@ -131,9 +125,7 @@ class StudentProductivityAgent:
                     use_hybrid=True,
                 )
                 if relevant:
-                    lines = [
-                        f"- [{m.memory_type.value}] {m.content}" for m in relevant
-                    ]
+                    lines = [f"- [{m.memory_type.value}] {m.content}" for m in relevant]
                     memory_system_message = {
                         "role": "system",
                         "content": (
@@ -393,9 +385,7 @@ class StudentProductivityAgent:
                 user_input=message,
                 session_id=session_id,
                 workspace_root=workspace_root,
-                history=await self._build_history(
-                    session_id, current_user_input=message
-                ),
+                history=await self._build_history(session_id, current_user_input=message),
                 on_tool_events=on_tool_events,
                 on_response_chunk=on_response_chunk,
                 on_thinking_chunk=on_thinking_chunk,

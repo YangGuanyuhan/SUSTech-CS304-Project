@@ -92,7 +92,9 @@ async def test_search_long_term_memories(db_session):
 
     # Search for programming-related content
     results = await service.search_long_term_memories(
-        query="programming languages", limit=5, semantic_threshold=0.0  # Low threshold for testing
+        query="programming languages",
+        limit=5,
+        semantic_threshold=0.0,  # Low threshold for testing
     )
 
     # Should find at least the programming-related memories
@@ -101,8 +103,7 @@ async def test_search_long_term_memories(db_session):
     # At least one result should contain programming-related content
     # (Note: with fallback embeddings, exact ordering may vary)
     programming_found = any(
-        "programming" in mem.content.lower() or "language" in mem.content.lower()
-        for mem in results
+        "programming" in mem.content.lower() or "language" in mem.content.lower() for mem in results
     )
     assert programming_found, "Should find at least one programming-related memory"
 

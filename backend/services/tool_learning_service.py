@@ -78,11 +78,9 @@ class ToolLearningService:
         all_patterns = self.repository.list_by_tool(tool_name=tool_name, limit=limit * 2)
 
         # Filter by confidence and success
-        patterns = [
-            p
-            for p in all_patterns
-            if p.confidence_score >= min_confidence and p.success
-        ][:limit]
+        patterns = [p for p in all_patterns if p.confidence_score >= min_confidence and p.success][
+            :limit
+        ]
 
         examples = []
         for pattern in patterns:

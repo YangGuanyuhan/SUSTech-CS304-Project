@@ -565,7 +565,6 @@ class RAGService:
         owner_id: str = "local-user",
         relative_path: str | None = None,
     ) -> RAGSource:
-        extension = file_path.suffix.lower()
         source, _changed = await self._index_file(
             file_path,
             workspace_root=workspace_root,
@@ -694,7 +693,11 @@ class RAGService:
             select(RAGChunkRecord, RAGSourceRecord)
             .join(RAGSourceRecord, RAGChunkRecord.source_id == RAGSourceRecord.id)
             .where(RAGChunkRecord.owner_id == owner_id, RAGSourceRecord.status == "indexed")
-            .order_by(RAGSourceRecord.updated_at.desc(), RAGSourceRecord.relative_path.asc(), RAGChunkRecord.position.asc())
+            .order_by(
+                RAGSourceRecord.updated_at.desc(),
+                RAGSourceRecord.relative_path.asc(),
+                RAGChunkRecord.position.asc(),
+            )
             .limit(max_items)
         )
         return [
@@ -1014,9 +1017,9 @@ class RAGService:
                 self.session.commit()
                 self.session.refresh(source)
             return source
-        display_path = relative_path or file_path.relative_to(
-            self._workspace_root(workspace_root)
-        ).as_posix()
+        display_path = (
+            relative_path or file_path.relative_to(self._workspace_root(workspace_root)).as_posix()
+        )
         source = RAGSourceRecord(
             owner_id=owner_id,
             file_path=file_path_text,

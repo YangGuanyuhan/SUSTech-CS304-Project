@@ -1155,7 +1155,10 @@ class AgentToolService:
 
         if not config.smtp_user or not password:
             return json.dumps(
-                {"ok": False, "error": "Email not configured. Please set SMTP credentials in Settings > Email."},
+                {
+                    "ok": False,
+                    "error": "Email not configured. Please set SMTP credentials in Settings > Email.",
+                },
                 ensure_ascii=False,
             )
 
@@ -1197,7 +1200,10 @@ class AgentToolService:
 
         if not config.smtp_user or not password:
             return json.dumps(
-                {"ok": False, "error": "Email not configured. Please set SMTP/IMAP credentials in Settings > Email."},
+                {
+                    "ok": False,
+                    "error": "Email not configured. Please set SMTP/IMAP credentials in Settings > Email.",
+                },
                 ensure_ascii=False,
             )
 
@@ -1243,7 +1249,9 @@ class AgentToolService:
             status, data = server.search(None, "ALL")
             if status != "OK" or not data[0]:
                 server.logout()
-                return json.dumps({"ok": True, "emails": [], "message": "Inbox is empty."}, ensure_ascii=False)
+                return json.dumps(
+                    {"ok": True, "emails": [], "message": "Inbox is empty."}, ensure_ascii=False
+                )
 
             all_ids = data[0].split()
             latest_ids = all_ids[-count:] if len(all_ids) >= count else all_ids
@@ -1255,13 +1263,15 @@ class AgentToolService:
                     continue
                 raw = msg_data[0][1]
                 msg = email.message_from_bytes(raw)
-                emails.append({
-                    "subject": _decode_header(msg["Subject"] or "(no subject)"),
-                    "from": _decode_header(msg["From"] or ""),
-                    "to": _decode_header(msg["To"] or ""),
-                    "date": msg["Date"] or "",
-                    "body": _get_body(msg),
-                })
+                emails.append(
+                    {
+                        "subject": _decode_header(msg["Subject"] or "(no subject)"),
+                        "from": _decode_header(msg["From"] or ""),
+                        "to": _decode_header(msg["To"] or ""),
+                        "date": msg["Date"] or "",
+                        "body": _get_body(msg),
+                    }
+                )
 
             server.logout()
             return json.dumps({"ok": True, "emails": emails}, ensure_ascii=False)
@@ -1286,7 +1296,10 @@ class AgentToolService:
 
         if not config.smtp_user or not password:
             return json.dumps(
-                {"ok": False, "error": "SMTP not configured. Please set credentials in Settings > Email."},
+                {
+                    "ok": False,
+                    "error": "SMTP not configured. Please set credentials in Settings > Email.",
+                },
                 ensure_ascii=False,
             )
 
