@@ -80,7 +80,7 @@ class MemoryConsolidator:
         return consolidated_count
 
     async def prune_old_memories(
-        self, max_age_days: int = 365, min_access_count: int = 0, max_memories: int = 1000
+        self, max_age_days: int = 365, min_access_count: int = 0, max_memories: int = 5000
     ) -> int:
         """
         Prune old, rarely accessed memories.

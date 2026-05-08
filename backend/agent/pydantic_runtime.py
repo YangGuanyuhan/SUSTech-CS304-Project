@@ -107,12 +107,12 @@ def build_tool_examples_prompt(session: Session, user_query: str) -> str:
     # Build examples prompt
     examples_parts = ["\n\nTool Usage Examples:"]
 
-    for tool_name in relevant_tools[:3]:  # Limit to 3 tools to save tokens
+    for tool_name in relevant_tools[:5]:  # Limit tools considered to keep prompt focused
         # Get static examples
         static_examples = get_static_examples(tool_name)
         if static_examples:
             examples_parts.append(f"\n{tool_name}:")
-            for ex in static_examples[:2]:  # Max 2 examples per tool
+            for ex in static_examples[:5]:  # Up to 5 examples per tool (large-context budget)
                 examples_parts.append(
                     f"  - When: {ex['scenario']}\n"
                     f"    Example: \"{ex['example_query']}\"\n"

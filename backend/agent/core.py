@@ -15,9 +15,19 @@ from backend.services.approval_service import approval_service
 from backend.services.context_manager import ContextWindowManager
 from backend.services.llm_logging_service import llm_logger
 from backend.services.memory_consolidator import MemoryConsolidator
+from backend.services.memory_service import MemoryService
 from backend.services.runtime_settings import runtime_settings
 from backend.services.task_service import TaskHistoryService
 from backend.services.tool_learning_service import ToolLearningService
+
+# Context budget tuned for large-context models (e.g., DeepSeek 128K+, Gemini 1M+, Claude 200K+).
+# Designed around a 500K effective context envelope, leaving plenty of room for tools,
+# system prompt, injected memories, and model output.
+DEFAULT_MAX_CONTEXT_TOKENS = 500_000
+DEFAULT_MIN_RECENT_MESSAGES = 20
+DEFAULT_HISTORY_LIMIT = 200  # recent user/assistant pairs pulled from task_history
+DEFAULT_LTM_INJECT_LIMIT = 5  # long-term memories injected per turn
+DEFAULT_LTM_THRESHOLD = 0.5  # semantic threshold for cross-conversation memory recall
 
 
 class StudentProductivityAgent:
@@ -29,25 +39,77 @@ class StudentProductivityAgent:
         self.context_manager = ContextWindowManager(session)
         self.tool_learning = ToolLearningService(session)
         self.memory_consolidator = MemoryConsolidator(session)
+        self.memory_service = MemoryService(session)
 
     async def _build_history(
-        self, session_id: str, max_context_tokens: int = 8000
+        self,
+        session_id: str,
+        *,
+        current_user_input: str | None = None,
+        max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
     ) -> list[dict[str, str]]:
-        """Build conversation history with intelligent context management."""
-        # Get recent messages from database
+        """Build conversation history with context management and cross-session memory.
+
+        Pulls recent messages for this session, injects relevant long-term memories
+        (retrieved semantically across all sessions), and applies token-aware
+        compression if the combined context exceeds the budget.
+        """
+        # 1. Pull this session's recent messages
         raw_messages = await TaskHistoryService(self.session).get_recent_messages(
-            session_id, limit=20
+            session_id, limit=DEFAULT_HISTORY_LIMIT
         )
 
-        if not raw_messages:
+        # 2. Retrieve cross-session long-term memories relevant to the current turn
+        memory_system_message = None
+        if current_user_input and current_user_input.strip():
+            try:
+                relevant = await self.memory_service.search_long_term_memories(
+                    query=current_user_input,
+                    limit=DEFAULT_LTM_INJECT_LIMIT,
+                    semantic_threshold=DEFAULT_LTM_THRESHOLD,
+                    use_hybrid=True,
+                )
+                if relevant:
+                    lines = [
+                        f"- [{m.memory_type.value}] {m.content}" for m in relevant
+                    ]
+                    memory_system_message = {
+                        "role": "system",
+                        "content": (
+                            "Relevant long-term memories from previous conversations "
+                            "(use them only if they actually apply to the current request):\n"
+                            + "\n".join(lines)
+                        ),
+                    }
+                    llm_logger.log_event(
+                        session_id,
+                        "ltm_injection",
+                        {
+                            "count": len(relevant),
+                            "types": [m.memory_type.value for m in relevant],
+                        },
+                    )
+            except Exception:
+                # LTM retrieval should never block the main turn
+                memory_system_message = None
+
+        if not raw_messages and not memory_system_message:
             return []
 
-        # Apply context window management
+        # 3. Combine (system memory prefix + session history)
+        combined: list[dict[str, str]] = []
+        if memory_system_message:
+            combined.append(memory_system_message)
+        combined.extend(raw_messages)
+
+        # 4. Apply context window management
         prepared_messages, stats = await self.context_manager.prepare_context(
-            raw_messages, max_context_tokens=max_context_tokens, min_recent_messages=5
+            combined,
+            max_context_tokens=max_context_tokens,
+            min_recent_messages=DEFAULT_MIN_RECENT_MESSAGES,
         )
 
-        # Log compression stats if compression occurred
+        # 5. Log compression stats if compression occurred
         if stats["compression_ratio"] < 1.0:
             llm_logger.log_event(
                 session_id,
@@ -269,7 +331,9 @@ class StudentProductivityAgent:
                 user_input=message,
                 session_id=session_id,
                 workspace_root=workspace_root,
-                history=await self._build_history(session_id),
+                history=await self._build_history(
+                    session_id, current_user_input=message
+                ),
                 on_tool_events=on_tool_events,
                 on_response_chunk=on_response_chunk,
                 on_thinking_chunk=on_thinking_chunk,

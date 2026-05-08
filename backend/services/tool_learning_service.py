@@ -61,7 +61,7 @@ class ToolLearningService:
         )
 
     async def get_tool_examples(
-        self, tool_name: str, limit: int = 3, min_confidence: float = 0.6
+        self, tool_name: str, limit: int = 5, min_confidence: float = 0.6
     ) -> list[dict[str, Any]]:
         """
         Get successful usage examples for a tool.
