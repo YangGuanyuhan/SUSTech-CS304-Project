@@ -282,9 +282,7 @@ class StudentProductivityAgent:
             if deferred_results is None:
                 deferred_results = result
             else:
-                # Merge additional tool results
-                if hasattr(deferred_results, "tool_results") and hasattr(result, "tool_results"):
-                    deferred_results.tool_results.extend(result.tool_results)
+                deferred_results.approvals.update(result.approvals)
 
         if pending.deferred_metadata and deferred_results:
             deferred_results.metadata.update(pending.deferred_metadata)
