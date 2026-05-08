@@ -531,6 +531,10 @@ class AgentToolService:
                 f"Index local folder `{arguments.get('path', '.')}` into the knowledge base "
                 "using the configured RAG directory permissions."
             )
+        if tool_name == "email_send":
+            to = arguments.get("to", "")
+            subject = arguments.get("subject", "")
+            return f"Send email to {to}: {subject}"
         return f"Execute tool `{tool_name}`."
 
     async def execute(
@@ -595,6 +599,8 @@ class AgentToolService:
             return await self._email_test_connection()
         if tool_name == "email_read_latest":
             return await self._email_read_latest(arguments)
+        if tool_name == "email_send":
+            return await self._email_send(arguments)
         raise ToolExecutionError(f"Unknown tool `{tool_name}`.")
 
     async def _memory_search(self, arguments: dict[str, Any]) -> str:
@@ -1262,6 +1268,53 @@ class AgentToolService:
         except Exception as e:
             return json.dumps(
                 {"ok": False, "error": f"IMAP read failed: {e}"},
+                ensure_ascii=False,
+            )
+
+    async def _email_send(self, arguments: dict[str, Any]) -> str:
+        import smtplib
+        from email.mime.text import MIMEText
+
+        from backend.services.runtime_settings import runtime_settings
+
+        config = runtime_settings.get_email_config()
+        password = runtime_settings.get_secret_email_password()
+
+        to = arguments["to"]
+        subject = arguments["subject"]
+        body = arguments["body"]
+
+        if not config.smtp_user or not password:
+            return json.dumps(
+                {"ok": False, "error": "SMTP not configured. Please set credentials in Settings > Email."},
+                ensure_ascii=False,
+            )
+
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["From"] = config.smtp_user
+        msg["To"] = to
+        msg["Subject"] = subject
+
+        def _send() -> None:
+            if config.smtp_encryption == "ssl":
+                server = smtplib.SMTP_SSL(config.smtp_host, config.smtp_port, timeout=15)
+            else:
+                server = smtplib.SMTP(config.smtp_host, config.smtp_port, timeout=15)
+                if config.smtp_encryption == "tls":
+                    server.starttls()
+            server.login(config.smtp_user, password)
+            server.sendmail(config.smtp_user, [to], msg.as_string())
+            server.quit()
+
+        try:
+            await asyncio.to_thread(_send)
+            return json.dumps(
+                {"ok": True, "message": f"Email sent to {to}."},
+                ensure_ascii=False,
+            )
+        except Exception as e:
+            return json.dumps(
+                {"ok": False, "error": f"Send failed: {e}"},
                 ensure_ascii=False,
             )
 

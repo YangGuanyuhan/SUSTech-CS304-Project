@@ -468,10 +468,8 @@ async def update_email_settings(request: EmailSettingsRequest) -> ApiResponse[ob
 
 @router.post("/settings/email/test", response_model=ApiResponse[object])
 async def test_email_settings(request: EmailSettingsRequest) -> ApiResponse[object]:
-    """Test email SMTP connection with provided credentials."""
+    """Test email SMTP connection and authentication without sending a real email."""
     import smtplib
-    from email.mime.text import MIMEText
-    from email.utils import formatdate
 
     # Use request values, falling back to runtime config
     email_config = runtime_settings.get_email_config()
@@ -493,12 +491,6 @@ async def test_email_settings(request: EmailSettingsRequest) -> ApiResponse[obje
             data={"error": "Missing credentials - username or password not configured"},
         )
 
-    msg = MIMEText("This is a test email from Student Productivity Agent.", "plain", "utf-8")
-    msg["From"] = smtp_user
-    msg["To"] = smtp_user
-    msg["Subject"] = "[Agent Test] Email Configuration Check"
-    msg["Date"] = formatdate(localtime=True)
-
     try:
         if smtp_encryption == "ssl":
             server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=15)
@@ -507,11 +499,10 @@ async def test_email_settings(request: EmailSettingsRequest) -> ApiResponse[obje
             if smtp_encryption == "tls":
                 server.starttls()
         server.login(smtp_user, password)
-        server.sendmail(smtp_user, [smtp_user], msg.as_string())
         server.quit()
         return ApiResponse(
             success=True,
-            data={"message": "SMTP connection and authentication successful"},
+            data={"message": "SMTP connection and authentication successful (no email sent)"},
         )
     except Exception as e:
         return ApiResponse(success=False, data={"error": f"Email test failed: {e}"})
