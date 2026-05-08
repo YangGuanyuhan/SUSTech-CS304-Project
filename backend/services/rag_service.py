@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib.util
 import inspect
 import os
 import re
@@ -65,9 +66,17 @@ class RAGAnythingProvider:
     def __init__(self) -> None:
         self._rag: Any | None = None
 
+    @staticmethod
+    def _ensure_executable_dir_on_path() -> str:
+        scripts_dir = str(Path(sys.executable).parent)
+        path_parts = os.environ.get("PATH", "").split(os.pathsep)
+        if scripts_dir not in path_parts:
+            os.environ["PATH"] = f"{scripts_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+        return scripts_dir
+
     def _build_rag(self) -> Any:
         try:
-            from lightrag.llm.openai import openai_complete_if_cache, openai_embed
+            from lightrag.llm.openai import openai_complete_if_cache
             from lightrag.utils import EmbeddingFunc
             from raganything import RAGAnything, RAGAnythingConfig
         except ImportError as exc:  # pragma: no cover - depends on optional dependency
@@ -84,9 +93,7 @@ class RAGAnythingProvider:
 
         working_dir = Path(settings.rag_storage_dir) / "raganything"
         working_dir.mkdir(parents=True, exist_ok=True)
-        scripts_dir = str(Path(sys.executable).parent)
-        if scripts_dir not in os.environ.get("PATH", ""):
-            os.environ["PATH"] = f"{scripts_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+        self._ensure_executable_dir_on_path()
 
         config = RAGAnythingConfig(
             working_dir=str(working_dir),
@@ -113,14 +120,22 @@ class RAGAnythingProvider:
                 **kwargs,
             )
 
-        def embed_texts(texts: list[str]):
-            embed_callable = getattr(openai_embed, "func", openai_embed)
-            return embed_callable(
-                texts,
-                model=settings.rag_embedding_model,
-                api_key=api_key,
-                base_url=llm_config.base_url,
-            )
+        if settings.rag_embedding_provider.lower() == "openai":
+            from lightrag.llm.openai import openai_embed
+
+            async def embed_texts(texts: list[str]):
+                embed_callable = getattr(openai_embed, "func", openai_embed)
+                return await embed_callable(
+                    texts,
+                    model=settings.rag_embedding_model,
+                    api_key=api_key,
+                    base_url=llm_config.base_url,
+                )
+
+        else:
+
+            async def embed_texts(texts: list[str]):
+                return self._local_hash_embeddings(texts, dim=settings.rag_embedding_dim)
 
         embedding_func = EmbeddingFunc(
             embedding_dim=settings.rag_embedding_dim,
@@ -138,6 +153,28 @@ class RAGAnythingProvider:
         # LightRAG, so skip that parser gate for text-first indexing.
         rag._parser_installation_checked = True
         return rag
+
+    @staticmethod
+    def _local_hash_embeddings(texts: list[str], *, dim: int):
+        import numpy as np
+
+        vectors = np.zeros((len(texts), dim), dtype=np.float32)
+        for row, text in enumerate(texts):
+            normalized = re.sub(r"\s+", " ", text.lower()).strip()
+            terms = _WORD_RE.findall(normalized)
+            compact = re.sub(r"\s+", "", normalized)
+            terms.extend(compact[index : index + 2] for index in range(max(len(compact) - 1, 0)))
+            if not terms and normalized:
+                terms = [normalized]
+            for term in terms:
+                digest = hashlib.blake2b(term.encode("utf-8"), digest_size=8).digest()
+                column = int.from_bytes(digest[:4], "little") % dim
+                sign = 1.0 if digest[4] & 1 else -1.0
+                vectors[row, column] += sign
+            norm = np.linalg.norm(vectors[row])
+            if norm > 0:
+                vectors[row] /= norm
+        return vectors
 
     def _rag_instance(self) -> Any:
         if self._rag is None:
@@ -164,6 +201,7 @@ class RAGAnythingProvider:
             raise RAGProviderError("LightRAG initialization failed before content insertion.")
 
     async def index_pdf(self, file_path: Path, *, output_dir: Path, doc_id: str) -> None:
+        self._ensure_executable_dir_on_path()
         if shutil.which("mineru") is None:
             raise RAGProviderError(
                 "PDF indexing requires the MinerU command. Install it with "
@@ -220,15 +258,27 @@ class RAGService:
             raganything_installed = False
             install_error = str(exc)
 
-        ready = raganything_installed and bool(llm_config.api_key_configured)
+        raganything_required = (
+            self.settings.rag_enable_raganything_insert
+            or self.settings.rag_enable_raganything_query
+        )
+        ready = bool(llm_config.api_key_configured) and (
+            raganything_installed or not raganything_required
+        )
         scripts_dir = str(Path(sys.executable).parent)
         mineru_command = shutil.which(
             "mineru",
             path=f"{scripts_dir}{os.pathsep}{os.environ.get('PATH', '')}",
         )
+        fast_pdf_parser = self._fast_pdf_parser_name()
+        pdf_parser = self.settings.rag_pdf_parser.lower()
+        pdf_parser_ready = bool(mineru_command) if pdf_parser == "mineru" else bool(fast_pdf_parser)
+        pdf_parser_command = mineru_command if pdf_parser == "mineru" else fast_pdf_parser
         issues: list[str] = []
         if not raganything_installed:
-            issues.append("raganything is not installed. Run `uv sync`.")
+            message = "raganything is not installed. Run `uv sync`."
+            if raganything_required:
+                issues.append(message)
         if not llm_config.api_key_configured:
             issues.append("LLM API key is not configured. Set it in Settings or `.env`.")
 
@@ -242,15 +292,46 @@ class RAGService:
             "llm_provider": llm_config.provider,
             "llm_model": llm_config.model,
             "llm_api_key_configured": llm_config.api_key_configured,
-            "pdf_parser_ready": bool(mineru_command),
-            "pdf_parser_command": mineru_command,
+            "embedding_provider": self.settings.rag_embedding_provider,
+            "embedding_model": (
+                self.settings.rag_embedding_model
+                if self.settings.rag_embedding_provider.lower() == "openai"
+                else "local-hash"
+            ),
+            "embedding_dim": self.settings.rag_embedding_dim,
+            "pdf_parser": self.settings.rag_pdf_parser,
+            "mineru_fallback_enabled": self.settings.rag_enable_mineru_fallback,
+            "raganything_insert_enabled": self.settings.rag_enable_raganything_insert,
+            "raganything_query_enabled": self.settings.rag_enable_raganything_query,
+            "index_backend": (
+                "raganything+lightrag"
+                if self.settings.rag_enable_raganything_insert
+                else "local-chunks"
+            ),
+            "query_backend": (
+                "raganything+lightrag"
+                if self.settings.rag_enable_raganything_query
+                else "local-citations"
+            ),
+            "pdf_parser_ready": pdf_parser_ready,
+            "pdf_parser_command": pdf_parser_command,
+            "fast_pdf_parser": fast_pdf_parser,
+            "mineru_command": mineru_command,
             "storage_dir": self.settings.rag_storage_dir,
             "index_timeout_seconds": self.settings.rag_index_timeout_seconds,
+            "query_timeout_seconds": self.settings.rag_query_timeout_seconds,
             "pdf_note": (
-                "PDF indexing uses RAG-Anything/MinerU and may download parser models from "
-                "HuggingFace on first use."
+                "PDF indexing defaults to fast PyMuPDF4LLM extraction. MinerU is optional for "
+                "scanned or image-heavy PDFs and may be slow on laptops."
             ),
         }
+
+    def _fast_pdf_parser_name(self) -> str | None:
+        if importlib.util.find_spec("pymupdf4llm") is not None:
+            return "pymupdf4llm"
+        if importlib.util.find_spec("pypdf") is not None:
+            return "pypdf"
+        return None
 
     def list_sources(self, *, owner_id: str = "local-user") -> list[RAGSource]:
         self._fail_stale_processing_sources(owner_id=owner_id)
@@ -297,7 +378,10 @@ class RAGService:
         base = self._resolve_path(workspace_root, folder_path)
         if not base.is_dir():
             raise RAGServiceError(f"`{base}` is not a directory.")
-        if isinstance(self.provider, RAGAnythingProvider):
+        if isinstance(self.provider, RAGAnythingProvider) and (
+            self.settings.rag_enable_raganything_insert
+            or self.settings.rag_enable_raganything_query
+        ):
             status = self.status()
             if not status["ready"]:
                 raise RAGProviderError("; ".join(status["issues"]))
@@ -344,29 +428,46 @@ class RAGService:
             raise RAGServiceError("`query` is required.")
         citations = self.search(normalized_query, top_k=top_k, owner_id=owner_id)
         raw_result: Any | None = None
-        try:
-            raw_result = await self.provider.answer(normalized_query, mode="hybrid")
-        except Exception as exc:
-            if citations:
-                answer = await self._answer_from_citations(normalized_query, citations)
-                answer = self._append_citations(answer, citations)
-                return RAGQueryResult(
-                    answer=answer,
-                    citations=citations,
-                    provider=self.provider.name,
-                    raw_result={"provider_error": str(exc)},
+        provider_error: str | None = None
+        if self.settings.rag_enable_raganything_query:
+            try:
+                raw_result = await self._with_query_timeout(
+                    self.provider.answer(normalized_query, mode="hybrid")
                 )
-            raise RAGProviderError(f"RAG-Anything query failed: {exc}") from exc
-        answer = self._stringify_provider_result(raw_result)
-        if self._is_empty_provider_answer(answer) and citations:
-            answer = await self._answer_from_citations(normalized_query, citations)
+            except Exception as exc:
+                provider_error = str(exc)
+            else:
+                answer = self._stringify_provider_result(raw_result)
+                if not self._is_empty_provider_answer(answer):
+                    if citations:
+                        answer = self._append_citations(answer, citations)
+                    return RAGQueryResult(
+                        answer=answer,
+                        citations=citations,
+                        provider=self.provider.name,
+                        raw_result=raw_result,
+                    )
+        if not citations:
+            answer = "The knowledge base does not contain relevant indexed content for this query."
+            return RAGQueryResult(
+                answer=answer,
+                citations=[],
+                provider=self.provider.name,
+                raw_result={"provider_error": provider_error} if provider_error else None,
+            )
+        answer = await self._answer_from_citations(normalized_query, citations)
         if citations:
             answer = self._append_citations(answer, citations)
         return RAGQueryResult(
             answer=answer,
             citations=citations,
             provider=self.provider.name,
-            raw_result=raw_result,
+            raw_result={
+                "query_backend": "local-citations",
+                "provider_error": provider_error,
+            }
+            if provider_error
+            else {"query_backend": "local-citations"},
         )
 
     def search(
@@ -450,35 +551,21 @@ class RAGService:
                     ".docx, .pptx, or PDF."
                 )
             if extension == ".pdf":
-                await self._with_index_timeout(
-                    self.provider.index_pdf(
-                        file_path,
-                        output_dir=Path(self.settings.rag_storage_dir) / "parsed",
-                        doc_id=source.doc_id,
-                    )
-                )
-                try:
+                if self.settings.rag_pdf_parser.lower() == "mineru":
+                    await self._index_pdf_with_mineru(file_path, source.doc_id)
                     content_list = self._extract_content_list(file_path)
-                except Exception as exc:
-                    content_list = [
-                        {
-                            "type": "text",
-                            "text": (
-                                "PDF indexed by RAG-Anything. Local citation text extraction "
-                                f"failed: {exc}"
-                            ),
-                            "page_idx": 0,
-                        }
-                    ]
+                else:
+                    try:
+                        content_list = self._extract_content_list(file_path)
+                    except Exception:
+                        if not self.settings.rag_enable_mineru_fallback:
+                            raise
+                        await self._index_pdf_with_mineru(file_path, source.doc_id)
+                        content_list = self._extract_content_list(file_path)
+                    await self._maybe_insert_content_list(content_list, file_path, source.doc_id)
             else:
                 content_list = self._extract_content_list(file_path)
-                await self._with_index_timeout(
-                    self.provider.insert_content_list(
-                        content_list,
-                        file_path=file_path,
-                        doc_id=source.doc_id,
-                    )
-                )
+                await self._maybe_insert_content_list(content_list, file_path, source.doc_id)
             self._replace_chunks(source, content_list, owner_id=owner_id)
             source.status = "indexed"
             source.indexed_at = datetime.now(UTC)
@@ -493,6 +580,31 @@ class RAGService:
             self.session.refresh(source)
         return source, True
 
+    async def _maybe_insert_content_list(
+        self,
+        content_list: list[dict[str, Any]],
+        file_path: Path,
+        doc_id: str,
+    ) -> None:
+        if not self.settings.rag_enable_raganything_insert:
+            return
+        await self._with_index_timeout(
+            self.provider.insert_content_list(
+                content_list,
+                file_path=file_path,
+                doc_id=doc_id,
+            )
+        )
+
+    async def _index_pdf_with_mineru(self, file_path: Path, doc_id: str) -> None:
+        await self._with_index_timeout(
+            self.provider.index_pdf(
+                file_path,
+                output_dir=Path(self.settings.rag_storage_dir) / "parsed",
+                doc_id=doc_id,
+            )
+        )
+
     async def _with_index_timeout(self, awaitable):
         try:
             return await asyncio.wait_for(
@@ -505,16 +617,68 @@ class RAGService:
                 "folder first, or raise RAG_INDEX_TIMEOUT_SECONDS in `.env`."
             ) from exc
 
+    async def _with_query_timeout(self, awaitable):
+        try:
+            return await asyncio.wait_for(
+                awaitable,
+                timeout=max(float(self.settings.rag_query_timeout_seconds), 0.1),
+            )
+        except TimeoutError as exc:
+            raise RAGProviderError(
+                "RAG-Anything query timed out. The local citation query fallback is still "
+                "available; lower the folder size or keep RAG_ENABLE_RAGANYTHING_QUERY=false."
+            ) from exc
+
     def _extract_content_list(self, file_path: Path) -> list[dict[str, Any]]:
         extension = file_path.suffix.lower()
         if extension in {".md", ".txt"}:
             text = file_path.read_text(encoding="utf-8", errors="ignore")
+        elif extension == ".pdf":
+            text = self._extract_pdf_markdown(file_path)
         else:
             text = self._convert_with_markitdown(file_path)
         chunks = self._chunk_text(text)
         if not chunks:
             raise RAGServiceError("No extractable text was found in this file.")
         return [{"type": "text", "text": chunk, "page_idx": 0} for chunk in chunks]
+
+    def _extract_pdf_markdown(self, file_path: Path) -> str:
+        text = self._extract_pdf_with_pymupdf4llm(file_path)
+        if not text:
+            text = self._extract_pdf_with_pypdf(file_path)
+        if not text.strip():
+            raise RAGServiceError(
+                "No selectable text was found in this PDF. It may be scanned or image-only. "
+                "Enable `RAG_ENABLE_MINERU_FALLBACK=true` or set `RAG_PDF_PARSER=mineru` "
+                "to use OCR-style parsing."
+            )
+        return text
+
+    def _extract_pdf_with_pymupdf4llm(self, file_path: Path) -> str:
+        try:
+            import pymupdf4llm
+        except ImportError:
+            return ""
+        text = pymupdf4llm.to_markdown(str(file_path))
+        if isinstance(text, list):
+            text = "\n\n".join(str(item.get("text", "")) for item in text)
+        return str(text)
+
+    def _extract_pdf_with_pypdf(self, file_path: Path) -> str:
+        try:
+            from pypdf import PdfReader
+        except ImportError as exc:
+            raise RAGServiceError(
+                "Fast PDF indexing requires `pymupdf4llm` or `pypdf`. Run `uv sync`, "
+                "or set `RAG_PDF_PARSER=mineru` to use the slower MinerU parser."
+            ) from exc
+        reader = PdfReader(str(file_path))
+        pages = []
+        for index, page in enumerate(reader.pages, start=1):
+            text = page.extract_text() or ""
+            if text.strip():
+                pages.append(f"## Page {index}\n\n{text.strip()}")
+        return "\n\n".join(pages)
 
     def _convert_with_markitdown(self, file_path: Path) -> str:
         if MarkItDown is None:
@@ -744,7 +908,10 @@ class RAGService:
             },
         ]
         try:
-            return await LLMService().generate_chat(messages)
+            return await asyncio.wait_for(
+                LLMService().generate_chat(messages),
+                timeout=max(int(self.settings.api_timeout), 10),
+            )
         except Exception:
             first = citations[0]
             return (

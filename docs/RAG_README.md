@@ -16,27 +16,56 @@ uv sync
 project environment. If it is missing, RAG API calls return a configuration error
 instead of silently succeeding.
 
-RAG-Anything needs the same OpenAI-compatible API key for both completion and
-embeddings. Configure an OpenAI-compatible LLM profile in the app settings for
-the current backend process, or provide these environment variables in `.env` for
-team/restart-safe setup:
+RAG-Anything uses the same chat LLM configuration that the app already uses for
+answer generation. Configure an OpenAI-compatible LLM profile in the app settings
+for the current backend process, or provide these environment variables in `.env`
+for team/restart-safe setup:
 
 ```bash
 LLM_PROVIDER=openai
 LLM_MODEL=gpt-4o-mini
 LLM_API_KEY=your-api-key
 LLM_BASE_URL=optional-openai-compatible-base-url
-RAG_EMBEDDING_MODEL=text-embedding-3-small
+RAG_EMBEDDING_PROVIDER=local
 RAG_EMBEDDING_DIM=1536
+RAG_PDF_PARSER=fast
+RAG_ENABLE_MINERU_FALLBACK=false
+RAG_ENABLE_RAGANYTHING_INSERT=false
+RAG_ENABLE_RAGANYTHING_QUERY=false
 RAG_STORAGE_DIR=./data/rag
 RAG_INDEX_TIMEOUT_SECONDS=180
+RAG_QUERY_TIMEOUT_SECONDS=20
 ```
 
 If the backend is restarted and the key only existed in the in-app Settings
 screen, enter it again or move it to `.env`.
 
-`RAG_INDEX_TIMEOUT_SECONDS` controls how long one file may spend inside
-RAG-Anything indexing before the source is marked failed.
+`RAG_EMBEDDING_PROVIDER=local` is the default. It uses a deterministic local hash
+embedding so DeepSeek-style chat profiles can index documents even when the chat
+API does not provide an embeddings endpoint. If your team has a working
+OpenAI-compatible embeddings API, set:
+
+```bash
+RAG_EMBEDDING_PROVIDER=openai
+RAG_EMBEDDING_MODEL=text-embedding-3-small
+RAG_EMBEDDING_DIM=1536
+```
+
+By default, indexing uses laptop-friendly local chunks stored in the project
+SQLite database, and answers are generated from those chunks with the same chat
+LLM profile. This keeps class notes and school PDFs usable without running
+LightRAG graph extraction for every file.
+
+`RAG_ENABLE_RAGANYTHING_INSERT=true` opts into RAG-Anything/LightRAG insertion
+after text extraction. This can be useful for deeper experiments, but it may be
+slow because LightRAG can call the chat model while building its graph storage.
+
+`RAG_ENABLE_RAGANYTHING_QUERY=true` opts into RAG-Anything query first, with
+local citation answering as fallback. `RAG_QUERY_TIMEOUT_SECONDS` limits that
+provider query before fallback.
+
+`RAG_INDEX_TIMEOUT_SECONDS` controls how long one file may spend in the optional
+RAG-Anything insertion path before the source is marked failed.
 
 ## Running Locally
 
@@ -69,22 +98,28 @@ Index data is stored under:
 ./data/rag
 ```
 
-The SQLite database stores source metadata, status, hashes, and lightweight chunk
-citations. RAG-Anything stores its working index under `./data/rag/raganything`.
+The SQLite database stores source metadata, status, hashes, and searchable text
+chunks. RAG-Anything stores its working index under `./data/rag/raganything` only
+when `RAG_ENABLE_RAGANYTHING_INSERT=true` or `RAG_ENABLE_RAGANYTHING_QUERY=true`.
 
 ## Supported Files
 
 Supported in v1:
 
-- `.pdf`: indexed through RAG-Anything. Text PDFs are the main target.
-- `.md`, `.txt`: read directly and inserted into RAG-Anything as content lists.
-- `.docx`, `.pptx`: converted with MarkItDown, then inserted as content lists.
+- `.pdf`: defaults to fast local text extraction. PyMuPDF4LLM is preferred when
+  installed; otherwise the service falls back to pypdf text extraction. The
+  resulting text is stored as local searchable chunks. Text PDFs are the main
+  target.
+- `.md`, `.txt`: read directly and stored as local searchable chunks.
+- `.docx`, `.pptx`: converted with MarkItDown, then stored as local searchable
+  chunks.
 
 Not supported in v1:
 
 - `.doc`, `.ppt`: convert these to `.docx`, `.pptx`, or PDF.
-- Scanned PDFs and image-only formulas: may be slow or low quality unless the
-  RAG-Anything parser/OCR stack is fully configured.
+- Scanned PDFs and image-only formulas: not handled by the default fast parser.
+  Set `RAG_PDF_PARSER=mineru` or `RAG_ENABLE_MINERU_FALLBACK=true` only when
+  you explicitly need OCR-style parsing and can tolerate slow local inference.
 
 ## Readiness Check
 
@@ -99,11 +134,14 @@ The response must have `ready: true`. If `ready` is false, fix the listed
 
 ## Why Indexing Can Be Slow
 
-RAG-Anything may initialize MinerU, parse PDFs, build LightRAG storage, and call
-the configured LLM/embedding endpoint. The first PDF on a fresh machine can be
-especially slow. PDF parsing can also download MinerU parser models from
-HuggingFace; if that download times out, the PDF source fails. For a quick smoke
-test, start with a folder containing one small `.md` or `.txt` file.
+With the default settings, text extraction and local chunk storage should stay
+practical on a laptop. MinerU is much slower because it can run transformer/VLM
+document analysis locally; keep it off unless a PDF is scanned or image-heavy.
+RAG-Anything/LightRAG insertion can also be slow because it may call the chat
+model to build graph storage, so it is disabled by default for v1. If
+`RAG_EMBEDDING_PROVIDER=openai`, optional RAG-Anything insertion also calls the
+configured embedding endpoint. For a quick smoke test, start with a folder
+containing one small `.md` or `.txt` file.
 
 If a source stays in `processing` for too long, restart the backend and retry with
 a smaller folder or raise `RAG_INDEX_TIMEOUT_SECONDS`.

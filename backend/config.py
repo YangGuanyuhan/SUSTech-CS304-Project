@@ -43,11 +43,17 @@ class Settings(BaseSettings):
     rag_allowed_extensions: list[str] = Field(
         default_factory=lambda: [".md", ".txt", ".pdf", ".docx", ".pptx", ".doc", ".ppt"]
     )
+    rag_embedding_provider: str = "local"
     rag_embedding_model: str = "text-embedding-3-small"
     rag_embedding_dim: int = 1536
+    rag_pdf_parser: str = "fast"
+    rag_enable_mineru_fallback: bool = False
+    rag_enable_raganything_insert: bool = False
+    rag_enable_raganything_query: bool = False
     rag_chunk_size: int = 1200
     rag_top_k: int = 5
     rag_index_timeout_seconds: int = 180
+    rag_query_timeout_seconds: int = 20
     allowed_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
     )
