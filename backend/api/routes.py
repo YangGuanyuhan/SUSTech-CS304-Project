@@ -31,11 +31,15 @@ from backend.api.schemas import (
     LLMSettingsRequest,
     MemoryDeleteByQueryRequest,
     QuizAttemptRequest,
+    RAGIndexFolderRequest,
+    RAGQueryRequest,
+    RAGSettingsRequest,
 )
 from backend.config import get_settings
 from backend.db.database import get_db_session
 from backend.models.calendar import CalendarEventCreate, CalendarEventMove, CalendarEventUpdate
 from backend.models.common import ApiResponse
+from backend.models.rag import RAGDirectorySettings
 from backend.models.settings import BlackboardProfile, LLMProfile
 from backend.services.approval_service import approval_service
 from backend.services.blackboard_file_service import BBContent, BBFileManager
@@ -46,6 +50,7 @@ from backend.services.email_service import EmailService, UnconfirmedSendError
 from backend.services.llm_service import LLMConnectionError, LLMService
 from backend.services.memory_service import MemoryService
 from backend.services.quiz_service import QuizService
+from backend.services.rag_service import RAGProviderError, RAGService, RAGServiceError
 from backend.services.runtime_settings import (
     RuntimeBlackboardUpdate,
     RuntimeLLMUpdate,
@@ -225,7 +230,21 @@ async def _stream_agent_execution(*, session_id: str, execute):
         # Yield once so the SSE loop can flush "running" updates before heavy tool work continues.
         await asyncio.sleep(0)
 
-    run_task = asyncio.create_task(execute(on_tool_events, on_response_chunk))
+    async def on_thinking_chunk(chunk: str) -> None:
+        if not chunk:
+            return
+        await event_queue.put(
+            {
+                "event": "reasoning",
+                "data": json.dumps({"chunk": chunk}),
+            }
+        )
+        await asyncio.sleep(0)
+
+    thinking_handler = (
+        on_thinking_chunk if runtime_settings.get_llm_config().enable_reasoning else None
+    )
+    run_task = asyncio.create_task(execute(on_tool_events, on_response_chunk, thinking_handler))
     response_streamed = False
     try:
         while True:
@@ -290,6 +309,7 @@ async def test_llm_settings(request: LLMConnectionTestRequest) -> ApiResponse[ob
                 model=request.model or previous.model,
                 base_url=request.base_url if request.base_url is not None else previous.base_url,
                 api_key=request.api_key,
+                enable_reasoning=request.enable_reasoning,
             )
         )
     try:
@@ -304,6 +324,7 @@ async def test_llm_settings(request: LLMConnectionTestRequest) -> ApiResponse[ob
                 base_url=previous.base_url,
                 api_key=previous_secret,
                 replace_api_key=True,
+                enable_reasoning=previous.enable_reasoning,
             )
         )
     return ApiResponse(success=True, data=result)
@@ -326,6 +347,7 @@ async def save_llm_profile(
             provider=request.provider,
             model=request.model,
             base_url=request.base_url,
+            enable_reasoning=request.enable_reasoning,
         ),
         api_key=request.api_key,
     )
@@ -471,12 +493,13 @@ async def chat(
         try:
             async for event in _stream_agent_execution(
                 session_id=request.session_id,
-                execute=lambda on_tool_events, on_response_chunk: agent.run(
+                execute=lambda on_tool_events, on_response_chunk, on_thinking_chunk: agent.run(
                     request.message,
                     request.session_id,
                     request.workspace_root,
                     on_tool_events=on_tool_events,
                     on_response_chunk=on_response_chunk,
+                    on_thinking_chunk=on_thinking_chunk,
                 ),
             ):
                 yield event
@@ -508,11 +531,14 @@ async def handle_chat_approval(
         try:
             async for event in _stream_agent_execution(
                 session_id=request.session_id,
-                execute=lambda on_tool_events, on_response_chunk: agent.resume_approval(
-                    request.approval_id,
-                    approved=request.approved,
-                    on_tool_events=on_tool_events,
-                    on_response_chunk=on_response_chunk,
+                execute=lambda on_tool_events, on_response_chunk, on_thinking_chunk: (
+                    agent.resume_approval(
+                        request.approval_id,
+                        approved=request.approved,
+                        on_tool_events=on_tool_events,
+                        on_response_chunk=on_response_chunk,
+                        on_thinking_chunk=on_thinking_chunk,
+                    )
                 ),
             ):
                 yield event
@@ -632,6 +658,89 @@ async def sync_blackboard_calendar(
 async def get_database_overview(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
     overview = await DatabaseInsightsService(session).get_overview()
     return ApiResponse(success=True, data=overview)
+
+
+@router.get("/rag/settings", response_model=ApiResponse[object])
+async def get_rag_settings(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    return ApiResponse(success=True, data=RAGService(session).get_directory_settings())
+
+
+@router.put("/rag/settings", response_model=ApiResponse[object])
+async def update_rag_settings(
+    request: RAGSettingsRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    try:
+        settings = RAGService(session).save_directory_settings(
+            RAGDirectorySettings.model_validate(request.model_dump())
+        )
+    except RAGServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=settings)
+
+
+@router.post("/rag/index-folder", response_model=ApiResponse[object])
+async def index_rag_folder(
+    request: RAGIndexFolderRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    service = RAGService(session)
+    try:
+        workspace_root, path = service.resolve_index_scope(
+            path=request.path,
+            workspace_root=request.workspace_root,
+        )
+        directory_settings = service.get_directory_settings()
+        result = await service.index_folder(
+            path,
+            workspace_root=workspace_root,
+            recursive=(
+                request.recursive
+                if request.recursive is not None
+                else directory_settings.recursive_default
+            ),
+            extensions=request.extensions,
+        )
+    except RAGServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RAGProviderError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=result)
+
+
+@router.get("/rag/sources", response_model=ApiResponse[object])
+async def list_rag_sources(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    return ApiResponse(success=True, data=RAGService(session).list_sources())
+
+
+@router.get("/rag/status", response_model=ApiResponse[object])
+async def get_rag_status(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    return ApiResponse(success=True, data=RAGService(session).status())
+
+
+@router.post("/rag/query", response_model=ApiResponse[object])
+async def query_rag(
+    request: RAGQueryRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    try:
+        result = await RAGService(session).query(request.query, top_k=request.top_k)
+    except RAGServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RAGProviderError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=result)
+
+
+@router.delete("/rag/sources/{source_id}", response_model=ApiResponse[dict[str, bool]])
+async def delete_rag_source(
+    source_id: str,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[dict[str, bool]]:
+    deleted = RAGService(session).delete_source(source_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="RAG source not found")
+    return ApiResponse(success=True, data={"deleted": True})
 
 
 @router.get("/memory", response_model=ApiResponse[object])

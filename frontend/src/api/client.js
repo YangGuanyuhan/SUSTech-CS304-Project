@@ -280,6 +280,9 @@ async function consumeSSE(response, handlers) {
       if (eventName === "message") {
         handlers.onChunk?.(parsed.chunk);
       }
+      if (eventName === "reasoning") {
+        handlers.onReasoning?.(parsed.chunk);
+      }
       if (eventName === "approval_required") {
         handlers.onApprovalRequired?.(parsed);
       }
@@ -308,6 +311,7 @@ async function consumeSSE(response, handlers) {
         throw new Error(parsed.error || "Chat stream failed.");
       }
       if (eventName === "message") handlers.onChunk?.(parsed.chunk);
+      if (eventName === "reasoning") handlers.onReasoning?.(parsed.chunk);
       if (eventName === "approval_required") handlers.onApprovalRequired?.(parsed);
       if (eventName === "tool_events") handlers.onToolEvents?.(parsed.tool_events || []);
       if (eventName === "done") handlers.onDone?.(parsed);
@@ -388,6 +392,22 @@ export const apiClient = {
         ...options.headers
       },
       body: data ? JSON.stringify(data) : undefined
+    });
+    return { data: await parseJson(response) };
+  },
+
+  async delete(endpoint, options = {}) {
+    const url = new URL(`${API_BASE}${endpoint}`);
+    if (options.params) {
+      Object.entries(options.params).forEach(([key, value]) => {
+        if (value !== null && value !== undefined) {
+          url.searchParams.append(key, value);
+        }
+      });
+    }
+    const response = await fetch(url.toString(), {
+      method: "DELETE",
+      headers: options.headers || {}
     });
     return { data: await parseJson(response) };
   }
