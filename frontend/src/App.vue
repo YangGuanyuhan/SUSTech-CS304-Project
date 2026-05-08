@@ -131,7 +131,24 @@
     </aside>
 
     <!-- Main Content -->
-    <section class="main-content">
+    <section
+      class="main-content"
+      @dragenter.prevent="handleDragEnter"
+      @dragover.prevent="handleDragOver"
+      @dragleave.prevent="handleDragLeave"
+      @drop.prevent="handleFileDrop"
+    >
+      <div v-if="activeView === 'chat' && dragActive" class="file-drop-overlay">
+        <div class="file-drop-card">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <strong>释放以上传文件</strong>
+          <span>支持 PDF、PPTX、DOCX，上传后即可围绕当前对话提问</span>
+        </div>
+      </div>
       <template v-if="activeView === 'chat'">
       <!-- Header -->
       <header :class="['header', { collapsed: !headerExpanded }]">
@@ -271,38 +288,107 @@
 
       <!-- Composer -->
       <div class="composer-wrapper">
-        <div class="composer">
-          <textarea
-            ref="composerInput"
-            v-model="draft"
-            rows="1"
-            placeholder="输入消息... (Shift + Enter 换行)"
-            @input="autoResizeComposer"
-            @keydown.enter.exact.prevent="submitMessage"
-          />
+        <div v-if="filesPanelOpen && activeConversation.sessionFiles?.length" class="chat-file-strip">
+          <article
+            v-for="file in activeConversation.sessionFiles"
+            :key="file.id"
+            :class="['chat-file-chip', file.status]"
+          >
+            <div class="file-chip-icon">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+            </div>
+            <div class="file-chip-copy">
+              <strong>{{ file.relative_path }}</strong>
+              <span>{{ fileStatusLabel(file) }}</span>
+            </div>
+            <button
+              class="file-chip-remove"
+              :disabled="file.status === 'processing'"
+              title="删除文件"
+              @click="deleteChatFile(file)"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </article>
         </div>
-        <button
-          v-if="chatStreaming"
-          class="send-btn stop-btn"
-          @click="stopActiveChat"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="7" y="7" width="10" height="10" rx="1.5" ry="1.5"/>
-          </svg>
-          <span>停止</span>
-        </button>
-        <button
-          v-else
-          class="send-btn"
-          :disabled="loading || !draft.trim()"
-          @click="submitMessage"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="22" y1="2" x2="11" y2="13"/>
-            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-          </svg>
-          <span>发送</span>
-        </button>
+        <div class="composer-row">
+          <div v-if="activeConversation.sessionFiles?.length" class="composer-side-tools">
+            <button
+              :class="['chat-file-toggle', { open: filesPanelOpen }]"
+              type="button"
+              :title="filesPanelOpen ? '收起上传资料' : '展开上传资料'"
+              @click="filesPanelOpen = !filesPanelOpen"
+            >
+              <span class="toggle-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                </svg>
+              </span>
+              <span class="toggle-count">{{ activeConversation.sessionFiles.length }}</span>
+              <svg class="toggle-chevron" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path :d="filesPanelOpen ? 'M18 15l-6-6-6 6' : 'M6 9l6 6 6-6'" />
+              </svg>
+            </button>
+          </div>
+          <div class="composer">
+            <input
+              ref="fileInput"
+              class="hidden-file-input"
+              type="file"
+              multiple
+              accept=".pdf,.pptx,.docx,.md,.txt,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              @change="handleFileInput"
+            />
+            <button
+              class="attach-btn"
+              type="button"
+              :disabled="uploadingFiles"
+              title="上传当前对话文件"
+              @click="openFilePicker"
+            >
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+              </svg>
+            </button>
+            <textarea
+              ref="composerInput"
+              v-model="draft"
+              rows="1"
+              placeholder="输入消息... (Shift + Enter 换行)"
+              @input="autoResizeComposer"
+              @keydown.enter.exact.prevent="submitMessage"
+            />
+          </div>
+          <button
+            v-if="chatStreaming"
+            class="send-btn stop-btn"
+            @click="stopActiveChat"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="7" y="7" width="10" height="10" rx="1.5" ry="1.5"/>
+            </svg>
+            <span>停止</span>
+          </button>
+          <button
+            v-else
+            class="send-btn"
+            :disabled="loading || !draft.trim()"
+            @click="submitMessage"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="22" y1="2" x2="11" y2="13"/>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+            <span>发送</span>
+          </button>
+        </div>
       </div>
       </template>
 
@@ -332,7 +418,6 @@
     </div>
   </main>
 </template>
-
 <script setup>
 import MarkdownIt from "markdown-it";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
@@ -342,10 +427,11 @@ import DatabaseOverviewPanel from "./components/DatabaseOverviewPanel.vue";
 import QuizHistoryPanel from "./components/QuizHistoryPanel.vue";
 import RagPanel from "./components/RagPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
-import { getCourses, getHealth, streamApprovalDecision, streamChat } from "./api/client";
+import { apiClient, getCourses, getHealth, streamApprovalDecision, streamChat } from "./api/client";
 
 const CHAT_CONVERSATIONS_KEY = "spa-conversations";
 const ACTIVE_CONVERSATION_KEY = "spa-active-conversation-id";
+const CHAT_UPLOAD_EXTENSIONS = [".pdf", ".pptx", ".docx", ".md", ".txt"];
 
 const markdown = new MarkdownIt({
   html: false,
@@ -361,6 +447,7 @@ function makeConversation(title = "新对话") {
     updatedAt: Date.now(),
     workspaceRoot: "",
     pendingApproval: null,
+    sessionFiles: [],
     messages: [
       reactive({
         id: crypto.randomUUID(),
@@ -399,6 +486,7 @@ function restoreConversations() {
         ...conversation,
         workspaceRoot: conversation.workspaceRoot || "",
         pendingApproval: conversation.pendingApproval || null,
+        sessionFiles: conversation.sessionFiles || [],
         messages: (conversation.messages || []).map((message) => migrateMessage(message))
       })
     );
@@ -422,9 +510,13 @@ const editingConversationId = ref("");
 const editingTitle = ref("");
 const draft = ref("");
 const composerInput = ref(null);
+const fileInput = ref(null);
 const loading = ref(false);
+const uploadingFiles = ref(false);
 const chatStreaming = ref(false);
 const headerExpanded = ref(false);
+const filesPanelOpen = ref(false);
+const dragDepth = ref(0);
 let activeTimer = null;
 let activeChatAbortController = null;
 let chatStopRequested = false;
@@ -432,6 +524,8 @@ let chatStopRequested = false;
 const sortedConversations = computed(() =>
   [...conversations.value].sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0))
 );
+
+const dragActive = computed(() => dragDepth.value > 0 && activeView.value === "chat");
 
 function scrollToBottom() {
   nextTick(() => {
@@ -602,6 +696,144 @@ function appendMessage(role, content) {
   );
   activeConversation.value.updatedAt = Date.now();
   scrollToBottom();
+}
+
+function fileStatusLabel(file) {
+  if (file.status === "indexed") return "已可提问";
+  if (file.status === "failed") return file.error || "解析失败";
+  if (file.status === "processing") return "解析中";
+  return "等待处理";
+}
+
+function isSupportedChatFile(file) {
+  const name = file?.name || "";
+  return CHAT_UPLOAD_EXTENSIONS.some((extension) => name.toLowerCase().endsWith(extension));
+}
+
+function openFilePicker() {
+  fileInput.value?.click();
+}
+
+function handleFileInput(event) {
+  const files = Array.from(event.target.files || []);
+  event.target.value = "";
+  uploadChatFiles(files);
+}
+
+function handleDragEnter(event) {
+  if (activeView.value !== "chat") return;
+  if (!Array.from(event.dataTransfer?.types || []).includes("Files")) return;
+  dragDepth.value += 1;
+}
+
+function handleDragOver(event) {
+  if (activeView.value !== "chat") return;
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "copy";
+  }
+}
+
+function handleDragLeave() {
+  dragDepth.value = Math.max(0, dragDepth.value - 1);
+}
+
+function handleFileDrop(event) {
+  if (activeView.value !== "chat") return;
+  dragDepth.value = 0;
+  uploadChatFiles(Array.from(event.dataTransfer?.files || []));
+}
+
+function makePendingFile(file) {
+  return {
+    id: `pending-${crypto.randomUUID()}`,
+    relative_path: file.name,
+    extension: file.name.slice(file.name.lastIndexOf(".")).toLowerCase(),
+    status: "processing",
+    error: null
+  };
+}
+
+async function loadSessionFiles(sessionId = activeConversation.value.id) {
+  try {
+    const response = await apiClient.get("/rag/session-files", {
+      params: { session_id: sessionId }
+    });
+    const conversation = conversations.value.find((item) => item.id === sessionId);
+    if (conversation) {
+      conversation.sessionFiles = response.data?.data || [];
+      conversation.updatedAt = Date.now();
+    }
+  } catch {
+    // Session files are optional; chat should stay usable if the backend is unavailable.
+  }
+}
+
+async function uploadChatFiles(rawFiles) {
+  if (!rawFiles?.length || uploadingFiles.value) return;
+  const unsupported = rawFiles.filter((file) => !isSupportedChatFile(file));
+  const files = rawFiles.filter((file) => isSupportedChatFile(file));
+  if (unsupported.length) {
+    appendMessage(
+      "assistant",
+      `以下文件暂不支持：${unsupported.map((file) => file.name).join("、")}。请上传 PDF、PPTX 或 DOCX。`
+    );
+  }
+  if (!files.length) return;
+
+  const conversation = activeConversation.value;
+  const pending = files.map((file) => reactive(makePendingFile(file)));
+  conversation.sessionFiles = [...(conversation.sessionFiles || []), ...pending];
+  conversation.updatedAt = Date.now();
+  filesPanelOpen.value = true;
+  uploadingFiles.value = true;
+  scrollToBottom();
+
+  const formData = new FormData();
+  formData.append("session_id", conversation.id);
+  files.forEach((file) => formData.append("files", file));
+
+  try {
+    const response = await apiClient.postForm("/rag/session-files/upload", formData);
+    const summary = response.data?.data || {};
+    conversation.sessionFiles = summary.sources || [];
+    const indexed = Number(summary.indexed || 0);
+    const failed = Number(summary.failed || 0);
+    if (indexed > 0) {
+      appendMessage("assistant", `已索引 ${indexed} 个上传文件，可以直接基于它们提问。`);
+    }
+    if (failed > 0) {
+      appendMessage("assistant", `${failed} 个文件解析失败，已在文件列表中标出原因。`);
+    }
+  } catch (error) {
+    pending.forEach((file) => {
+      file.status = "failed";
+      file.error = error.message;
+    });
+    appendMessage("assistant", `文件上传失败：${error.message}`);
+  } finally {
+    uploadingFiles.value = false;
+    await loadSessionFiles(conversation.id);
+    filesPanelOpen.value = false;
+    persistConversations();
+  }
+}
+
+async function deleteChatFile(file) {
+  if (!file?.id || file.status === "processing") return;
+  const conversation = activeConversation.value;
+  if (String(file.id).startsWith("pending-")) {
+    conversation.sessionFiles = (conversation.sessionFiles || []).filter((item) => item.id !== file.id);
+    return;
+  }
+  try {
+    await apiClient.delete(`/rag/session-files/${encodeURIComponent(file.id)}`, {
+      params: { session_id: conversation.id }
+    });
+    conversation.sessionFiles = (conversation.sessionFiles || []).filter((item) => item.id !== file.id);
+    conversation.updatedAt = Date.now();
+  } catch (error) {
+    appendMessage("assistant", `删除上传文件失败：${error.message}`);
+  }
 }
 
 async function loadCourses() {
@@ -916,6 +1148,10 @@ watch(
   { deep: true }
 );
 
+watch(activeConversationId, (sessionId) => {
+  loadSessionFiles(sessionId);
+});
+
 onBeforeUnmount(() => {
   if (activeTimer) window.clearInterval(activeTimer);
   if (activeChatAbortController) {
@@ -926,6 +1162,7 @@ onBeforeUnmount(() => {
 
 onMounted(() => {
   resizeComposer(composerInput.value);
+  loadSessionFiles(activeConversationId.value);
 });
 </script>
 
@@ -1269,6 +1506,42 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.6);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 20px 44px var(--shadow-glass);
   overflow-y: auto;
+  position: relative;
+}
+
+.file-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: rgba(252, 251, 248, 0.78);
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+}
+
+.file-drop-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  min-width: min(420px, calc(100vw - 48px));
+  padding: 28px;
+  border-radius: 24px;
+  border: 1px solid rgba(31, 111, 120, 0.18);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.16);
+  color: var(--accent);
+}
+
+.file-drop-card strong {
+  color: var(--text-primary);
+  font-size: 18px;
+}
+
+.file-drop-card span {
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 /* Header */
@@ -1899,9 +2172,10 @@ body {
 /* Composer */
 .composer-wrapper {
   display: flex;
-  gap: 16px;
-  padding: 20px 34px 30px;
-  padding-left: 128px;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  padding: 20px clamp(24px, 4vw, 56px) 30px;
   background: linear-gradient(180deg, rgba(243, 240, 234, 0.12), rgba(255, 255, 255, 0.68));
   border-top: 1px solid rgba(53, 62, 72, 0.05);
   position: sticky;
@@ -1910,19 +2184,224 @@ body {
   backdrop-filter: blur(18px);
 }
 
+.composer-row {
+  flex: 0 0 100%;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  width: min(1280px, 100%);
+  margin: 0 auto;
+  min-width: 0;
+}
+
+.composer-side-tools {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.chat-file-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  width: 56px;
+  min-width: 56px;
+  height: 56px;
+  padding: 0;
+  border-radius: 18px;
+  border: 1px solid rgba(31, 111, 120, 0.14);
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text-secondary);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.chat-file-toggle:hover,
+.chat-file-toggle.open {
+  border-color: rgba(31, 111, 120, 0.24);
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.toggle-icon {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--accent);
+  background: rgba(31, 111, 120, 0.1);
+}
+
+.toggle-count {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  background: var(--accent-orange);
+  color: white;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1;
+  text-align: center;
+  box-shadow: 0 8px 16px rgba(218, 106, 30, 0.22);
+}
+
+.toggle-chevron {
+  display: none;
+}
+
+.chat-file-strip {
+  flex: 0 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: min(1280px, 100%);
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding-left: 66px;
+}
+
+.chat-file-chip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 280px;
+  min-height: 46px;
+  padding: 8px 10px;
+  border-radius: 16px;
+  border: 1px solid rgba(53, 62, 72, 0.1);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.05);
+}
+
+.chat-file-chip.indexed {
+  border-color: rgba(31, 111, 120, 0.2);
+}
+
+.chat-file-chip.failed {
+  border-color: rgba(179, 58, 36, 0.22);
+  background: rgba(255, 247, 244, 0.9);
+}
+
+.file-chip-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: rgba(31, 111, 120, 0.1);
+  flex: 0 0 auto;
+}
+
+.chat-file-chip.failed .file-chip-icon {
+  color: #b33a24;
+  background: rgba(179, 58, 36, 0.1);
+}
+
+.file-chip-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.file-chip-copy strong,
+.file-chip-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-chip-copy strong {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.file-chip-copy span {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.file-chip-remove {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.file-chip-remove:hover:not(:disabled) {
+  background: rgba(53, 62, 72, 0.08);
+  color: var(--text-primary);
+}
+
+.file-chip-remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .composer {
   flex: 1;
+  min-width: 0;
   position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
   padding: 10px;
   border-radius: 28px;
   background: rgba(255, 255, 255, 0.74);
   border: 1px solid rgba(255, 255, 255, 0.7);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 14px 30px rgba(15, 23, 42, 0.05);
-  max-width: 980px;
+  max-width: none;
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.attach-btn {
+  width: 46px;
+  height: 46px;
+  border: none;
+  border-radius: 17px;
+  display: grid;
+  place-items: center;
+  background: rgba(31, 111, 120, 0.1);
+  color: var(--accent);
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: all 0.18s ease;
+}
+
+.attach-btn:hover:not(:disabled) {
+  background: rgba(31, 111, 120, 0.16);
+  transform: translateY(-1px);
+}
+
+.attach-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .composer textarea {
   width: 100%;
+  flex: 1;
   resize: none;
   padding: 14px 16px;
   border-radius: 20px;
@@ -2160,7 +2639,27 @@ body {
 
   .composer-wrapper {
     padding: 14px 16px 18px;
-    flex-direction: column;
+  }
+
+  .composer-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: end;
+  }
+
+  .composer-side-tools {
+    flex-direction: row;
+  }
+
+  .chat-file-toggle {
+    width: 54px;
+    min-width: 54px;
+    height: 54px;
+  }
+
+  .chat-file-strip {
+    width: 100%;
+    padding-left: 0;
   }
 
   .composer {
@@ -2174,6 +2673,7 @@ body {
   }
 
   .send-btn {
+    grid-column: 1 / -1;
     width: 100%;
     align-self: stretch;
   }

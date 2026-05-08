@@ -158,6 +158,50 @@ async def test_rag_resolve_index_scope_rejects_unauthorized_absolute_path(db_ses
         service.resolve_index_scope(path=str(outside))
 
 
+async def test_rag_search_prefers_owner_ids_in_order(db_session, tmp_path):
+    local_root = tmp_path / "local"
+    chat_root = tmp_path / "chat"
+    local_root.mkdir()
+    chat_root.mkdir()
+    (local_root / "global.md").write_text("The deadline is Monday.", encoding="utf-8")
+    (chat_root / "uploaded.md").write_text("The deadline is Friday.", encoding="utf-8")
+    service = RAGService(db_session, provider=FakeRAGProvider())
+
+    await service.index_folder(".", workspace_root=str(local_root), owner_id="local-user")
+    await service.index_folder(".", workspace_root=str(chat_root), owner_id="chat:abc")
+
+    hits = service.search("deadline", owner_ids=["chat:abc", "local-user"], top_k=2)
+
+    assert [hit.relative_path for hit in hits] == ["uploaded.md", "global.md"]
+
+
+async def test_rag_query_falls_back_to_chat_chunks_for_generic_upload_question(
+    db_session, tmp_path, monkeypatch
+):
+    chat_root = tmp_path / "chat"
+    chat_root.mkdir()
+    (chat_root / "upload.md").write_text(
+        "This uploaded PDF is about CPU scheduling and preemption.",
+        encoding="utf-8",
+    )
+
+    async def fake_generate_chat(self, messages):
+        assert "CPU scheduling and preemption" in messages[-1]["content"]
+        return "The uploaded PDF discusses CPU scheduling and preemption."
+
+    from backend.services import rag_service
+
+    monkeypatch.setattr(rag_service.LLMService, "generate_chat", fake_generate_chat)
+    service = RAGService(db_session, provider=FakeRAGProvider())
+    await service.index_folder(".", workspace_root=str(chat_root), owner_id="chat:abc")
+
+    result = await service.query("Analyze my uploaded PDF", owner_ids=["chat:abc", "local-user"])
+
+    assert result.citations
+    assert result.citations[0].relative_path == "upload.md"
+    assert "CPU scheduling" in result.answer
+
+
 async def test_rag_marks_legacy_office_as_failed(db_session, tmp_path):
     legacy = tmp_path / "slides.ppt"
     legacy.write_bytes(b"legacy")

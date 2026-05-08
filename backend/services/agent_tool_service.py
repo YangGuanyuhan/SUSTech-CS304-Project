@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from backend.models.calendar import CalendarEventCreate, CalendarEventMove, CalendarEventUpdate
 from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
 from backend.services.calendar_service import CalendarService
+from backend.services.chat_file_service import CHAT_FILE_CONTEXT_CHUNK_LIMIT, ChatFileService
 from backend.services.datetime_service import DateTimeService
 from backend.services.memory_service import MemoryService
 from backend.services.quiz_service import QuizService
@@ -86,7 +87,7 @@ def get_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "list_local_files",
-                "description": "List files and directories inside the user-approved workspace root.",
+                "description": "List files and directories inside the user-approved workspace root. Do not use for current-chat uploaded PDFs/PPTs/DOCX files; use rag_search or rag_answer instead.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -106,7 +107,7 @@ def get_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "read_local_file",
-                "description": "Read a UTF-8 text file inside the approved workspace root.",
+                "description": "Read a UTF-8 text file inside the approved workspace root. Do not use for current-chat uploaded PDFs/PPTs/DOCX files; use rag_search or rag_answer instead.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -206,7 +207,7 @@ def get_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "rag_search",
-                "description": "Search indexed local study materials and school information.",
+                "description": "Search current-chat uploaded PDF/PPTX/DOCX files first, then indexed local study materials and school information. Use this for 'my uploaded PDF', 'this PPT', 'attached file', '课件', or '上传的资料'.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -221,7 +222,7 @@ def get_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "rag_answer",
-                "description": "Answer a question using the indexed local knowledge base with citations.",
+                "description": "Answer or summarize using current-chat uploaded PDF/PPTX/DOCX files first, then the indexed local knowledge base, with citations. Best tool for analyzing uploaded files.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -529,9 +530,9 @@ class AgentToolService:
         if tool_name == "rag_index_folder":
             return await self._rag_index_folder(arguments, workspace_root)
         if tool_name == "rag_search":
-            return await self._rag_search(arguments)
+            return await self._rag_search(arguments, chat_session_id=chat_session_id)
         if tool_name == "rag_answer":
-            return await self._rag_answer(arguments)
+            return await self._rag_answer(arguments, chat_session_id=chat_session_id)
         if tool_name == "calendar_list_events":
             return await self._calendar_list_events(arguments)
         if tool_name == "calendar_create_event":
@@ -905,23 +906,38 @@ class AgentToolService:
             raise ToolExecutionError(str(exc)) from exc
         return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
 
-    async def _rag_search(self, arguments: dict[str, Any]) -> str:
+    async def _rag_search(self, arguments: dict[str, Any], *, chat_session_id: str) -> str:
         query = str(arguments.get("query", "")).strip()
         if not query:
             raise ToolExecutionError("`query` is required for rag_search.")
-        hits = RAGService(self.session).search(query, top_k=int(arguments.get("top_k", 5)))
+        owner_ids = ChatFileService(self.session).query_owner_ids(chat_session_id)
+        rag_service = RAGService(self.session)
+        hits = rag_service.sample_chunks(
+            owner_id=owner_ids[0],
+            limit=CHAT_FILE_CONTEXT_CHUNK_LIMIT,
+        )
         if not hits:
-            return "No matching knowledge base chunks were found."
+            hits = rag_service.search(
+                query,
+                top_k=int(arguments.get("top_k", 5)),
+                owner_ids=owner_ids,
+            )
+        if not hits:
+            return "No matching uploaded file or knowledge base chunks were found."
         return json.dumps([hit.model_dump(mode="json") for hit in hits], ensure_ascii=False)
 
-    async def _rag_answer(self, arguments: dict[str, Any]) -> str:
+    async def _rag_answer(self, arguments: dict[str, Any], *, chat_session_id: str) -> str:
         query = str(arguments.get("query", "")).strip()
         if not query:
             raise ToolExecutionError("`query` is required for rag_answer.")
         try:
+            owner_ids = ChatFileService(self.session).query_owner_ids(chat_session_id)
             result = await RAGService(self.session).query(
                 query,
                 top_k=int(arguments.get("top_k", 5)),
+                owner_ids=owner_ids,
+                prefer_owner_context=True,
+                context_limit=CHAT_FILE_CONTEXT_CHUNK_LIMIT,
             )
         except (RAGProviderError, RAGServiceError) as exc:
             raise ToolExecutionError(str(exc)) from exc

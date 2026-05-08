@@ -88,6 +88,7 @@ class RAGIndexFolderRequest(BaseModel):
 class RAGQueryRequest(BaseModel):
     query: str
     top_k: int = Field(default=5, ge=1, le=20)
+    session_id: str | None = None
 
 
 class RAGSettingsRequest(BaseModel):
