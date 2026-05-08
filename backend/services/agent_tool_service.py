@@ -20,6 +20,7 @@ from backend.services.calendar_service import CalendarService
 from backend.services.datetime_service import DateTimeService
 from backend.services.memory_service import MemoryService
 from backend.services.quiz_service import QuizService
+from backend.services.rag_service import RAGProviderError, RAGService, RAGServiceError
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -29,6 +30,7 @@ _APPROVAL_REQUIRED_TOOLS = {
     "write_local_file",
     "run_local_command",
     "fetch_webpage",
+    "rag_index_folder",
 }
 
 
@@ -180,6 +182,55 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                         },
                     },
                     "required": ["url"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "rag_index_folder",
+                "description": "Index a configured RAG directory or authorized subdirectory into the knowledge base.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "default": ".",
+                            "description": "Relative path under the default RAG directory, or an absolute path inside an authorized RAG root.",
+                        },
+                        "recursive": {"type": "boolean", "default": True},
+                        "extensions": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "rag_search",
+                "description": "Search indexed local study materials and school information.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "top_k": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "rag_answer",
+                "description": "Answer a question using the indexed local knowledge base with citations.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "top_k": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    },
+                    "required": ["query"],
                 },
             },
         },
@@ -446,6 +497,11 @@ class AgentToolService:
             return f"Run local command `{command}` in workspace `{workspace_root or '<unset>'}`."
         if tool_name == "fetch_webpage":
             return f"Visit webpage `{arguments.get('url', '')}` and extract content."
+        if tool_name == "rag_index_folder":
+            return (
+                f"Index local folder `{arguments.get('path', '.')}` into the knowledge base "
+                "using the configured RAG directory permissions."
+            )
         return f"Execute tool `{tool_name}`."
 
     async def execute(
@@ -472,6 +528,12 @@ class AgentToolService:
             return await self._run_local_command(arguments, workspace_root)
         if tool_name == "fetch_webpage":
             return await self._fetch_webpage(arguments)
+        if tool_name == "rag_index_folder":
+            return await self._rag_index_folder(arguments, workspace_root)
+        if tool_name == "rag_search":
+            return await self._rag_search(arguments)
+        if tool_name == "rag_answer":
+            return await self._rag_answer(arguments)
         if tool_name == "calendar_list_events":
             return await self._calendar_list_events(arguments)
         if tool_name == "calendar_create_event":
@@ -542,7 +604,12 @@ class AgentToolService:
         return json.dumps({"deleted": deleted}, ensure_ascii=False)
 
     async def _list_local_files(self, arguments: dict[str, Any], workspace_root: str | None) -> str:
-        base = self._resolve_path(workspace_root, str(arguments.get("path", ".")))
+        effective_root = self._effective_workspace_root_for_path(
+            workspace_root,
+            str(arguments.get("path", ".")),
+            directory_request=True,
+        )
+        base = self._resolve_path(effective_root, str(arguments.get("path", ".")))
         recursive = bool(arguments.get("recursive", False))
         max_entries = int(arguments.get("max_entries", 50))
         pattern = "**/*" if recursive else "*"
@@ -552,21 +619,26 @@ class AgentToolService:
                 continue
             entries.append(
                 {
-                    "path": item.relative_to(self._workspace_root(workspace_root)).as_posix(),
+                    "path": item.relative_to(self._workspace_root(effective_root)).as_posix(),
                     "type": "directory" if item.is_dir() else "file",
                 }
             )
         return json.dumps({"directory": base.as_posix(), "entries": entries}, ensure_ascii=False)
 
     async def _read_local_file(self, arguments: dict[str, Any], workspace_root: str | None) -> str:
-        path = self._resolve_path(workspace_root, str(arguments.get("path", "")))
+        effective_root = self._effective_workspace_root_for_path(
+            workspace_root,
+            str(arguments.get("path", "")),
+            directory_request=False,
+        )
+        path = self._resolve_path(effective_root, str(arguments.get("path", "")))
         max_chars = int(arguments.get("max_chars", 12000))
         if not path.is_file():
             raise ToolExecutionError(f"`{path}` is not a readable file.")
         content = path.read_text(encoding="utf-8", errors="ignore")
         truncated = len(content) > max_chars
         payload = {
-            "path": path.relative_to(self._workspace_root(workspace_root)).as_posix(),
+            "path": path.relative_to(self._workspace_root(effective_root)).as_posix(),
             "truncated": truncated,
             "content": content[:max_chars],
         }
@@ -687,6 +759,48 @@ class AgentToolService:
             "content": text[:max_chars],
         }
         return json.dumps(payload, ensure_ascii=False)
+
+    async def _rag_index_folder(self, arguments: dict[str, Any], workspace_root: str | None) -> str:
+        path = str(arguments.get("path", ".")).strip() or "."
+        service = RAGService(self.session)
+        try:
+            effective_root, safe_path = service.resolve_index_scope(path=path)
+            directory_settings = service.get_directory_settings()
+            result = await service.index_folder(
+                safe_path,
+                workspace_root=effective_root,
+                recursive=(
+                    bool(arguments["recursive"])
+                    if "recursive" in arguments
+                    else directory_settings.recursive_default
+                ),
+                extensions=arguments.get("extensions"),
+            )
+        except (RAGProviderError, RAGServiceError) as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
+
+    async def _rag_search(self, arguments: dict[str, Any]) -> str:
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            raise ToolExecutionError("`query` is required for rag_search.")
+        hits = RAGService(self.session).search(query, top_k=int(arguments.get("top_k", 5)))
+        if not hits:
+            return "No matching knowledge base chunks were found."
+        return json.dumps([hit.model_dump(mode="json") for hit in hits], ensure_ascii=False)
+
+    async def _rag_answer(self, arguments: dict[str, Any]) -> str:
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            raise ToolExecutionError("`query` is required for rag_answer.")
+        try:
+            result = await RAGService(self.session).query(
+                query,
+                top_k=int(arguments.get("top_k", 5)),
+            )
+        except (RAGProviderError, RAGServiceError) as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
 
     async def _create_quiz(self, arguments: dict[str, Any], *, chat_session_id: str) -> str:
         topic = str(arguments.get("topic", "")).strip()
@@ -861,6 +975,28 @@ class AgentToolService:
         if not resolved.is_dir():
             raise ToolExecutionError(f"Workspace root `{workspace_root}` is not a directory.")
         return resolved
+
+    def _effective_workspace_root_for_path(
+        self,
+        workspace_root: str | None,
+        requested_path: str,
+        *,
+        directory_request: bool,
+    ) -> str | None:
+        if workspace_root:
+            return workspace_root
+        requested = Path(requested_path).expanduser()
+        if not requested.is_absolute():
+            return workspace_root
+        resolved = requested.resolve()
+        if directory_request:
+            if not resolved.is_dir():
+                raise ToolExecutionError(f"`{requested_path}` is not a directory.")
+            return str(resolved)
+        parent = resolved.parent
+        if not parent.is_dir():
+            raise ToolExecutionError(f"Parent directory for `{requested_path}` does not exist.")
+        return str(parent)
 
     def _resolve_path(self, workspace_root: str | None, requested_path: str) -> Path:
         root = self._workspace_root(workspace_root)

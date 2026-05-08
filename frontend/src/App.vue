@@ -31,12 +31,14 @@
             </svg>
             <span>测验</span>
           </button>
-          <button :class="['tab-item', { active: activeView === 'files' }]" @click="activeView = 'files'">
+          <button :class="['tab-item', { active: activeView === 'rag' }]" @click="activeView = 'rag'">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
-              <polyline points="13 2 13 9 20 9"/>
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+              <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/>
+              <path d="M8 7h8"/>
+              <path d="M8 11h6"/>
             </svg>
-            <span>文件</span>
+            <span>知识库</span>
           </button>
           <button :class="['tab-item', { active: activeView === 'calendar' }]" @click="activeView = 'calendar'">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -227,22 +229,45 @@
           </div>
         </article>
 
-        <!-- Approval Panel -->
-        <section v-if="activeConversation.pendingApproval" class="approval-panel">
+      </div>
+
+      <!-- Approval Panel -->
+      <Transition name="approval-slide">
+        <section v-if="activeConversation.pendingApproval" class="approval-banner">
           <div class="approval-content">
-            <p class="eyebrow">需要审批</p>
-            <h3>{{ activeConversation.pendingApproval.tool_name }}</h3>
-            <p>{{ activeConversation.pendingApproval.summary }}</p>
-            <code v-if="activeConversation.pendingApproval.workspace_root">
-              {{ activeConversation.pendingApproval.workspace_root }}
-            </code>
+            <div class="approval-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                <path d="M12 8v4"/>
+                <path d="M12 16h.01"/>
+              </svg>
+            </div>
+            <div>
+              <p class="eyebrow">需要审批</p>
+              <h3>{{ activeConversation.pendingApproval.tool_name }}</h3>
+              <p>{{ activeConversation.pendingApproval.summary }}</p>
+              <code v-if="activeConversation.pendingApproval.workspace_root">
+                {{ activeConversation.pendingApproval.workspace_root }}
+              </code>
+            </div>
           </div>
           <div class="approval-actions">
-            <button :disabled="loading" @click="resolveApproval(true)">批准</button>
-            <button class="secondary" :disabled="loading" @click="resolveApproval(false)">拒绝</button>
+            <button :disabled="loading" @click="resolveApproval(true)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              <span>批准</span>
+            </button>
+            <button class="secondary" :disabled="loading" @click="resolveApproval(false)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+              <span>拒绝</span>
+            </button>
           </div>
         </section>
-      </div>
+      </Transition>
 
       <!-- Composer -->
       <div class="composer-wrapper">
@@ -281,7 +306,7 @@
       </div>
       </template>
 
-      <FilePanel v-else-if="activeView === 'files'" />
+      <RagPanel v-else-if="activeView === 'rag'" />
       <CalendarPanel v-else />
     </section>
 
@@ -315,7 +340,7 @@ import CalendarPanel from "./components/CalendarPanel.vue";
 import QuizPanel from "./components/QuizPanel.vue";
 import DatabaseOverviewPanel from "./components/DatabaseOverviewPanel.vue";
 import QuizHistoryPanel from "./components/QuizHistoryPanel.vue";
-import FilePanel from "./components/FilePanel.vue";
+import RagPanel from "./components/RagPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import { getCourses, getHealth, streamApprovalDecision, streamChat } from "./api/client";
 
@@ -1732,20 +1757,64 @@ body {
   line-height: 1.55;
 }
 
-/* Approval Panel */
-.approval-panel {
+/* Approval Banner */
+.approval-slide-enter-active,
+.approval-slide-leave-active {
+  transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.approval-slide-enter-from,
+.approval-slide-leave-to {
+  opacity: 0;
+  transform: translateY(16px);
+}
+
+.approval-banner {
   display: flex;
   justify-content: space-between;
-  gap: 24px;
-  padding: 20px 22px;
-  margin: 16px 0;
-  border-radius: 20px;
-  background: linear-gradient(135deg, #fff8e7, #fff3cf);
-  border: 1px solid #efd596;
-  max-width: 800px;
-  margin-left: 0;
-  box-shadow: 0 14px 32px rgba(180, 131, 32, 0.08);
-  align-self: flex-start;
+  align-items: center;
+  gap: 20px;
+  padding: 18px 24px;
+  margin: 0 34px 16px 128px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(255, 251, 235, 0.95), rgba(255, 247, 237, 0.95));
+  border: 1px solid rgba(218, 106, 30, 0.18);
+  box-shadow: 0 16px 40px rgba(180, 131, 32, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(16px);
+  max-width: min(800px, calc(100% - 162px));
+  position: relative;
+  z-index: 10;
+}
+
+.approval-banner::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 16px;
+  bottom: 16px;
+  width: 4px;
+  border-radius: 0 4px 4px 0;
+  background: linear-gradient(180deg, var(--accent-orange), #ee8a3a);
+}
+
+.approval-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-width: 0;
+}
+
+.approval-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--accent-orange), #ee8a3a);
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 8px 20px rgba(218, 106, 30, 0.22);
 }
 
 .approval-content h3,
@@ -1754,49 +1823,77 @@ body {
 }
 
 .approval-content h3 {
-  margin-top: 4px;
-  margin-bottom: 8px;
+  margin-top: 2px;
+  margin-bottom: 6px;
+  font-family: var(--font-heading);
   font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.approval-content p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
 }
 
 .approval-content code {
   display: inline-block;
   margin-top: 8px;
-  padding: 6px 10px;
+  padding: 6px 12px;
   border-radius: 10px;
-  background: rgba(28, 36, 48, 0.08);
+  background: rgba(28, 36, 48, 0.05);
   font-family: var(--font-mono);
   font-size: 12px;
+  color: var(--ink-light);
 }
 
 .approval-actions {
   display: flex;
   gap: 10px;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .approval-actions button {
-  padding: 10px 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 20px;
   border: none;
-  border-radius: 999px;
+  border-radius: 14px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
 }
 
 .approval-actions button:first-child {
-  background: var(--accent-orange);
+  background: linear-gradient(135deg, var(--accent-orange), #ee8a3a);
   color: white;
 }
 
+.approval-actions button:first-child:hover {
+  background: #EA580C;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(218, 106, 30, 0.2);
+}
+
 .approval-actions button.secondary {
-  background: rgba(28, 36, 48, 0.12);
+  background: rgba(28, 36, 48, 0.06);
   color: var(--ink);
 }
 
+.approval-actions button.secondary:hover {
+  background: rgba(28, 36, 48, 0.12);
+}
+
 .approval-actions button:disabled {
-  opacity: 0.6;
-  cursor: wait;
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
 }
 
 /* Composer */
@@ -1968,6 +2065,18 @@ body {
 
   .composer-wrapper {
     padding: 16px 24px 24px;
+  }
+
+  .approval-banner {
+    margin: 0 24px 12px;
+    max-width: none;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+  }
+
+  .approval-actions {
+    justify-content: flex-end;
   }
 
   .header {

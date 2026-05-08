@@ -3,6 +3,7 @@ __pycache__/
 .vscode/
 .idea/
 .pytest_cache/
+.tmp/
 .ruff_cache/
 .coverage
 htmlcov/
@@ -12,9 +13,12 @@ node_modules/
 .DS_Store
 *.pyc
 *.pyo
+*.log
 .env
 data/
 .codex
 frontend/dist/
 .history/
+.ruff_cache/
+.pytest_cache/
 CLAUDE.md

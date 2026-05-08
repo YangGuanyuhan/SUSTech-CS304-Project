@@ -8,6 +8,7 @@ Student Productivity Agent is a modular software engineering project for SUSTech
 - Mock-first Blackboard integration with cache fallback path
 - Human-in-the-loop email draft and send flow
 - Local file summary and batch rename workflow
+- Local knowledge-base RAG with RAG-Anything-backed indexing
 - Memory CRUD and task history persistence
 - Minimal Vue frontend shell
 
@@ -52,3 +53,4 @@ tests/         Backend test suite
 - Secrets are loaded from environment variables only.
 - Blackboard V1 defaults to a mock provider behind a stable interface.
 - Production migration to PostgreSQL is driven by `DATABASE_URL`.
+- RAG setup and usage notes live in `docs/RAG_README.md`.
