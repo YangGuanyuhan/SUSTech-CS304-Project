@@ -626,6 +626,17 @@ class LongTermMemoryRepository(Repository):
         self.session.commit()
         return True
 
+    def update_importance(
+        self, memory_id: str, *, importance_score: float, owner_id: str = "local-user"
+    ) -> bool:
+        """Persist a new importance score."""
+        memory = self.get(memory_id, owner_id=owner_id)
+        if memory is None:
+            return False
+        memory.importance_score = max(0.0, min(1.0, float(importance_score)))
+        self.session.commit()
+        return True
+
     def delete(self, memory_id: str, *, owner_id: str = "local-user") -> bool:
         stmt = delete(LongTermMemoryRecord).where(
             LongTermMemoryRecord.id == memory_id,

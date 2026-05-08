@@ -209,11 +209,12 @@ class MemoryConsolidator:
             else:
                 new_importance = mem.importance_score  # Keep original
 
-            # Update if changed significantly
-            if abs(new_importance - mem.importance_score) > 0.1:
-                # Would need to add update method to repository
-                # For now, just count
-                updated_count += 1
+            # Persist if changed by a meaningful margin
+            if abs(new_importance - mem.importance_score) > 0.05:
+                if self.memory_service.ltm_repository.update_importance(
+                    mem.id, importance_score=new_importance
+                ):
+                    updated_count += 1
 
         return updated_count
 

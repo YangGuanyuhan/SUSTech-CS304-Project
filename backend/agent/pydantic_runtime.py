@@ -71,7 +71,7 @@ Response style:
 """.strip()
 
 
-def build_tool_examples_prompt(session: Session, user_query: str) -> str:
+async def build_tool_examples_prompt(session: Session, user_query: str) -> str:
     """
     Build dynamic tool examples based on learned patterns and static examples.
 
@@ -108,16 +108,34 @@ def build_tool_examples_prompt(session: Session, user_query: str) -> str:
     examples_parts = ["\n\nTool Usage Examples:"]
 
     for tool_name in relevant_tools[:5]:  # Limit tools considered to keep prompt focused
-        # Get static examples
+        section: list[str] = []
+
+        # 1) Static examples (curated, always sensible)
         static_examples = get_static_examples(tool_name)
-        if static_examples:
+        for ex in static_examples[:3]:
+            section.append(
+                f"  - When: {ex['scenario']}\n"
+                f"    Example: \"{ex['example_query']}\"\n"
+                f"    Result: {ex['expected_outcome']}"
+            )
+
+        # 2) Learned patterns (real successful past usage)
+        try:
+            learned = await tool_learning.get_tool_examples(
+                tool_name, limit=2, min_confidence=0.6
+            )
+        except Exception:
+            learned = []
+        for pat in learned:
+            section.append(
+                f"  - Learned (used {pat['usage_count']}x, confidence {pat['confidence']:.2f}):\n"
+                f"    Query: \"{pat['user_query']}\"\n"
+                f"    Args: {pat['tool_arguments']}"
+            )
+
+        if section:
             examples_parts.append(f"\n{tool_name}:")
-            for ex in static_examples[:5]:  # Up to 5 examples per tool (large-context budget)
-                examples_parts.append(
-                    f"  - When: {ex['scenario']}\n"
-                    f"    Example: \"{ex['example_query']}\"\n"
-                    f"    Result: {ex['expected_outcome']}"
-                )
+            examples_parts.extend(section)
 
     return "\n".join(examples_parts) if len(examples_parts) > 1 else ""
 
@@ -226,26 +244,60 @@ class PydanticAIRuntime:
             return output
 
         @agent.tool(name="memory_search")
-        async def memory_search(ctx: RunContext[AgentDeps], query: str, limit: int = 5) -> str:
-            return await _execute_tool(ctx, "memory_search", {"query": query, "limit": limit})
+        async def memory_search(
+            ctx: RunContext[AgentDeps],
+            query: str,
+            limit: int = 5,
+            memory_types: list[str] | None = None,
+        ) -> str:
+            """Semantic search across long-term memories (cross-session) and legacy memories.
+
+            memory_types can optionally filter to one or more of:
+            'user_preference', 'factual', 'procedural', 'episodic', 'tool_usage'.
+            """
+            return await _execute_tool(
+                ctx,
+                "memory_search",
+                {"query": query, "limit": limit, "memory_types": memory_types or []},
+            )
 
         @agent.tool(name="memory_save")
         async def memory_save(
             ctx: RunContext[AgentDeps],
-            key: str,
-            value: Any,
+            content: str | None = None,
+            memory_type: str | None = None,
+            key: str | None = None,
+            value: Any = None,
             category: str = "general",
             tags: list[str] | None = None,
+            importance_score: float = 0.8,
         ) -> str:
-            return await _execute_tool(
-                ctx,
-                "memory_save",
-                {"key": key, "value": value, "category": category, "tags": tags or []},
-            )
+            """Save a durable memory.
+
+            Preferred: pass content + memory_type ('user_preference'/'factual'/'procedural'/'episodic').
+            Legacy: pass key + value (will be stored as a factual memory unless category maps to a type).
+            """
+            args: dict[str, Any] = {
+                "content": content,
+                "memory_type": memory_type,
+                "key": key,
+                "value": value,
+                "category": category,
+                "tags": tags or [],
+                "importance_score": importance_score,
+            }
+            return await _execute_tool(ctx, "memory_save", args)
 
         @agent.tool(name="memory_delete")
-        async def memory_delete(ctx: RunContext[AgentDeps], query: str) -> str:
-            return await _execute_tool(ctx, "memory_delete", {"query": query})
+        async def memory_delete(
+            ctx: RunContext[AgentDeps],
+            query: str | None = None,
+            id: str | None = None,
+        ) -> str:
+            """Delete memories. Use `id` for precise deletion or `query` for keyword sweep."""
+            return await _execute_tool(
+                ctx, "memory_delete", {"query": query or "", "id": id or ""}
+            )
 
         @agent.tool(name="calendar_list_events")
         async def calendar_list_events(
@@ -551,7 +603,7 @@ class PydanticAIRuntime:
         # Build dynamic system prompt with tool examples
         dynamic_prompt = SYSTEM_PROMPT
         if user_input:
-            tool_examples = build_tool_examples_prompt(self.session, user_input)
+            tool_examples = await build_tool_examples_prompt(self.session, user_input)
             if tool_examples:
                 dynamic_prompt = SYSTEM_PROMPT + tool_examples
 

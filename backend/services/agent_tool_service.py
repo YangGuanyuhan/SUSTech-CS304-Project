@@ -567,39 +567,164 @@ class AgentToolService:
         limit = int(arguments.get("limit", 5))
         if not query:
             raise ToolExecutionError("`query` is required for memory_search.")
-        memories = await self.memory_service.get_relevant_memories(query, limit=limit)
-        if not memories:
+
+        # Optional memory_type filter (string -> MemoryType)
+        from backend.models.memory import MemoryType
+
+        raw_types = arguments.get("memory_types") or []
+        memory_types: list[MemoryType] | None = None
+        if raw_types:
+            memory_types = []
+            for t in raw_types:
+                try:
+                    memory_types.append(MemoryType(t))
+                except ValueError:
+                    continue
+            memory_types = memory_types or None
+
+        # Primary path: long-term memory semantic search (cross-session)
+        ltm_results = await self.memory_service.search_long_term_memories(
+            query=query,
+            memory_types=memory_types,
+            limit=limit,
+            semantic_threshold=float(arguments.get("threshold", 0.5)),
+            use_hybrid=True,
+        )
+
+        # Fallback path: legacy keyword memories (still useful for older entries)
+        legacy_results = []
+        if len(ltm_results) < limit:
+            legacy_remaining = limit - len(ltm_results)
+            legacy_results = await self.memory_service.get_relevant_memories(
+                query, limit=legacy_remaining
+            )
+
+        if not ltm_results and not legacy_results:
             return "No matching memories were found."
-        payload = [
-            {
-                "id": item.id,
-                "key": item.key,
-                "category": item.category,
-                "tags": item.tags,
-                "value": item.value,
-            }
-            for item in memories
-        ]
+
+        payload = {
+            "long_term": [
+                {
+                    "id": m.id,
+                    "memory_type": m.memory_type.value,
+                    "content": m.content,
+                    "importance_score": m.importance_score,
+                    "access_count": m.access_count,
+                    "metadata": m.metadata,
+                }
+                for m in ltm_results
+            ],
+            "legacy": [
+                {
+                    "id": m.id,
+                    "key": m.key,
+                    "category": m.category,
+                    "tags": m.tags,
+                    "value": m.value,
+                }
+                for m in legacy_results
+            ],
+        }
         return json.dumps(payload, ensure_ascii=False)
 
     async def _memory_save(self, arguments: dict[str, Any]) -> str:
+        from backend.models.memory import MemoryType
+
+        # Two save modes:
+        #  - key/value (legacy compatibility) -> stored as both legacy memory and LTM
+        #  - content/memory_type (new style) -> LTM only
+        content = arguments.get("content")
+        memory_type_raw = arguments.get("memory_type")
         key = str(arguments.get("key", "")).strip()
-        if not key:
-            raise ToolExecutionError("`key` is required for memory_save.")
-        record = await self.memory_service.save_memory(
-            key=key,
-            value=arguments.get("value"),
-            category=str(arguments.get("category", "general")),
-            tags=[str(tag) for tag in arguments.get("tags", [])],
+
+        if not content and not key:
+            raise ToolExecutionError(
+                "memory_save requires either `content` (+optional `memory_type`) "
+                "or `key`+`value` for legacy mode."
+            )
+
+        # Resolve memory type
+        if memory_type_raw:
+            try:
+                memory_type = MemoryType(memory_type_raw)
+            except ValueError as exc:
+                raise ToolExecutionError(
+                    f"Invalid memory_type `{memory_type_raw}`. "
+                    f"Valid: {[t.value for t in MemoryType]}"
+                ) from exc
+        else:
+            # Map legacy category to a memory type
+            category = str(arguments.get("category", "general")).lower()
+            category_map = {
+                "user_preference": MemoryType.USER_PREFERENCE,
+                "preference": MemoryType.USER_PREFERENCE,
+                "factual": MemoryType.FACTUAL,
+                "fact": MemoryType.FACTUAL,
+                "procedural": MemoryType.PROCEDURAL,
+                "how_to": MemoryType.PROCEDURAL,
+                "episodic": MemoryType.EPISODIC,
+                "event": MemoryType.EPISODIC,
+                "tool_usage": MemoryType.TOOL_USAGE,
+            }
+            memory_type = category_map.get(category, MemoryType.FACTUAL)
+
+        # Build content from key/value if needed
+        if not content:
+            content = f"{key}: {arguments.get('value')}"
+
+        importance = float(arguments.get("importance_score", 0.8))
+        ltm = await self.memory_service.save_long_term_memory(
+            content=str(content),
+            memory_type=memory_type,
+            metadata={
+                "tags": [str(tag) for tag in arguments.get("tags", [])],
+                "key": key or None,
+                "source": "memory_save_tool",
+            },
+            importance_score=importance,
+            generate_embedding=True,
         )
-        return json.dumps(record.model_dump(mode="json"), ensure_ascii=False)
+        return json.dumps(
+            {
+                "saved": True,
+                "id": ltm.id,
+                "memory_type": ltm.memory_type.value,
+                "content": ltm.content,
+            },
+            ensure_ascii=False,
+        )
 
     async def _memory_delete(self, arguments: dict[str, Any]) -> str:
+        # Two delete modes:
+        #  - id: precise deletion of one LTM record
+        #  - query: keyword sweep across both LTM and legacy memories
+        memory_id = str(arguments.get("id", "")).strip()
+        if memory_id:
+            ltm_deleted = await self.memory_service.delete_long_term_memory(memory_id)
+            legacy_deleted = await self.memory_service.delete_memory(memory_id)
+            return json.dumps(
+                {"deleted": ltm_deleted or legacy_deleted, "id": memory_id},
+                ensure_ascii=False,
+            )
+
         query = str(arguments.get("query", "")).strip()
         if not query:
-            raise ToolExecutionError("`query` is required for memory_delete.")
-        deleted = await self.memory_service.delete_memories_by_query(query)
-        return json.dumps({"deleted": deleted}, ensure_ascii=False)
+            raise ToolExecutionError("memory_delete requires either `id` or `query`.")
+
+        # Sweep LTM via semantic search, then legacy via keyword
+        ltm_hits = await self.memory_service.search_long_term_memories(
+            query=query, limit=20, semantic_threshold=0.6
+        )
+        ltm_deleted_count = 0
+        for hit in ltm_hits:
+            if await self.memory_service.delete_long_term_memory(hit.id):
+                ltm_deleted_count += 1
+        legacy_deleted_count = await self.memory_service.delete_memories_by_query(query)
+
+        return json.dumps(
+            {"long_term_deleted": ltm_deleted_count, "legacy_deleted": legacy_deleted_count},
+            ensure_ascii=False,
+        )
 
     async def _list_local_files(self, arguments: dict[str, Any], workspace_root: str | None) -> str:
         effective_root = self._effective_workspace_root_for_path(

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import threading
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -10,6 +12,7 @@ from pydantic_ai.tools import DeferredToolRequests
 from sqlalchemy.orm import Session
 
 from backend.agent.pydantic_runtime import PydanticAIRuntime
+from backend.db.database import SessionLocal
 from backend.models.tooling import AgentTurnResult, ToolTrace
 from backend.services.approval_service import approval_service
 from backend.services.context_manager import ContextWindowManager
@@ -28,6 +31,50 @@ DEFAULT_MIN_RECENT_MESSAGES = 20
 DEFAULT_HISTORY_LIMIT = 200  # recent user/assistant pairs pulled from task_history
 DEFAULT_LTM_INJECT_LIMIT = 5  # long-term memories injected per turn
 DEFAULT_LTM_THRESHOLD = 0.5  # semantic threshold for cross-conversation memory recall
+
+# Auto-maintenance: run consolidate/prune/importance-update every N successful turns.
+# Process-wide counter; fire-and-forget so the user-facing turn never waits on it.
+_MAINTENANCE_INTERVAL = 25
+_maintenance_lock = threading.Lock()
+_turn_counter = 0
+_maintenance_in_flight = False
+
+
+def _should_run_maintenance() -> bool:
+    """Increment the turn counter and decide whether to launch a maintenance pass."""
+    global _turn_counter, _maintenance_in_flight
+    with _maintenance_lock:
+        _turn_counter += 1
+        if _maintenance_in_flight:
+            return False
+        if _turn_counter % _MAINTENANCE_INTERVAL != 0:
+            return False
+        _maintenance_in_flight = True
+        return True
+
+
+def _release_maintenance_flag() -> None:
+    global _maintenance_in_flight
+    with _maintenance_lock:
+        _maintenance_in_flight = False
+
+
+async def _run_maintenance_in_background() -> None:
+    """Run consolidate/prune/importance-update on a fresh DB session."""
+    own_session: Session | None = None
+    try:
+        own_session = SessionLocal()
+        consolidator = MemoryConsolidator(own_session)
+        results = await consolidator.run_maintenance(
+            consolidate=True, prune=True, update_importance=True
+        )
+        llm_logger.log_event("system", "memory_maintenance", results)
+    except Exception as exc:
+        llm_logger.log_event("system", "memory_maintenance_error", {"error": str(exc)})
+    finally:
+        if own_session is not None:
+            own_session.close()
+        _release_maintenance_flag()
 
 
 class StudentProductivityAgent:
@@ -107,6 +154,7 @@ class StudentProductivityAgent:
             combined,
             max_context_tokens=max_context_tokens,
             min_recent_messages=DEFAULT_MIN_RECENT_MESSAGES,
+            session_id=session_id,
         )
 
         # 5. Log compression stats if compression occurred
@@ -374,6 +422,10 @@ class StudentProductivityAgent:
             except Exception:
                 # Don't fail the request if memory extraction fails
                 pass
+
+            # Periodic auto-maintenance (consolidate similar / prune old / update importance)
+            if _should_run_maintenance():
+                asyncio.create_task(_run_maintenance_in_background())
 
         return result.model_dump(mode="json")
 

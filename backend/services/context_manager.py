@@ -49,6 +49,8 @@ class ContextCompactor:
         messages: list[dict[str, str]],
         max_tokens: int = 8000,
         min_recent_messages: int = 5,
+        *,
+        session_id: str | None = None,
     ) -> list[dict[str, str]]:
         """
         Intelligently compress message history to fit within token budget.
@@ -95,6 +97,28 @@ class ContextCompactor:
 
         # Summarize older messages
         summary = await self._summarize_messages(older_messages, available_tokens)
+
+        # Persist summary as an EPISODIC long-term memory so future turns can recall it
+        if summary and session_id:
+            try:
+                from backend.models.memory import MemoryType
+                from backend.services.memory_service import MemoryService
+
+                await MemoryService(self.session).save_long_term_memory(
+                    content=f"Conversation summary ({len(older_messages)} messages): {summary}",
+                    memory_type=MemoryType.EPISODIC,
+                    metadata={
+                        "source": "context_compaction",
+                        "session_id": session_id,
+                        "compressed_message_count": len(older_messages),
+                    },
+                    source_session_id=session_id,
+                    importance_score=0.7,
+                    generate_embedding=True,
+                )
+            except Exception:
+                # Persisting is best-effort; never block the main turn
+                pass
 
         # Build compressed history
         compressed = []
@@ -207,6 +231,8 @@ class ContextWindowManager:
         messages: list[dict[str, str]],
         max_context_tokens: int = 8000,
         min_recent_messages: int = 5,
+        *,
+        session_id: str | None = None,
     ) -> tuple[list[dict[str, str]], dict[str, int]]:
         """
         Prepare context for LLM call with token management.
@@ -215,6 +241,7 @@ class ContextWindowManager:
             messages: Raw message history
             max_context_tokens: Maximum tokens for context
             min_recent_messages: Minimum recent messages to keep
+            session_id: Session id used to tag persisted compaction summaries
 
         Returns:
             Tuple of (prepared_messages, stats_dict)
@@ -226,7 +253,10 @@ class ContextWindowManager:
 
         # Compact if needed
         prepared = await self.compactor.compact_history(
-            messages, max_tokens=max_context_tokens, min_recent_messages=min_recent_messages
+            messages,
+            max_tokens=max_context_tokens,
+            min_recent_messages=min_recent_messages,
+            session_id=session_id,
         )
 
         # Calculate stats
