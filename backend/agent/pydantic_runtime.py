@@ -615,6 +615,10 @@ class PydanticAIRuntime:
         async def email_test_connection(ctx: RunContext[AgentDeps]) -> str:
             return await _execute_tool(ctx, "email_test_connection", {})
 
+        @agent.tool(name="email_read_latest")
+        async def email_read_latest(ctx: RunContext[AgentDeps], count: int = 1) -> str:
+            return await _execute_tool(ctx, "email_read_latest", {"count": count})
+
         return agent
 
     def _history_to_model_messages(self, history: list[dict[str, str]]):
