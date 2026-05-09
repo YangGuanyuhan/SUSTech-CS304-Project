@@ -1,4 +1,5 @@
 .venv/
+.venv-wsl/
 __pycache__/
 .vscode/
 .idea/
@@ -19,6 +20,5 @@ data/
 .codex
 frontend/dist/
 .history/
-.ruff_cache/
-.pytest_cache/
 CLAUDE.md
+.claude

@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
+import string
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
@@ -23,6 +26,8 @@ from backend.api.schemas import (
     ChatRequest,
     EmailConfirmRequest,
     EmailDraftRequest,
+    EmailProfileRequest,
+    EmailSettingsRequest,
     LLMConnectionTestRequest,
     LLMProfileRequest,
     LLMSettingsRequest,
@@ -37,7 +42,7 @@ from backend.db.database import get_db_session
 from backend.models.calendar import CalendarEventCreate, CalendarEventMove, CalendarEventUpdate
 from backend.models.common import ApiResponse
 from backend.models.rag import RAGDirectorySettings
-from backend.models.settings import BlackboardProfile, LLMProfile
+from backend.models.settings import BlackboardProfile, EmailProfile, LLMProfile
 from backend.services.approval_service import approval_service
 from backend.services.blackboard_file_service import BBContent, BBFileManager
 from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
@@ -51,12 +56,84 @@ from backend.services.quiz_service import QuizService
 from backend.services.rag_service import RAGProviderError, RAGService, RAGServiceError
 from backend.services.runtime_settings import (
     RuntimeBlackboardUpdate,
+    RuntimeEmailUpdate,
     RuntimeLLMUpdate,
     runtime_settings,
 )
 from backend.services.settings_service import SettingsService
 
 router = APIRouter(prefix="/api")
+
+
+def _workspace_system_roots() -> list[Path]:
+    candidates: list[Path] = []
+    if os.name == "nt":
+        candidates.extend(Path(f"{letter}:/") for letter in string.ascii_uppercase)
+    else:
+        candidates.append(Path("/"))
+
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.expanduser().resolve(strict=True)
+        except OSError:
+            continue
+        key = os.path.normcase(str(resolved))
+        if resolved.is_dir() and key not in seen:
+            roots.append(resolved)
+            seen.add(key)
+    return roots
+
+
+def _workspace_shortcuts() -> list[dict[str, str]]:
+    shortcuts = [
+        ("Home", Path.home()),
+        ("Project", Path.cwd()),
+    ]
+    items: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for name, shortcut in shortcuts:
+        try:
+            resolved = shortcut.expanduser().resolve(strict=True)
+        except OSError:
+            continue
+        key = os.path.normcase(str(resolved))
+        if resolved.is_dir() and key not in seen:
+            items.append({"name": name, "path": str(resolved)})
+            seen.add(key)
+    return items
+
+
+def _directory_payload(path: str | None = None) -> dict[str, object]:
+    requested = Path(path).expanduser() if path else Path.home()
+    try:
+        current = requested.resolve(strict=True)
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail=f"Directory not found: {requested}") from exc
+    if not current.is_dir():
+        raise HTTPException(status_code=400, detail=f"Path is not a directory: {current}")
+
+    entries: list[dict[str, str]] = []
+    try:
+        for child in current.iterdir():
+            try:
+                if child.is_dir():
+                    entries.append({"name": child.name, "path": str(child.resolve(strict=True))})
+            except OSError:
+                continue
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=f"Permission denied: {current}") from exc
+
+    entries.sort(key=lambda item: item["name"].lower())
+    parent = current.parent if current.parent != current else None
+    return {
+        "path": str(current),
+        "parent": str(parent) if parent else None,
+        "shortcuts": _workspace_shortcuts(),
+        "roots": [{"name": str(root), "path": str(root)} for root in _workspace_system_roots()],
+        "entries": entries,
+    }
 
 
 def _chunk_text(text: str, chunk_size: int = 2000) -> list[str]:
@@ -203,6 +280,13 @@ async def _stream_agent_execution(*, session_id: str, execute):
 @router.get("/health", response_model=ApiResponse[dict[str, str]])
 async def health() -> ApiResponse[dict[str, str]]:
     return ApiResponse(success=True, data={"status": "ok"})
+
+
+@router.get("/workspace/directories", response_model=ApiResponse[dict[str, object]])
+async def list_workspace_directories(
+    path: str | None = Query(default=None),
+) -> ApiResponse[dict[str, object]]:
+    return ApiResponse(success=True, data=_directory_payload(path))
 
 
 @router.get("/settings/llm", response_model=ApiResponse[object])
@@ -400,6 +484,109 @@ async def test_blackboard_settings(request: BlackboardSettingsRequest) -> ApiRes
         )
     except Exception as e:
         return ApiResponse(success=False, data={"error": str(e)})
+
+
+# Email Profile Settings
+@router.get("/settings/email/profiles", response_model=ApiResponse[object])
+async def list_email_profiles(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    profiles = await SettingsService(session).list_email_profiles()
+    return ApiResponse(success=True, data=profiles)
+
+
+@router.put("/settings/email/profiles", response_model=ApiResponse[object])
+async def save_email_profile(
+    request: EmailProfileRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    profile = await SettingsService(session).save_email_profile(
+        EmailProfile(
+            name=request.name,
+            smtp_host=request.smtp_host,
+            smtp_port=request.smtp_port,
+            smtp_user=request.smtp_user,
+            smtp_encryption=request.smtp_encryption,
+            imap_host=request.imap_host,
+            imap_port=request.imap_port,
+        ),
+        password=request.password,
+    )
+    return ApiResponse(success=True, data=profile)
+
+
+@router.delete("/settings/email/profiles/{name}", response_model=ApiResponse[dict[str, bool]])
+async def delete_email_profile(
+    name: str, session: Session = Depends(get_db_session)
+) -> ApiResponse[dict[str, bool]]:
+    deleted = await SettingsService(session).delete_email_profile(name)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return ApiResponse(success=True, data={"deleted": True})
+
+
+@router.post("/settings/email/profiles/{name}/apply", response_model=ApiResponse[object])
+async def apply_email_profile(
+    name: str, session: Session = Depends(get_db_session)
+) -> ApiResponse[object]:
+    profile = await SettingsService(session).apply_email_profile(name)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return ApiResponse(success=True, data=profile)
+
+
+# Email Settings
+@router.get("/settings/email", response_model=ApiResponse[object])
+async def get_email_settings() -> ApiResponse[object]:
+    return ApiResponse(success=True, data=runtime_settings.get_email_config())
+
+
+@router.put("/settings/email", response_model=ApiResponse[object])
+async def update_email_settings(request: EmailSettingsRequest) -> ApiResponse[object]:
+    config = runtime_settings.update_email_config(
+        RuntimeEmailUpdate.model_validate(request.model_dump())
+    )
+    return ApiResponse(success=True, data=config)
+
+
+@router.post("/settings/email/test", response_model=ApiResponse[object])
+async def test_email_settings(request: EmailSettingsRequest) -> ApiResponse[object]:
+    """Test email SMTP connection and authentication without sending a real email."""
+    import smtplib
+
+    # Use request values, falling back to runtime config
+    email_config = runtime_settings.get_email_config()
+    smtp_host = request.smtp_host or email_config.smtp_host
+    smtp_port = request.smtp_port or email_config.smtp_port
+    smtp_user = request.smtp_user or email_config.smtp_user
+    smtp_encryption = request.smtp_encryption or email_config.smtp_encryption
+
+    if request.replace_password and request.password:
+        password = request.password
+    elif request.password:
+        password = request.password
+    else:
+        password = runtime_settings.get_secret_email_password()
+
+    if not smtp_user or not password:
+        return ApiResponse(
+            success=False,
+            data={"error": "Missing credentials - username or password not configured"},
+        )
+
+    try:
+        if smtp_encryption == "ssl":
+            server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=15)
+        else:
+            server = smtplib.SMTP(smtp_host, smtp_port, timeout=15)
+            if smtp_encryption == "tls":
+                server.starttls()
+        server.login(smtp_user, password)
+        server.quit()
+        return ApiResponse(
+            success=True,
+            data={"message": "SMTP connection and authentication successful (no email sent)"},
+        )
+    except Exception as e:
+        return ApiResponse(success=False, data={"error": f"Email test failed: {e}"})
 
 
 @router.post("/chat")

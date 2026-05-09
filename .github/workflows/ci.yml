@@ -158,7 +158,7 @@ jobs:
   codeql:
     name: CodeQL static security analysis
     runs-on: ubuntu-latest
-    if: github.event.repository.visibility == 'public'
+    if: vars.ENABLE_CODEQL == 'true'
     permissions:
       actions: read
       contents: read

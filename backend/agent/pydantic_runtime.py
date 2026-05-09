@@ -609,6 +609,27 @@ class PydanticAIRuntime:
         async def blackboard_get_calendar_items(ctx: RunContext[AgentDeps]) -> str:
             return await _execute_tool(ctx, "blackboard_get_calendar_items", {})
 
+        @agent.tool(name="email_test_connection")
+        async def email_test_connection(ctx: RunContext[AgentDeps]) -> str:
+            return await _execute_tool(ctx, "email_test_connection", {})
+
+        @agent.tool(name="email_read_latest")
+        async def email_read_latest(ctx: RunContext[AgentDeps], count: int = 5) -> str:
+            return await _execute_tool(ctx, "email_read_latest", {"count": count})
+
+        @agent.tool(name="email_send", requires_approval=True)
+        async def email_send(ctx: RunContext[AgentDeps], to: str, subject: str, body: str) -> str:
+            """Send an email. Requires approval before sending.
+
+            Args:
+                to: Recipient email address.
+                subject: Email subject line.
+                body: Full email body content (plain text).
+            """
+            return await _execute_tool(
+                ctx, "email_send", {"to": to, "subject": subject, "body": body}
+            )
+
         return agent
 
     def _history_to_model_messages(self, history: list[dict[str, str]]):

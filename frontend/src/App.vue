@@ -160,19 +160,6 @@
             <span class="meta-chip subtle">{{ activeConversation.messages.length }} 条消息</span>
           </div>
         </div>
-        <div v-if="headerExpanded" class="header-right">
-          <div class="workspace-field">
-            <span>工作目录</span>
-            <input
-              v-model="activeConversation.workspaceRoot"
-              type="text"
-              placeholder="/path/to/your/project"
-            />
-          </div>
-          <button class="header-btn" :disabled="loading" @click="loadCourses">
-            加载课程
-          </button>
-        </div>
         <button
           :class="['header-toggle', { collapsed: !headerExpanded }]"
           type="button"
@@ -263,6 +250,12 @@
               <p class="eyebrow">需要审批</p>
               <h3>{{ activeConversation.pendingApproval.tool_name }}</h3>
               <p>{{ activeConversation.pendingApproval.summary }}</p>
+              <EmailConfirm
+                v-if="pendingApprovalEmail"
+                :to="pendingApprovalEmail.to"
+                :subject="pendingApprovalEmail.subject"
+                :body="pendingApprovalEmail.body"
+              />
               <code v-if="activeConversation.pendingApproval.workspace_root">
                 {{ activeConversation.pendingApproval.workspace_root }}
               </code>
@@ -392,7 +385,11 @@
       </div>
       </template>
 
-      <RagPanel v-else-if="activeView === 'rag'" />
+      <RagPanel
+        v-else-if="activeView === 'rag'"
+        :workspace-root="activeConversation.workspaceRoot"
+        @update:workspace-root="updateActiveWorkspaceRoot"
+      />
       <CalendarPanel v-else />
     </section>
 
@@ -427,7 +424,8 @@ import DatabaseOverviewPanel from "./components/DatabaseOverviewPanel.vue";
 import QuizHistoryPanel from "./components/QuizHistoryPanel.vue";
 import RagPanel from "./components/RagPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
-import { apiClient, getCourses, getHealth, streamApprovalDecision, streamChat } from "./api/client";
+import EmailConfirm from "./components/EmailConfirm.vue";
+import { apiClient, getHealth, streamApprovalDecision, streamChat } from "./api/client";
 
 const CHAT_CONVERSATIONS_KEY = "spa-conversations";
 const ACTIVE_CONVERSATION_KEY = "spa-active-conversation-id";
@@ -547,6 +545,14 @@ function resizeComposer(target) {
 function autoResizeComposer(event) {
   resizeComposer(event.target);
 }
+
+const pendingApprovalEmail = computed(() => {
+  const approval = activeConversation.value?.pendingApproval;
+  if (!approval?.approvals?.[0]) return null;
+  const first = approval.approvals[0];
+  if (first.tool_name !== "email_send") return null;
+  return first.arguments;
+});
 
 const activeConversation = computed(() => {
   const conversation =
@@ -698,6 +704,12 @@ function appendMessage(role, content) {
   scrollToBottom();
 }
 
+function updateActiveWorkspaceRoot(path) {
+  activeConversation.value.workspaceRoot = path;
+  activeConversation.value.updatedAt = Date.now();
+  persistConversations();
+}
+
 function fileStatusLabel(file) {
   if (file.status === "indexed") return "已可提问";
   if (file.status === "failed") return file.error || "解析失败";
@@ -833,20 +845,6 @@ async function deleteChatFile(file) {
     conversation.updatedAt = Date.now();
   } catch (error) {
     appendMessage("assistant", `删除上传文件失败：${error.message}`);
-  }
-}
-
-async function loadCourses() {
-  loading.value = true;
-  try {
-    const response = await getCourses();
-    const courses = response.data?.data ?? [];
-    const summary = courses.map((item) => `- ${item.name} (${item.blackboard_course_id})`).join("\n");
-    appendMessage("assistant", summary || "没有返回课程。");
-  } catch (error) {
-    appendMessage("assistant", `课程请求失败: ${error.message}`);
-  } finally {
-    loading.value = false;
   }
 }
 
@@ -1677,6 +1675,10 @@ body {
   background: rgba(255, 255, 255, 0.82);
   font-size: 13px;
   transition: all 0.2s ease;
+}
+
+.workspace-field input[readonly] {
+  cursor: default;
 }
 
 .workspace-field input:focus {

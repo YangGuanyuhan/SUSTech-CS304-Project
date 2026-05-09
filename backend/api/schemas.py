@@ -97,6 +97,28 @@ class RAGSettingsRequest(BaseModel):
     recursive_default: bool = True
 
 
+class EmailProfileRequest(BaseModel):
+    name: str
+    smtp_host: str
+    smtp_port: int
+    smtp_user: str
+    smtp_encryption: str = "ssl"
+    imap_host: str
+    imap_port: int
+    password: str | None = None
+
+
+class EmailSettingsRequest(BaseModel):
+    smtp_host: str
+    smtp_port: int
+    smtp_user: str
+    smtp_encryption: str = "ssl"
+    imap_host: str
+    imap_port: int
+    password: str | None = None
+    replace_password: bool = False
+
+
 class CalendarEventCreateRequest(BaseModel):
     title: str
     start_at: datetime
