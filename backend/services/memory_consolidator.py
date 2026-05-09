@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -63,7 +62,9 @@ class MemoryConsolidator:
                     continue
 
                 # Calculate similarity
-                similarity = self.embedding_service.cosine_similarity(mem1.embedding, mem2.embedding)
+                similarity = self.embedding_service.cosine_similarity(
+                    mem1.embedding, mem2.embedding
+                )
 
                 if similarity >= similarity_threshold:
                     # Merge memories - keep the one with higher importance

@@ -146,7 +146,7 @@
             <line x1="12" y1="3" x2="12" y2="15"/>
           </svg>
           <strong>释放以上传文件</strong>
-          <span>支持 PDF、PPTX、DOCX，上传后即可围绕当前对话提问</span>
+          <span>支持 PDF、PPTX、DOCX、Markdown，上传后即可围绕当前对话提问</span>
         </div>
       </div>
       <template v-if="activeView === 'chat'">
@@ -775,7 +775,7 @@ async function uploadChatFiles(rawFiles) {
   if (unsupported.length) {
     appendMessage(
       "assistant",
-      `以下文件暂不支持：${unsupported.map((file) => file.name).join("、")}。请上传 PDF、PPTX 或 DOCX。`
+      `以下文件暂不支持：${unsupported.map((file) => file.name).join("、")}。请上传 PDF、PPTX、DOCX、Markdown 或 TXT。`
     );
   }
   if (!files.length) return;

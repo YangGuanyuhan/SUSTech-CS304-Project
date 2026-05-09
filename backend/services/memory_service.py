@@ -95,12 +95,14 @@ class MemoryService:
             if duplicate is not None:
                 # Bump importance up to the new value if it's higher; refresh access
                 new_imp = max(duplicate.importance_score, importance_score)
-                self.ltm_repository.update_importance(
-                    duplicate.id, importance_score=new_imp
-                )
+                self.ltm_repository.update_importance(duplicate.id, importance_score=new_imp)
                 self.ltm_repository.update_access(duplicate.id)
                 refreshed = self.ltm_repository.get(duplicate.id)
-                return _to_long_term_memory(refreshed) if refreshed else _to_long_term_memory(duplicate)
+                return (
+                    _to_long_term_memory(refreshed)
+                    if refreshed
+                    else _to_long_term_memory(duplicate)
+                )
 
         record = self.ltm_repository.create(
             memory_type=memory_type.value,
@@ -229,10 +231,39 @@ class MemoryService:
         dominate the match score.
         """
         stopwords = {
-            "the", "a", "an", "is", "are", "was", "were", "of", "to", "in",
-            "on", "at", "and", "or", "but", "do", "does", "did", "have",
-            "has", "had", "what", "who", "how", "when", "where",
-            "是", "的", "了", "吗", "呢", "啊", "哦",
+            "the",
+            "a",
+            "an",
+            "is",
+            "are",
+            "was",
+            "were",
+            "of",
+            "to",
+            "in",
+            "on",
+            "at",
+            "and",
+            "or",
+            "but",
+            "do",
+            "does",
+            "did",
+            "have",
+            "has",
+            "had",
+            "what",
+            "who",
+            "how",
+            "when",
+            "where",
+            "是",
+            "的",
+            "了",
+            "吗",
+            "呢",
+            "啊",
+            "哦",
         }
         base = set(self._tokenize(query.lower()))
         base = {t for t in base if t not in stopwords}

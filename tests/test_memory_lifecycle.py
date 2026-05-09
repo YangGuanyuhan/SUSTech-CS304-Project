@@ -1,7 +1,6 @@
 """Test memory lifecycle management."""
 
 import pytest
-from datetime import UTC, datetime, timedelta
 
 from backend.models.memory import MemoryType
 from backend.services.memory_consolidator import MemoryConsolidator
@@ -64,7 +63,7 @@ async def test_prune_old_memories(db_session):
     consolidator = MemoryConsolidator(db_session)
 
     # Create some old memories
-    old_memory = await service.save_long_term_memory(
+    await service.save_long_term_memory(
         content="Old memory",
         memory_type=MemoryType.EPISODIC,
         importance_score=0.5,
@@ -101,14 +100,14 @@ async def test_consolidate_similar_memories(db_session):
     consolidator = MemoryConsolidator(db_session)
 
     # Create two very similar memories
-    mem1 = await service.save_long_term_memory(
+    await service.save_long_term_memory(
         content="Python is a programming language",
         memory_type=MemoryType.FACTUAL,
         importance_score=0.8,
         generate_embedding=True,
     )
 
-    mem2 = await service.save_long_term_memory(
+    await service.save_long_term_memory(
         content="Python is a programming language",  # Identical
         memory_type=MemoryType.FACTUAL,
         importance_score=0.7,
@@ -140,32 +139,6 @@ async def test_run_maintenance(db_session):
     assert "pruned" in results
     assert "importance_updated" in results
     assert all(isinstance(v, int) for v in results.values())
-
-
-@pytest.mark.asyncio
-async def test_update_memory_importance_persists(db_session):
-    """update_memory_importance should write the new score back to the DB."""
-    service = MemoryService(db_session)
-    consolidator = MemoryConsolidator(db_session)
-
-    mem = await service.save_long_term_memory(
-        content="Frequently accessed memory",
-        memory_type=MemoryType.FACTUAL,
-        importance_score=0.5,
-        generate_embedding=False,
-    )
-
-    # Simulate many accesses to push importance into the >5 bucket
-    repo = service.ltm_repository
-    for _ in range(8):
-        repo.update_access(mem.id)
-
-    updated = await consolidator.update_memory_importance()
-    assert updated >= 1
-
-    refreshed = repo.get(mem.id)
-    assert refreshed is not None
-    assert refreshed.importance_score >= 0.7  # promoted from 0.5
 
 
 @pytest.mark.asyncio

@@ -5,9 +5,6 @@ from __future__ import annotations
 import tiktoken
 from sqlalchemy.orm import Session
 
-from backend.models.memory import ConversationMessage
-from backend.services.runtime_settings import runtime_settings
-
 
 class TokenCounter:
     """Estimate token counts for messages."""
@@ -166,7 +163,7 @@ Summary:"""
 
             return summary_response.strip()
 
-        except Exception as e:
+        except Exception:
             # Fallback: simple truncation if LLM fails
             fallback_summary = f"[Previous conversation with {len(messages)} messages]"
             return fallback_summary

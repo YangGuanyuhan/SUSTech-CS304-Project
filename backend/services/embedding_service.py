@@ -163,7 +163,7 @@ class EmbeddingService:
     def cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
         if len(vec1) != len(vec2):
             raise ValueError("Vectors must have same dimension")
-        dot = sum(a * b for a, b in zip(vec1, vec2))
+        dot = sum(a * b for a, b in zip(vec1, vec2, strict=False))
         m1 = sum(a * a for a in vec1) ** 0.5
         m2 = sum(b * b for b in vec2) ** 0.5
         if m1 == 0 or m2 == 0:
