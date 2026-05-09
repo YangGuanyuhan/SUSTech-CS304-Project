@@ -64,9 +64,11 @@ class RAGProvider(Protocol):
         *,
         file_path: Path,
         doc_id: str,
-    ) -> None: ...
+    ) -> None:
+        pass
 
-    async def answer(self, query: str, *, mode: str = "hybrid") -> Any: ...
+    async def answer(self, query: str, *, mode: str = "hybrid") -> Any:
+        pass
 
 
 class RAGAnythingProvider:

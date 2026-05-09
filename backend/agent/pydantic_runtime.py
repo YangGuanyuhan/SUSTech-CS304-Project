@@ -284,7 +284,7 @@ class PydanticAIRuntime:
             snapshot = [event.model_copy(deep=True) for event in ctx.deps.tool_events]
             maybe_awaitable = callback(snapshot)
             if inspect.isawaitable(maybe_awaitable):
-                await maybe_awaitable
+                _ = await maybe_awaitable
 
         async def _execute_tool(
             ctx: RunContext[AgentDeps],
@@ -652,7 +652,7 @@ class PydanticAIRuntime:
             return
         maybe_awaitable = callback(chunk)
         if inspect.isawaitable(maybe_awaitable):
-            await maybe_awaitable
+            _ = await maybe_awaitable
 
     def _build_event_stream_handler(
         self,

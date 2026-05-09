@@ -43,26 +43,25 @@ _AUTO_LTM_INJECT = os.environ.get("STUDYAI_AUTO_LTM_INJECT", "0") == "1"
 _MAINTENANCE_INTERVAL = 25
 _maintenance_lock = threading.Lock()
 _turn_counter = 0
-_maintenance_in_flight = False
+_maintenance_in_flight = threading.Event()
 
 
 def _should_run_maintenance() -> bool:
     """Increment the turn counter and decide whether to launch a maintenance pass."""
-    global _turn_counter, _maintenance_in_flight
+    global _turn_counter
     with _maintenance_lock:
         _turn_counter += 1
-        if _maintenance_in_flight:
+        if _maintenance_in_flight.is_set():
             return False
         if _turn_counter % _MAINTENANCE_INTERVAL != 0:
             return False
-        _maintenance_in_flight = True
+        _maintenance_in_flight.set()
         return True
 
 
 def _release_maintenance_flag() -> None:
-    global _maintenance_in_flight
     with _maintenance_lock:
-        _maintenance_in_flight = False
+        _maintenance_in_flight.clear()
 
 
 async def _run_maintenance_in_background() -> None:
@@ -190,7 +189,7 @@ class StudentProductivityAgent:
         snapshot = [event.model_copy(deep=True) for event in tool_events]
         maybe_awaitable = on_tool_events(snapshot)
         if inspect.isawaitable(maybe_awaitable):
-            await maybe_awaitable
+            _ = await maybe_awaitable
 
     def _approval_result(
         self,
@@ -423,9 +422,12 @@ class StudentProductivityAgent:
                     agent_response=result.response,
                     session_id=session_id,
                 )
-            except Exception:
-                # Don't fail the request if memory extraction fails
-                pass
+            except Exception as exc:
+                llm_logger.log_event(
+                    "system",
+                    "memory_extraction_error",
+                    {"error": str(exc), "session_id": session_id},
+                )
 
             # Periodic auto-maintenance (consolidate similar / prune old / update importance)
             if _should_run_maintenance():

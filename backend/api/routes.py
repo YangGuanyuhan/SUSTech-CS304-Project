@@ -274,7 +274,7 @@ async def _stream_agent_execution(*, session_id: str, execute):
         if not run_task.done():
             run_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await run_task
+                _ = await run_task
 
 
 @router.get("/health", response_model=ApiResponse[dict[str, str]])
