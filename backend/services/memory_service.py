@@ -150,7 +150,9 @@ class MemoryService:
                     if sim >= 0.92:
                         return rec
                 except Exception:
-                    pass
+                    # Best-effort deduplication: ignore similarity errors for this
+                    # candidate and continue with other duplicate checks/candidates.
+                    continue
         return None
 
     @staticmethod
