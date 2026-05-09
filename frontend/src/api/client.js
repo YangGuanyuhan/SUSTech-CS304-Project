@@ -19,6 +19,12 @@ export async function getHealth() {
   return parseJson(response);
 }
 
+export async function listWorkspaceDirectories(path = "") {
+  const query = path ? `?path=${encodeURIComponent(path)}` : "";
+  const response = await fetch(`${API_BASE}/workspace/directories${query}`);
+  return parseJson(response);
+}
+
 export async function getLLMSettings() {
   const response = await fetch(`${API_BASE}/settings/llm`);
   return parseJson(response);

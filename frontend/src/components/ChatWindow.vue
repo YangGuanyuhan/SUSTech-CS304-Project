@@ -69,10 +69,9 @@
         <div class="toolbar-actions">
           <label class="workspace-field">
             <span>Workspace Root</span>
-            <input
+            <WorkspaceDirectoryPicker
               v-model="activeConversation.workspaceRoot"
-              type="text"
-              placeholder="/path/to/your/project"
+              @error="handleWorkspacePickerError"
             />
           </label>
           <button :disabled="loading" @click="loadCourses">Load Blackboard Courses</button>
@@ -185,7 +184,12 @@
 import MarkdownIt from "markdown-it";
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import QuizPanel from "./QuizPanel.vue";
-import { getCourses, streamApprovalDecision, streamChat } from "../api/client";
+import WorkspaceDirectoryPicker from "./WorkspaceDirectoryPicker.vue";
+import {
+  getCourses,
+  streamApprovalDecision,
+  streamChat
+} from "../api/client";
 
 const CHAT_CONVERSATIONS_KEY = "spa-conversations";
 const ACTIVE_CONVERSATION_KEY = "spa-active-conversation-id";
@@ -417,6 +421,10 @@ function appendMessage(role, content) {
   );
   activeConversation.value.updatedAt = Date.now();
   scrollMessagesToBottom();
+}
+
+function handleWorkspacePickerError(error) {
+  appendMessage("assistant", `Workspace picker failed: ${error.message}`);
 }
 
 async function loadCourses() {
@@ -798,14 +806,6 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--muted);
-}
-
-.workspace-field input {
-  border-radius: 14px;
-  border: 1px solid rgba(28, 36, 48, 0.12);
-  padding: 12px 14px;
-  background: rgba(255, 255, 255, 0.88);
-  font: inherit;
 }
 
 .toolbar h2 {

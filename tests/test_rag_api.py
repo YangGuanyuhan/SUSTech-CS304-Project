@@ -160,5 +160,7 @@ def test_rag_session_file_upload_rejects_old_ppt(api_client, tmp_path, monkeypat
     )
 
     assert response.status_code == 400
-    assert "Only PDF, PPTX, DOCX, MD, and TXT" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "Only PDF, PPTX, DOCX, MD, and TXT" in detail
+    assert "Convert old PPT/DOC files first" in detail
     get_settings.cache_clear()

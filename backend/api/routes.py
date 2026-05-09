@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
+import string
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
@@ -60,6 +63,77 @@ from backend.services.runtime_settings import (
 from backend.services.settings_service import SettingsService
 
 router = APIRouter(prefix="/api")
+
+
+def _workspace_system_roots() -> list[Path]:
+    candidates: list[Path] = []
+    if os.name == "nt":
+        candidates.extend(Path(f"{letter}:/") for letter in string.ascii_uppercase)
+    else:
+        candidates.append(Path("/"))
+
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.expanduser().resolve(strict=True)
+        except OSError:
+            continue
+        key = os.path.normcase(str(resolved))
+        if resolved.is_dir() and key not in seen:
+            roots.append(resolved)
+            seen.add(key)
+    return roots
+
+
+def _workspace_shortcuts() -> list[dict[str, str]]:
+    shortcuts = [
+        ("Home", Path.home()),
+        ("Project", Path.cwd()),
+    ]
+    items: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for name, shortcut in shortcuts:
+        try:
+            resolved = shortcut.expanduser().resolve(strict=True)
+        except OSError:
+            continue
+        key = os.path.normcase(str(resolved))
+        if resolved.is_dir() and key not in seen:
+            items.append({"name": name, "path": str(resolved)})
+            seen.add(key)
+    return items
+
+
+def _directory_payload(path: str | None = None) -> dict[str, object]:
+    requested = Path(path).expanduser() if path else Path.home()
+    try:
+        current = requested.resolve(strict=True)
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail=f"Directory not found: {requested}") from exc
+    if not current.is_dir():
+        raise HTTPException(status_code=400, detail=f"Path is not a directory: {current}")
+
+    entries: list[dict[str, str]] = []
+    try:
+        for child in current.iterdir():
+            try:
+                if child.is_dir():
+                    entries.append({"name": child.name, "path": str(child.resolve(strict=True))})
+            except OSError:
+                continue
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=f"Permission denied: {current}") from exc
+
+    entries.sort(key=lambda item: item["name"].lower())
+    parent = current.parent if current.parent != current else None
+    return {
+        "path": str(current),
+        "parent": str(parent) if parent else None,
+        "shortcuts": _workspace_shortcuts(),
+        "roots": [{"name": str(root), "path": str(root)} for root in _workspace_system_roots()],
+        "entries": entries,
+    }
 
 
 def _chunk_text(text: str, chunk_size: int = 2000) -> list[str]:
@@ -206,6 +280,13 @@ async def _stream_agent_execution(*, session_id: str, execute):
 @router.get("/health", response_model=ApiResponse[dict[str, str]])
 async def health() -> ApiResponse[dict[str, str]]:
     return ApiResponse(success=True, data={"status": "ok"})
+
+
+@router.get("/workspace/directories", response_model=ApiResponse[dict[str, object]])
+async def list_workspace_directories(
+    path: str | None = Query(default=None),
+) -> ApiResponse[dict[str, object]]:
+    return ApiResponse(success=True, data=_directory_payload(path))
 
 
 @router.get("/settings/llm", response_model=ApiResponse[object])
