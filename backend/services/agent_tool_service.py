@@ -17,18 +17,19 @@ from sqlalchemy.orm import Session
 from backend.models.calendar import CalendarEventCreate, CalendarEventMove, CalendarEventUpdate
 from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
 from backend.services.calendar_service import CalendarService
+from backend.services.chat_file_service import CHAT_FILE_CONTEXT_CHUNK_LIMIT, ChatFileService
 from backend.services.datetime_service import DateTimeService
 from backend.services.memory_service import MemoryService
 from backend.services.quiz_service import QuizService
+from backend.services.rag_service import RAGProviderError, RAGService, RAGServiceError
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _WHITESPACE_RE = re.compile(r"\s+")
 _APPROVAL_REQUIRED_TOOLS = {
-    "list_local_files",
-    "read_local_file",
     "write_local_file",
     "run_local_command",
     "fetch_webpage",
+    "rag_index_folder",
 }
 
 
@@ -86,7 +87,7 @@ def get_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "list_local_files",
-                "description": "List files and directories inside the user-approved workspace root.",
+                "description": "List files and directories inside the user-approved workspace root. Do not use for current-chat uploaded PDFs/PPTs/DOCX files; use rag_search or rag_answer instead.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -106,7 +107,7 @@ def get_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "read_local_file",
-                "description": "Read a UTF-8 text file inside the approved workspace root.",
+                "description": "Read a UTF-8 text file inside the approved workspace root. Do not use for current-chat uploaded PDFs/PPTs/DOCX files; use rag_search or rag_answer instead.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -180,6 +181,55 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                         },
                     },
                     "required": ["url"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "rag_index_folder",
+                "description": "Index a configured RAG directory or authorized subdirectory into the knowledge base.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "default": ".",
+                            "description": "Relative path under the default RAG directory, or an absolute path inside an authorized RAG root.",
+                        },
+                        "recursive": {"type": "boolean", "default": True},
+                        "extensions": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "rag_search",
+                "description": "Search current-chat uploaded PDF/PPTX/DOCX files first, then indexed local study materials and school information. Use this for 'my uploaded PDF', 'this PPT', 'attached file', '课件', or '上传的资料'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "top_k": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "rag_answer",
+                "description": "Answer or summarize using current-chat uploaded PDF/PPTX/DOCX files first, then the indexed local knowledge base, with citations. Best tool for analyzing uploaded files.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "top_k": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    },
+                    "required": ["query"],
                 },
             },
         },
@@ -407,6 +457,36 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "email_test_connection",
+                "description": "Test whether the configured email SMTP server is reachable and credentials are valid.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "email_read_latest",
+                "description": "Read the most recent emails from the configured IMAP inbox.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "count": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10,
+                            "default": 1,
+                            "description": "Number of latest emails to fetch.",
+                        },
+                    },
+                },
+            },
+        },
     ]
 
 
@@ -446,6 +526,15 @@ class AgentToolService:
             return f"Run local command `{command}` in workspace `{workspace_root or '<unset>'}`."
         if tool_name == "fetch_webpage":
             return f"Visit webpage `{arguments.get('url', '')}` and extract content."
+        if tool_name == "rag_index_folder":
+            return (
+                f"Index local folder `{arguments.get('path', '.')}` into the knowledge base "
+                "using the configured RAG directory permissions."
+            )
+        if tool_name == "email_send":
+            to = arguments.get("to", "")
+            subject = arguments.get("subject", "")
+            return f"Send email to {to}: {subject}"
         return f"Execute tool `{tool_name}`."
 
     async def execute(
@@ -472,6 +561,12 @@ class AgentToolService:
             return await self._run_local_command(arguments, workspace_root)
         if tool_name == "fetch_webpage":
             return await self._fetch_webpage(arguments)
+        if tool_name == "rag_index_folder":
+            return await self._rag_index_folder(arguments, workspace_root)
+        if tool_name == "rag_search":
+            return await self._rag_search(arguments, chat_session_id=chat_session_id)
+        if tool_name == "rag_answer":
+            return await self._rag_answer(arguments, chat_session_id=chat_session_id)
         if tool_name == "calendar_list_events":
             return await self._calendar_list_events(arguments)
         if tool_name == "calendar_create_event":
@@ -500,6 +595,12 @@ class AgentToolService:
             return await self._blackboard_test_api_available()
         if tool_name == "blackboard_get_calendar_items":
             return await self._blackboard_get_calendar_items()
+        if tool_name == "email_test_connection":
+            return await self._email_test_connection()
+        if tool_name == "email_read_latest":
+            return await self._email_read_latest(arguments)
+        if tool_name == "email_send":
+            return await self._email_send(arguments)
         raise ToolExecutionError(f"Unknown tool `{tool_name}`.")
 
     async def _memory_search(self, arguments: dict[str, Any]) -> str:
@@ -507,42 +608,173 @@ class AgentToolService:
         limit = int(arguments.get("limit", 5))
         if not query:
             raise ToolExecutionError("`query` is required for memory_search.")
-        memories = await self.memory_service.get_relevant_memories(query, limit=limit)
-        if not memories:
+
+        # Optional memory_type filter (string -> MemoryType)
+        from backend.models.memory import MemoryType
+
+        raw_types = arguments.get("memory_types") or []
+        memory_types: list[MemoryType] | None = None
+        if raw_types:
+            memory_types = []
+            for t in raw_types:
+                try:
+                    memory_types.append(MemoryType(t))
+                except ValueError:
+                    continue
+            memory_types = memory_types or None
+
+        # Primary path: long-term memory semantic search (cross-session)
+        ltm_results = await self.memory_service.search_long_term_memories(
+            query=query,
+            memory_types=memory_types,
+            limit=limit,
+            semantic_threshold=float(arguments.get("threshold", 0.5)),
+            use_hybrid=True,
+        )
+
+        # Fallback path: legacy keyword memories (still useful for older entries)
+        legacy_results = []
+        if len(ltm_results) < limit:
+            legacy_remaining = limit - len(ltm_results)
+            legacy_results = await self.memory_service.get_relevant_memories(
+                query, limit=legacy_remaining
+            )
+
+        if not ltm_results and not legacy_results:
             return "No matching memories were found."
-        payload = [
-            {
-                "id": item.id,
-                "key": item.key,
-                "category": item.category,
-                "tags": item.tags,
-                "value": item.value,
-            }
-            for item in memories
-        ]
+
+        payload = {
+            "long_term": [
+                {
+                    "id": m.id,
+                    "memory_type": m.memory_type.value,
+                    "content": m.content,
+                    "importance_score": m.importance_score,
+                    "access_count": m.access_count,
+                    "metadata": m.metadata,
+                }
+                for m in ltm_results
+            ],
+            "legacy": [
+                {
+                    "id": m.id,
+                    "key": m.key,
+                    "category": m.category,
+                    "tags": m.tags,
+                    "value": m.value,
+                }
+                for m in legacy_results
+            ],
+        }
         return json.dumps(payload, ensure_ascii=False)
 
     async def _memory_save(self, arguments: dict[str, Any]) -> str:
+        from backend.models.memory import MemoryType
+
+        # Two save modes:
+        #  - key/value (legacy compatibility) -> stored as both legacy memory and LTM
+        #  - content/memory_type (new style) -> LTM only
+        content = arguments.get("content")
+        memory_type_raw = arguments.get("memory_type")
         key = str(arguments.get("key", "")).strip()
-        if not key:
-            raise ToolExecutionError("`key` is required for memory_save.")
-        record = await self.memory_service.save_memory(
-            key=key,
-            value=arguments.get("value"),
-            category=str(arguments.get("category", "general")),
-            tags=[str(tag) for tag in arguments.get("tags", [])],
+
+        if not content and not key:
+            raise ToolExecutionError(
+                "memory_save requires either `content` (+optional `memory_type`) "
+                "or `key`+`value` for legacy mode."
+            )
+
+        # Resolve memory type
+        if memory_type_raw:
+            try:
+                memory_type = MemoryType(memory_type_raw)
+            except ValueError as exc:
+                raise ToolExecutionError(
+                    f"Invalid memory_type `{memory_type_raw}`. "
+                    f"Valid: {[t.value for t in MemoryType]}"
+                ) from exc
+        else:
+            # Map legacy category to a memory type
+            category = str(arguments.get("category", "general")).lower()
+            category_map = {
+                "user_preference": MemoryType.USER_PREFERENCE,
+                "preference": MemoryType.USER_PREFERENCE,
+                "factual": MemoryType.FACTUAL,
+                "fact": MemoryType.FACTUAL,
+                "procedural": MemoryType.PROCEDURAL,
+                "how_to": MemoryType.PROCEDURAL,
+                "episodic": MemoryType.EPISODIC,
+                "event": MemoryType.EPISODIC,
+                "tool_usage": MemoryType.TOOL_USAGE,
+            }
+            memory_type = category_map.get(category, MemoryType.FACTUAL)
+
+        # Build content from key/value if needed
+        if not content:
+            content = f"{key}: {arguments.get('value')}"
+
+        importance = float(arguments.get("importance_score", 0.8))
+        ltm = await self.memory_service.save_long_term_memory(
+            content=str(content),
+            memory_type=memory_type,
+            metadata={
+                "tags": [str(tag) for tag in arguments.get("tags", [])],
+                "key": key or None,
+                "source": "memory_save_tool",
+            },
+            importance_score=importance,
+            generate_embedding=True,
         )
-        return json.dumps(record.model_dump(mode="json"), ensure_ascii=False)
+        return json.dumps(
+            {
+                "saved": True,
+                "id": ltm.id,
+                "memory_type": ltm.memory_type.value,
+                "content": ltm.content,
+            },
+            ensure_ascii=False,
+        )
 
     async def _memory_delete(self, arguments: dict[str, Any]) -> str:
+        # Two delete modes:
+        #  - id: precise deletion of one LTM record
+        #  - query: keyword sweep across both LTM and legacy memories
+        memory_id = str(arguments.get("id", "")).strip()
+        if memory_id:
+            ltm_deleted = await self.memory_service.delete_long_term_memory(memory_id)
+            legacy_deleted = await self.memory_service.delete_memory(memory_id)
+            return json.dumps(
+                {"deleted": ltm_deleted or legacy_deleted, "id": memory_id},
+                ensure_ascii=False,
+            )
+
         query = str(arguments.get("query", "")).strip()
         if not query:
-            raise ToolExecutionError("`query` is required for memory_delete.")
-        deleted = await self.memory_service.delete_memories_by_query(query)
-        return json.dumps({"deleted": deleted}, ensure_ascii=False)
+            raise ToolExecutionError("memory_delete requires either `id` or `query`.")
+
+        # Sweep LTM via semantic search, then legacy via keyword
+        ltm_hits = await self.memory_service.search_long_term_memories(
+            query=query, limit=20, semantic_threshold=0.6
+        )
+        ltm_deleted_count = 0
+        for hit in ltm_hits:
+            if await self.memory_service.delete_long_term_memory(hit.id):
+                ltm_deleted_count += 1
+        legacy_deleted_count = await self.memory_service.delete_memories_by_query(query)
+
+        return json.dumps(
+            {"long_term_deleted": ltm_deleted_count, "legacy_deleted": legacy_deleted_count},
+            ensure_ascii=False,
+        )
 
     async def _list_local_files(self, arguments: dict[str, Any], workspace_root: str | None) -> str:
-        base = self._resolve_path(workspace_root, str(arguments.get("path", ".")))
+        effective_root = self._effective_workspace_root_for_path(
+            workspace_root,
+            str(arguments.get("path", ".")),
+            directory_request=True,
+            allow_rag_roots=True,
+        )
+        base = self._resolve_path(effective_root, str(arguments.get("path", ".")))
         recursive = bool(arguments.get("recursive", False))
         max_entries = int(arguments.get("max_entries", 50))
         pattern = "**/*" if recursive else "*"
@@ -552,21 +784,27 @@ class AgentToolService:
                 continue
             entries.append(
                 {
-                    "path": item.relative_to(self._workspace_root(workspace_root)).as_posix(),
+                    "path": item.relative_to(self._workspace_root(effective_root)).as_posix(),
                     "type": "directory" if item.is_dir() else "file",
                 }
             )
         return json.dumps({"directory": base.as_posix(), "entries": entries}, ensure_ascii=False)
 
     async def _read_local_file(self, arguments: dict[str, Any], workspace_root: str | None) -> str:
-        path = self._resolve_path(workspace_root, str(arguments.get("path", "")))
+        effective_root = self._effective_workspace_root_for_path(
+            workspace_root,
+            str(arguments.get("path", "")),
+            directory_request=False,
+            allow_rag_roots=True,
+        )
+        path = self._resolve_path(effective_root, str(arguments.get("path", "")))
         max_chars = int(arguments.get("max_chars", 12000))
         if not path.is_file():
             raise ToolExecutionError(f"`{path}` is not a readable file.")
         content = path.read_text(encoding="utf-8", errors="ignore")
         truncated = len(content) > max_chars
         payload = {
-            "path": path.relative_to(self._workspace_root(workspace_root)).as_posix(),
+            "path": path.relative_to(self._workspace_root(effective_root)).as_posix(),
             "truncated": truncated,
             "content": content[:max_chars],
         }
@@ -687,6 +925,63 @@ class AgentToolService:
             "content": text[:max_chars],
         }
         return json.dumps(payload, ensure_ascii=False)
+
+    async def _rag_index_folder(self, arguments: dict[str, Any], workspace_root: str | None) -> str:
+        path = str(arguments.get("path", ".")).strip() or "."
+        service = RAGService(self.session)
+        try:
+            effective_root, safe_path = service.resolve_index_scope(path=path)
+            directory_settings = service.get_directory_settings()
+            result = await service.index_folder(
+                safe_path,
+                workspace_root=effective_root,
+                recursive=(
+                    bool(arguments["recursive"])
+                    if "recursive" in arguments
+                    else directory_settings.recursive_default
+                ),
+                extensions=arguments.get("extensions"),
+            )
+        except (RAGProviderError, RAGServiceError) as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
+
+    async def _rag_search(self, arguments: dict[str, Any], *, chat_session_id: str) -> str:
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            raise ToolExecutionError("`query` is required for rag_search.")
+        owner_ids = ChatFileService(self.session).query_owner_ids(chat_session_id)
+        rag_service = RAGService(self.session)
+        hits = rag_service.sample_chunks(
+            owner_id=owner_ids[0],
+            limit=CHAT_FILE_CONTEXT_CHUNK_LIMIT,
+        )
+        if not hits:
+            hits = rag_service.search(
+                query,
+                top_k=int(arguments.get("top_k", 5)),
+                owner_ids=owner_ids,
+            )
+        if not hits:
+            return "No matching uploaded file or knowledge base chunks were found."
+        return json.dumps([hit.model_dump(mode="json") for hit in hits], ensure_ascii=False)
+
+    async def _rag_answer(self, arguments: dict[str, Any], *, chat_session_id: str) -> str:
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            raise ToolExecutionError("`query` is required for rag_answer.")
+        try:
+            owner_ids = ChatFileService(self.session).query_owner_ids(chat_session_id)
+            result = await RAGService(self.session).query(
+                query,
+                top_k=int(arguments.get("top_k", 5)),
+                owner_ids=owner_ids,
+                prefer_owner_context=True,
+                context_limit=CHAT_FILE_CONTEXT_CHUNK_LIMIT,
+            )
+        except (RAGProviderError, RAGServiceError) as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
 
     async def _create_quiz(self, arguments: dict[str, Any], *, chat_session_id: str) -> str:
         topic = str(arguments.get("topic", "")).strip()
@@ -848,6 +1143,194 @@ class AgentToolService:
         items = await provider.get_calendar_items()
         return json.dumps({"items": items}, ensure_ascii=False)
 
+    async def _email_test_connection(self) -> str:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.utils import formatdate
+
+        from backend.services.runtime_settings import runtime_settings
+
+        config = runtime_settings.get_email_config()
+        password = runtime_settings.get_secret_email_password()
+
+        if not config.smtp_user or not password:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "error": "Email not configured. Please set SMTP credentials in Settings > Email.",
+                },
+                ensure_ascii=False,
+            )
+
+        msg = MIMEText("This is a test email from Student Productivity Agent.", "plain", "utf-8")
+        msg["From"] = config.smtp_user
+        msg["To"] = config.smtp_user
+        msg["Subject"] = "[Agent Test] Email Configuration Check"
+        msg["Date"] = formatdate(localtime=True)
+
+        try:
+            if config.smtp_encryption == "ssl":
+                server = smtplib.SMTP_SSL(config.smtp_host, config.smtp_port, timeout=15)
+            else:
+                server = smtplib.SMTP(config.smtp_host, config.smtp_port, timeout=15)
+                if config.smtp_encryption == "tls":
+                    server.starttls()
+            server.login(config.smtp_user, password)
+            server.sendmail(config.smtp_user, [config.smtp_user], msg.as_string())
+            server.quit()
+            return json.dumps(
+                {"ok": True, "message": "SMTP connection and authentication successful"},
+                ensure_ascii=False,
+            )
+        except Exception as e:
+            return json.dumps(
+                {"ok": False, "error": f"Email test failed: {e}"},
+                ensure_ascii=False,
+            )
+
+    async def _email_read_latest(self, arguments: dict[str, Any]) -> str:
+        import email
+        import imaplib
+        from email.header import decode_header
+
+        from backend.services.runtime_settings import runtime_settings
+
+        config = runtime_settings.get_email_config()
+        password = runtime_settings.get_secret_email_password()
+
+        if not config.smtp_user or not password:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "error": "Email not configured. Please set SMTP/IMAP credentials in Settings > Email.",
+                },
+                ensure_ascii=False,
+            )
+
+        count = min(int(arguments.get("count", 5)), 20)
+
+        def _decode_header(value: str) -> str:
+            parts = decode_header(value)
+            decoded = ""
+            for part, charset in parts:
+                if isinstance(part, bytes):
+                    decoded += part.decode(charset or "utf-8", errors="ignore")
+                else:
+                    decoded += part
+            return decoded
+
+        def _get_body(msg: email.message.Message) -> str:
+            body = ""
+            if msg.is_multipart():
+                for part in msg.walk():
+                    content_type = part.get_content_type()
+                    if content_type == "text/plain":
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            charset = part.get_content_charset() or "utf-8"
+                            return payload.decode(charset, errors="ignore")
+                    elif content_type == "text/html" and not body:
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            charset = part.get_content_charset() or "utf-8"
+                            body = payload.decode(charset, errors="ignore")
+            else:
+                payload = msg.get_payload(decode=True)
+                if payload:
+                    charset = msg.get_content_charset() or "utf-8"
+                    body = payload.decode(charset, errors="ignore")
+            return body[:2000]
+
+        try:
+            server = imaplib.IMAP4_SSL(config.imap_host, config.imap_port, timeout=15)
+            server.login(config.smtp_user, password)
+            server.select("INBOX")
+
+            status, data = server.search(None, "ALL")
+            if status != "OK" or not data[0]:
+                server.logout()
+                return json.dumps(
+                    {"ok": True, "emails": [], "message": "Inbox is empty."}, ensure_ascii=False
+                )
+
+            all_ids = data[0].split()
+            latest_ids = all_ids[-count:] if len(all_ids) >= count else all_ids
+
+            emails = []
+            for mid in reversed(latest_ids):
+                status, msg_data = server.fetch(mid, "(RFC822)")
+                if status != "OK":
+                    continue
+                raw = msg_data[0][1]
+                msg = email.message_from_bytes(raw)
+                emails.append(
+                    {
+                        "subject": _decode_header(msg["Subject"] or "(no subject)"),
+                        "from": _decode_header(msg["From"] or ""),
+                        "to": _decode_header(msg["To"] or ""),
+                        "date": msg["Date"] or "",
+                        "body": _get_body(msg),
+                    }
+                )
+
+            server.logout()
+            return json.dumps({"ok": True, "emails": emails}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps(
+                {"ok": False, "error": f"IMAP read failed: {e}"},
+                ensure_ascii=False,
+            )
+
+    async def _email_send(self, arguments: dict[str, Any]) -> str:
+        import smtplib
+        from email.mime.text import MIMEText
+
+        from backend.services.runtime_settings import runtime_settings
+
+        config = runtime_settings.get_email_config()
+        password = runtime_settings.get_secret_email_password()
+
+        to = arguments["to"]
+        subject = arguments["subject"]
+        body = arguments["body"]
+
+        if not config.smtp_user or not password:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "error": "SMTP not configured. Please set credentials in Settings > Email.",
+                },
+                ensure_ascii=False,
+            )
+
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["From"] = config.smtp_user
+        msg["To"] = to
+        msg["Subject"] = subject
+
+        def _send() -> None:
+            if config.smtp_encryption == "ssl":
+                server = smtplib.SMTP_SSL(config.smtp_host, config.smtp_port, timeout=15)
+            else:
+                server = smtplib.SMTP(config.smtp_host, config.smtp_port, timeout=15)
+                if config.smtp_encryption == "tls":
+                    server.starttls()
+            server.login(config.smtp_user, password)
+            server.sendmail(config.smtp_user, [to], msg.as_string())
+            server.quit()
+
+        try:
+            await asyncio.to_thread(_send)
+            return json.dumps(
+                {"ok": True, "message": f"Email sent to {to}."},
+                ensure_ascii=False,
+            )
+        except Exception as e:
+            return json.dumps(
+                {"ok": False, "error": f"Send failed: {e}"},
+                ensure_ascii=False,
+            )
+
     def _workspace_root(self, workspace_root: str | None) -> Path:
         root = Path(workspace_root or "").expanduser()
         if not workspace_root:
@@ -861,6 +1344,82 @@ class AgentToolService:
         if not resolved.is_dir():
             raise ToolExecutionError(f"Workspace root `{workspace_root}` is not a directory.")
         return resolved
+
+    def _effective_workspace_root_for_path(
+        self,
+        workspace_root: str | None,
+        requested_path: str,
+        *,
+        directory_request: bool,
+        allow_rag_roots: bool = False,
+    ) -> str | None:
+        if workspace_root:
+            return workspace_root
+        requested = Path(requested_path).expanduser()
+        if not requested.is_absolute():
+            # For read operations, try RAG authorized roots as fallback
+            if allow_rag_roots:
+                rag_root = self._find_rag_root_for_relative_path(requested_path)
+                if rag_root:
+                    return rag_root
+            return workspace_root
+        resolved = requested.resolve()
+        # For read operations, check if path is inside an authorized RAG root
+        if allow_rag_roots:
+            rag_root = self._find_rag_root_containing(resolved)
+            if rag_root:
+                return rag_root
+        if directory_request:
+            if not resolved.is_dir():
+                raise ToolExecutionError(f"`{requested_path}` is not a directory.")
+            return str(resolved)
+        parent = resolved.parent
+        if not parent.is_dir():
+            raise ToolExecutionError(f"Parent directory for `{requested_path}` does not exist.")
+        return str(parent)
+
+    def _find_rag_root_containing(self, resolved_path: Path) -> str | None:
+        """Return a RAG authorized root containing `resolved_path`, or None."""
+        try:
+            from backend.services.rag_service import RAGService
+
+            directory_settings = RAGService(self.session).get_directory_settings()
+        except Exception:
+            return None
+        for root_str in directory_settings.allowed_roots or []:
+            try:
+                root = Path(root_str).expanduser().resolve()
+            except Exception:
+                continue
+            try:
+                resolved_path.relative_to(root)
+                return str(root)
+            except ValueError:
+                continue
+        return None
+
+    def _find_rag_root_for_relative_path(self, requested_path: str) -> str | None:
+        """For a relative path, return the default RAG root if the path exists under it."""
+        try:
+            from backend.services.rag_service import RAGService
+
+            directory_settings = RAGService(self.session).get_directory_settings()
+        except Exception:
+            return None
+        candidate_roots: list[str] = []
+        if directory_settings.default_root:
+            candidate_roots.append(directory_settings.default_root)
+        candidate_roots.extend(directory_settings.allowed_roots or [])
+        for root_str in candidate_roots:
+            try:
+                root = Path(root_str).expanduser().resolve()
+                candidate = (root / requested_path).resolve()
+                candidate.relative_to(root)
+                if candidate.exists():
+                    return str(root)
+            except Exception:
+                continue
+        return None
 
     def _resolve_path(self, workspace_root: str | None, requested_path: str) -> Path:
         root = self._workspace_root(workspace_root)

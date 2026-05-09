@@ -21,6 +21,7 @@ class RuntimeLLMConfig(BaseModel):
     model: str
     base_url: str | None = None
     api_key_configured: bool = False
+    enable_reasoning: bool = False
 
 
 class RuntimeLLMUpdate(BaseModel):
@@ -31,6 +32,7 @@ class RuntimeLLMUpdate(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
     replace_api_key: bool = False
+    enable_reasoning: bool = False
 
 
 class RuntimeBlackboardConfig(BaseModel):
@@ -50,6 +52,31 @@ class RuntimeBlackboardUpdate(BaseModel):
     replace_password: bool = False
 
 
+class RuntimeEmailConfig(BaseModel):
+    """Public runtime Email config without exposing password."""
+
+    smtp_host: str
+    smtp_port: int
+    smtp_user: str
+    smtp_encryption: str = "ssl"
+    imap_host: str
+    imap_port: int
+    password_configured: bool = False
+
+
+class RuntimeEmailUpdate(BaseModel):
+    """Writable runtime Email config payload."""
+
+    smtp_host: str
+    smtp_port: int
+    smtp_user: str
+    smtp_encryption: str = "ssl"
+    imap_host: str
+    imap_port: int
+    password: str | None = None
+    replace_password: bool = False
+
+
 class RuntimeSettingsManager:
     """Keep sensitive runtime config in process memory only."""
 
@@ -59,6 +86,7 @@ class RuntimeSettingsManager:
         self._model = settings.llm_model
         self._base_url = settings.llm_base_url
         self._api_key = settings.llm_api_key if settings.llm_api_key != "replace-me" else None
+        self._enable_reasoning = settings.llm_enable_reasoning
         # Blackboard config - load encrypted password from settings, file, or environment
         self._bb_student_id = settings.blackboard_student_id
         # Priority: env var > encrypted file > none
@@ -67,6 +95,16 @@ class RuntimeSettingsManager:
             or self._load_encrypted_password_from_file()
         )
         self._bb_base_url = settings.blackboard_base_url
+        # Email config
+        self._smtp_host = settings.smtp_host
+        self._smtp_port = settings.smtp_port
+        self._smtp_user = settings.smtp_user
+        self._smtp_encryption = settings.smtp_encryption
+        self._smtp_password = (
+            settings.smtp_password if settings.smtp_password != "replace-me" else None
+        )
+        self._imap_host = settings.imap_host
+        self._imap_port = settings.imap_port
         self._lock = Lock()
 
     def _load_blackboard_password(self, stored_password: str | None) -> str | None:
@@ -91,6 +129,7 @@ class RuntimeSettingsManager:
                 model=self._model,
                 base_url=self._base_url,
                 api_key_configured=bool(self._api_key),
+                enable_reasoning=self._enable_reasoning,
             )
 
     def update_llm_config(self, update: RuntimeLLMUpdate) -> RuntimeLLMConfig:
@@ -104,11 +143,13 @@ class RuntimeSettingsManager:
                 self._api_key = update.api_key.strip() if update.api_key else None
             elif update.api_key:
                 self._api_key = update.api_key.strip()
+            self._enable_reasoning = update.enable_reasoning
             return RuntimeLLMConfig(
                 provider=self._provider,
                 model=self._model,
                 base_url=self._base_url,
                 api_key_configured=bool(self._api_key),
+                enable_reasoning=self._enable_reasoning,
             )
 
     def get_secret_api_key(self) -> str | None:
@@ -184,6 +225,51 @@ class RuntimeSettingsManager:
 
         with self._lock:
             return self._bb_password
+
+    # Email config methods
+    def get_email_config(self) -> RuntimeEmailConfig:
+        """Return safe runtime Email config without exposing password."""
+
+        with self._lock:
+            return RuntimeEmailConfig(
+                smtp_host=self._smtp_host,
+                smtp_port=self._smtp_port,
+                smtp_user=self._smtp_user,
+                smtp_encryption=self._smtp_encryption,
+                imap_host=self._imap_host,
+                imap_port=self._imap_port,
+                password_configured=bool(self._smtp_password),
+            )
+
+    def update_email_config(self, update: RuntimeEmailUpdate) -> RuntimeEmailConfig:
+        """Update runtime Email config."""
+
+        with self._lock:
+            self._smtp_host = update.smtp_host.strip()
+            self._smtp_port = update.smtp_port
+            self._smtp_user = update.smtp_user.strip()
+            self._smtp_encryption = update.smtp_encryption.strip()
+            self._imap_host = update.imap_host.strip()
+            self._imap_port = update.imap_port
+            if update.replace_password:
+                self._smtp_password = update.password.strip() if update.password else None
+            elif update.password:
+                self._smtp_password = update.password.strip()
+            return RuntimeEmailConfig(
+                smtp_host=self._smtp_host,
+                smtp_port=self._smtp_port,
+                smtp_user=self._smtp_user,
+                smtp_encryption=self._smtp_encryption,
+                imap_host=self._imap_host,
+                imap_port=self._imap_port,
+                password_configured=bool(self._smtp_password),
+            )
+
+    def get_secret_email_password(self) -> str | None:
+        """Return the in-memory Email password for internal use only."""
+
+        with self._lock:
+            return self._smtp_password
 
 
 runtime_settings = RuntimeSettingsManager()

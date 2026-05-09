@@ -40,6 +40,7 @@ class LLMSettingsRequest(BaseModel):
     model: str
     base_url: str | None = None
     api_key: str | None = None
+    enable_reasoning: bool = False
 
 
 class LLMConnectionTestRequest(BaseModel):
@@ -47,6 +48,7 @@ class LLMConnectionTestRequest(BaseModel):
     model: str | None = None
     base_url: str | None = None
     api_key: str | None = None
+    enable_reasoning: bool = False
 
 
 class LLMProfileRequest(BaseModel):
@@ -55,6 +57,7 @@ class LLMProfileRequest(BaseModel):
     model: str
     base_url: str | None = None
     api_key: str | None = None
+    enable_reasoning: bool = False
 
 
 class BlackboardProfileRequest(BaseModel):
@@ -72,6 +75,47 @@ class BlackboardSettingsRequest(BaseModel):
     student_id: str | None = None
     password: str | None = None
     base_url: str | None = None
+    replace_password: bool = False
+
+
+class RAGIndexFolderRequest(BaseModel):
+    path: str | None = None
+    workspace_root: str | None = None
+    recursive: bool | None = None
+    extensions: list[str] | None = None
+
+
+class RAGQueryRequest(BaseModel):
+    query: str
+    top_k: int = Field(default=5, ge=1, le=20)
+    session_id: str | None = None
+
+
+class RAGSettingsRequest(BaseModel):
+    allowed_roots: list[str] = Field(default_factory=list)
+    default_root: str | None = None
+    recursive_default: bool = True
+
+
+class EmailProfileRequest(BaseModel):
+    name: str
+    smtp_host: str
+    smtp_port: int
+    smtp_user: str
+    smtp_encryption: str = "ssl"
+    imap_host: str
+    imap_port: int
+    password: str | None = None
+
+
+class EmailSettingsRequest(BaseModel):
+    smtp_host: str
+    smtp_port: int
+    smtp_user: str
+    smtp_encryption: str = "ssl"
+    imap_host: str
+    imap_port: int
+    password: str | None = None
     replace_password: bool = False
 
 

@@ -19,6 +19,12 @@ export async function getHealth() {
   return parseJson(response);
 }
 
+export async function listWorkspaceDirectories(path = "") {
+  const query = path ? `?path=${encodeURIComponent(path)}` : "";
+  const response = await fetch(`${API_BASE}/workspace/directories${query}`);
+  return parseJson(response);
+}
+
 export async function getLLMSettings() {
   const response = await fetch(`${API_BASE}/settings/llm`);
   return parseJson(response);
@@ -184,6 +190,57 @@ export async function applyBBProfile(name) {
   return parseJson(response);
 }
 
+export async function getEmailSettings() {
+  const response = await fetch(`${API_BASE}/settings/email`);
+  return parseJson(response);
+}
+
+export async function updateEmailSettings(payload) {
+  const response = await fetch(`${API_BASE}/settings/email`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function testEmailSettings(payload) {
+  const response = await fetch(`${API_BASE}/settings/email/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function getEmailProfiles() {
+  const response = await fetch(`${API_BASE}/settings/email/profiles`);
+  return parseJson(response);
+}
+
+export async function saveEmailProfile(payload) {
+  const response = await fetch(`${API_BASE}/settings/email/profiles`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function deleteEmailProfile(name) {
+  const response = await fetch(`${API_BASE}/settings/email/profiles/${encodeURIComponent(name)}`, {
+    method: "DELETE"
+  });
+  return parseJson(response);
+}
+
+export async function applyEmailProfile(name) {
+  const response = await fetch(`${API_BASE}/settings/email/profiles/${encodeURIComponent(name)}/apply`, {
+    method: "POST"
+  });
+  return parseJson(response);
+}
+
 export async function getDatabaseOverview() {
   const response = await fetch(`${API_BASE}/database/overview`);
   return parseJson(response);
@@ -274,8 +331,14 @@ async function consumeSSE(response, handlers) {
       if (eventName === "message") {
         handlers.onChunk?.(parsed.chunk);
       }
+      if (eventName === "reasoning") {
+        handlers.onReasoning?.(parsed.chunk);
+      }
       if (eventName === "approval_required") {
         handlers.onApprovalRequired?.(parsed);
+      }
+      if (eventName === "tool_events") {
+        handlers.onToolEvents?.(parsed.tool_events || []);
       }
       if (eventName === "done") {
         handlers.onDone?.(parsed);
@@ -299,17 +362,20 @@ async function consumeSSE(response, handlers) {
         throw new Error(parsed.error || "Chat stream failed.");
       }
       if (eventName === "message") handlers.onChunk?.(parsed.chunk);
+      if (eventName === "reasoning") handlers.onReasoning?.(parsed.chunk);
       if (eventName === "approval_required") handlers.onApprovalRequired?.(parsed);
+      if (eventName === "tool_events") handlers.onToolEvents?.(parsed.tool_events || []);
       if (eventName === "done") handlers.onDone?.(parsed);
     }
   }
 }
 
-export async function streamChat(payload, handlers) {
+export async function streamChat(payload, handlers, requestOptions = {}) {
   const response = await fetch(`${API_BASE}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    signal: requestOptions.signal
   });
   return consumeSSE(response, handlers);
 }
@@ -361,6 +427,23 @@ export const apiClient = {
     return { data: await parseJson(response) };
   },
 
+  async postForm(endpoint, formData, options = {}) {
+    const url = new URL(`${API_BASE}${endpoint}`);
+    if (options.params) {
+      Object.entries(options.params).forEach(([key, value]) => {
+        if (value !== null && value !== undefined) {
+          url.searchParams.append(key, value);
+        }
+      });
+    }
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      headers: options.headers || {},
+      body: formData
+    });
+    return { data: await parseJson(response) };
+  },
+
   async put(endpoint, data, options = {}) {
     const url = new URL(`${API_BASE}${endpoint}`);
     if (options.params) {
@@ -377,6 +460,22 @@ export const apiClient = {
         ...options.headers
       },
       body: data ? JSON.stringify(data) : undefined
+    });
+    return { data: await parseJson(response) };
+  },
+
+  async delete(endpoint, options = {}) {
+    const url = new URL(`${API_BASE}${endpoint}`);
+    if (options.params) {
+      Object.entries(options.params).forEach(([key, value]) => {
+        if (value !== null && value !== undefined) {
+          url.searchParams.append(key, value);
+        }
+      });
+    }
+    const response = await fetch(url.toString(), {
+      method: "DELETE",
+      headers: options.headers || {}
     });
     return { data: await parseJson(response) };
   }

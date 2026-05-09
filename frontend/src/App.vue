@@ -31,12 +31,14 @@
             </svg>
             <span>测验</span>
           </button>
-          <button :class="['tab-item', { active: activeView === 'files' }]" @click="activeView = 'files'">
+          <button :class="['tab-item', { active: activeView === 'rag' }]" @click="activeView = 'rag'">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
-              <polyline points="13 2 13 9 20 9"/>
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+              <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/>
+              <path d="M8 7h8"/>
+              <path d="M8 11h6"/>
             </svg>
-            <span>文件</span>
+            <span>知识库</span>
           </button>
           <button :class="['tab-item', { active: activeView === 'calendar' }]" @click="activeView = 'calendar'">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -129,7 +131,24 @@
     </aside>
 
     <!-- Main Content -->
-    <section class="main-content">
+    <section
+      class="main-content"
+      @dragenter.prevent="handleDragEnter"
+      @dragover.prevent="handleDragOver"
+      @dragleave.prevent="handleDragLeave"
+      @drop.prevent="handleFileDrop"
+    >
+      <div v-if="activeView === 'chat' && dragActive" class="file-drop-overlay">
+        <div class="file-drop-card">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <strong>释放以上传文件</strong>
+          <span>支持 PDF、PPTX、DOCX、Markdown，上传后即可围绕当前对话提问</span>
+        </div>
+      </div>
       <template v-if="activeView === 'chat'">
       <!-- Header -->
       <header :class="['header', { collapsed: !headerExpanded }]">
@@ -140,19 +159,6 @@
             <span class="meta-chip">StudyAI Workspace</span>
             <span class="meta-chip subtle">{{ activeConversation.messages.length }} 条消息</span>
           </div>
-        </div>
-        <div v-if="headerExpanded" class="header-right">
-          <div class="workspace-field">
-            <span>工作目录</span>
-            <input
-              v-model="activeConversation.workspaceRoot"
-              type="text"
-              placeholder="/path/to/your/project"
-            />
-          </div>
-          <button class="header-btn" :disabled="loading" @click="loadCourses">
-            加载课程
-          </button>
         </div>
         <button
           :class="['header-toggle', { collapsed: !headerExpanded }]"
@@ -195,90 +201,195 @@
               <span v-if="message.role === 'assistant'" class="role-label">StudyAI</span>
               <span v-if="message.elapsedLabel" class="elapsed">{{ message.elapsedLabel }}</span>
             </div>
-            <div
-              class="markdown-body"
-              v-html="renderMarkdown(message.content)"
-            />
-            <!-- Tool Events -->
-            <div v-if="message.toolEvents?.length" class="tool-events">
-              <details
-                v-for="(toolEvent, index) in message.toolEvents"
-                :key="`${message.id}-${toolEvent.tool_name}-${index}`"
-                class="tool-event"
-              >
+            <template v-for="(part, i) in message.parts" :key="`${message.id}-${i}`">
+              <div v-if="part.type === 'text'" class="markdown-body" v-html="renderMarkdown(part.content)" />
+              <details v-else-if="part.type === 'thinking'" class="thinking-block">
+                <summary class="thinking-summary">
+                  <span class="thinking-label">思考过程</span>
+                </summary>
+                <div class="markdown-body thinking-content" v-html="renderMarkdown(part.content)" />
+              </details>
+              <details v-else-if="part.type === 'tool'" class="tool-event">
                 <summary class="tool-event-summary">
-                  <span class="tool-event-name">{{ toolEvent.tool_name }}</span>
-                  <span :class="['tool-event-status', toolEvent.status]">{{ formatToolStatus(toolEvent.status) }}</span>
+                  <span class="tool-event-name">{{ part.toolEvent.tool_name }}</span>
+                  <span :class="['tool-event-status', part.toolEvent.status]">{{ formatToolStatus(part.toolEvent.status) }}</span>
                 </summary>
                 <div class="tool-event-body">
                   <div class="tool-event-block">
                     <strong>输入</strong>
-                    <pre>{{ formatToolPayload(toolEvent.arguments) }}</pre>
+                    <pre>{{ formatToolPayload(part.toolEvent.arguments) }}</pre>
                   </div>
-                  <div v-if="toolEvent.output" class="tool-event-block">
+                  <div v-if="part.toolEvent.output" class="tool-event-block">
                     <strong>输出</strong>
-                    <pre>{{ formatToolPayload(toolEvent.output) }}</pre>
+                    <pre>{{ formatToolPayload(part.toolEvent.output) }}</pre>
                   </div>
                 </div>
               </details>
-            </div>
-            <!-- Quiz Panel -->
-            <template
-              v-for="(toolEvent, index) in message.toolEvents?.filter((event) => event.tool_name === 'create_quiz') || []"
-              :key="`${message.id}-quiz-${index}`"
-            >
               <QuizPanel
-                v-if="tryParseToolOutput(toolEvent.output)?.quiz_session"
-                :quiz="tryParseToolOutput(toolEvent.output).quiz_session"
+                v-if="part.type === 'tool' && part.toolEvent.tool_name === 'create_quiz' && tryParseToolOutput(part.toolEvent.output)?.quiz_session"
+                :quiz="tryParseToolOutput(part.toolEvent.output).quiz_session"
               />
             </template>
           </div>
         </article>
 
-        <!-- Approval Panel -->
-        <section v-if="activeConversation.pendingApproval" class="approval-panel">
+      </div>
+
+      <!-- Approval Panel -->
+      <Transition name="approval-slide">
+        <section v-if="activeConversation.pendingApproval" class="approval-banner">
           <div class="approval-content">
-            <p class="eyebrow">需要审批</p>
-            <h3>{{ activeConversation.pendingApproval.tool_name }}</h3>
-            <p>{{ activeConversation.pendingApproval.summary }}</p>
-            <code v-if="activeConversation.pendingApproval.workspace_root">
-              {{ activeConversation.pendingApproval.workspace_root }}
-            </code>
+            <div class="approval-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                <path d="M12 8v4"/>
+                <path d="M12 16h.01"/>
+              </svg>
+            </div>
+            <div>
+              <p class="eyebrow">需要审批</p>
+              <h3>{{ activeConversation.pendingApproval.tool_name }}</h3>
+              <p>{{ activeConversation.pendingApproval.summary }}</p>
+              <EmailConfirm
+                v-if="pendingApprovalEmail"
+                :to="pendingApprovalEmail.to"
+                :subject="pendingApprovalEmail.subject"
+                :body="pendingApprovalEmail.body"
+              />
+              <code v-if="activeConversation.pendingApproval.workspace_root">
+                {{ activeConversation.pendingApproval.workspace_root }}
+              </code>
+            </div>
           </div>
           <div class="approval-actions">
-            <button :disabled="loading" @click="resolveApproval(true)">批准</button>
-            <button class="secondary" :disabled="loading" @click="resolveApproval(false)">拒绝</button>
+            <button :disabled="loading" @click="resolveApproval(true)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              <span>批准</span>
+            </button>
+            <button class="secondary" :disabled="loading" @click="resolveApproval(false)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+              <span>拒绝</span>
+            </button>
           </div>
         </section>
-      </div>
+      </Transition>
 
       <!-- Composer -->
       <div class="composer-wrapper">
-        <div class="composer">
-          <textarea
-            ref="composerInput"
-            v-model="draft"
-            rows="1"
-            placeholder="输入消息... (Shift + Enter 换行)"
-            @input="autoResizeComposer"
-            @keydown.enter.exact.prevent="submitMessage"
-          />
+        <div v-if="filesPanelOpen && activeConversation.sessionFiles?.length" class="chat-file-strip">
+          <article
+            v-for="file in activeConversation.sessionFiles"
+            :key="file.id"
+            :class="['chat-file-chip', file.status]"
+          >
+            <div class="file-chip-icon">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+            </div>
+            <div class="file-chip-copy">
+              <strong>{{ file.relative_path }}</strong>
+              <span>{{ fileStatusLabel(file) }}</span>
+            </div>
+            <button
+              class="file-chip-remove"
+              :disabled="file.status === 'processing'"
+              title="删除文件"
+              @click="deleteChatFile(file)"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </article>
         </div>
-        <button
-          class="send-btn"
-          :disabled="loading || !draft.trim()"
-          @click="submitMessage"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="22" y1="2" x2="11" y2="13"/>
-            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-          </svg>
-          <span>{{ loading ? '发送中...' : '发送' }}</span>
-        </button>
+        <div class="composer-row">
+          <div v-if="activeConversation.sessionFiles?.length" class="composer-side-tools">
+            <button
+              :class="['chat-file-toggle', { open: filesPanelOpen }]"
+              type="button"
+              :title="filesPanelOpen ? '收起上传资料' : '展开上传资料'"
+              @click="filesPanelOpen = !filesPanelOpen"
+            >
+              <span class="toggle-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                </svg>
+              </span>
+              <span class="toggle-count">{{ activeConversation.sessionFiles.length }}</span>
+              <svg class="toggle-chevron" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path :d="filesPanelOpen ? 'M18 15l-6-6-6 6' : 'M6 9l6 6 6-6'" />
+              </svg>
+            </button>
+          </div>
+          <div class="composer">
+            <input
+              ref="fileInput"
+              class="hidden-file-input"
+              type="file"
+              multiple
+              accept=".pdf,.pptx,.docx,.md,.txt,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              @change="handleFileInput"
+            />
+            <button
+              class="attach-btn"
+              type="button"
+              :disabled="uploadingFiles"
+              title="上传当前对话文件"
+              @click="openFilePicker"
+            >
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+              </svg>
+            </button>
+            <textarea
+              ref="composerInput"
+              v-model="draft"
+              rows="1"
+              placeholder="输入消息... (Shift + Enter 换行)"
+              @input="autoResizeComposer"
+              @keydown.enter.exact.prevent="submitMessage"
+            />
+          </div>
+          <button
+            v-if="chatStreaming"
+            class="send-btn stop-btn"
+            @click="stopActiveChat"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="7" y="7" width="10" height="10" rx="1.5" ry="1.5"/>
+            </svg>
+            <span>停止</span>
+          </button>
+          <button
+            v-else
+            class="send-btn"
+            :disabled="loading || !draft.trim()"
+            @click="submitMessage"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="22" y1="2" x2="11" y2="13"/>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+            <span>发送</span>
+          </button>
+        </div>
       </div>
       </template>
 
-      <FilePanel v-else-if="activeView === 'files'" />
+      <RagPanel
+        v-else-if="activeView === 'rag'"
+        :workspace-root="activeConversation.workspaceRoot"
+        @update:workspace-root="updateActiveWorkspaceRoot"
+      />
       <CalendarPanel v-else />
     </section>
 
@@ -304,7 +415,6 @@
     </div>
   </main>
 </template>
-
 <script setup>
 import MarkdownIt from "markdown-it";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
@@ -312,12 +422,14 @@ import CalendarPanel from "./components/CalendarPanel.vue";
 import QuizPanel from "./components/QuizPanel.vue";
 import DatabaseOverviewPanel from "./components/DatabaseOverviewPanel.vue";
 import QuizHistoryPanel from "./components/QuizHistoryPanel.vue";
-import FilePanel from "./components/FilePanel.vue";
+import RagPanel from "./components/RagPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
-import { getCourses, getHealth, streamApprovalDecision, streamChat } from "./api/client";
+import EmailConfirm from "./components/EmailConfirm.vue";
+import { apiClient, getHealth, streamApprovalDecision, streamChat } from "./api/client";
 
 const CHAT_CONVERSATIONS_KEY = "spa-conversations";
 const ACTIVE_CONVERSATION_KEY = "spa-active-conversation-id";
+const CHAT_UPLOAD_EXTENSIONS = [".pdf", ".pptx", ".docx", ".md", ".txt"];
 
 const markdown = new MarkdownIt({
   html: false,
@@ -333,16 +445,32 @@ function makeConversation(title = "新对话") {
     updatedAt: Date.now(),
     workspaceRoot: "",
     pendingApproval: null,
+    sessionFiles: [],
     messages: [
       reactive({
         id: crypto.randomUUID(),
         role: "assistant",
-        content: "你好！我是 StudyAI 助手，可以帮助你查询课程、搜索文件、管理记忆等。有什么可以帮你的吗？",
-        elapsedLabel: "",
-        toolEvents: []
+        parts: [
+          { type: "text", content: "你好！我是 StudyAI 助手，可以帮助你查询课程、搜索文件、管理记忆等。有什么可以帮你的吗？" }
+        ],
+        elapsedLabel: ""
       })
     ]
   });
+}
+
+function migrateMessage(message) {
+  if (message.parts) {
+    return reactive({ ...message, content: undefined, toolEvents: undefined });
+  }
+  const parts = [];
+  if (message.toolEvents?.length) {
+    message.toolEvents.forEach((te) => parts.push({ type: "tool", toolEvent: te }));
+  }
+  if (message.content) {
+    parts.push({ type: "text", content: message.content });
+  }
+  return reactive({ ...message, parts, content: undefined, toolEvents: undefined });
 }
 
 function restoreConversations() {
@@ -356,12 +484,8 @@ function restoreConversations() {
         ...conversation,
         workspaceRoot: conversation.workspaceRoot || "",
         pendingApproval: conversation.pendingApproval || null,
-        messages: (conversation.messages || []).map((message) =>
-          reactive({
-            ...message,
-            toolEvents: message.toolEvents || []
-          })
-        )
+        sessionFiles: conversation.sessionFiles || [],
+        messages: (conversation.messages || []).map((message) => migrateMessage(message))
       })
     );
   } catch {
@@ -384,13 +508,22 @@ const editingConversationId = ref("");
 const editingTitle = ref("");
 const draft = ref("");
 const composerInput = ref(null);
+const fileInput = ref(null);
 const loading = ref(false);
+const uploadingFiles = ref(false);
+const chatStreaming = ref(false);
 const headerExpanded = ref(false);
+const filesPanelOpen = ref(false);
+const dragDepth = ref(0);
 let activeTimer = null;
+let activeChatAbortController = null;
+let chatStopRequested = false;
 
 const sortedConversations = computed(() =>
   [...conversations.value].sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0))
 );
+
+const dragActive = computed(() => dragDepth.value > 0 && activeView.value === "chat");
 
 function scrollToBottom() {
   nextTick(() => {
@@ -412,6 +545,14 @@ function resizeComposer(target) {
 function autoResizeComposer(event) {
   resizeComposer(event.target);
 }
+
+const pendingApprovalEmail = computed(() => {
+  const approval = activeConversation.value?.pendingApproval;
+  if (!approval?.approvals?.[0]) return null;
+  const first = approval.approvals[0];
+  if (first.tool_name !== "email_send") return null;
+  return first.arguments;
+});
 
 const activeConversation = computed(() => {
   const conversation =
@@ -436,7 +577,14 @@ function renderMarkdown(content) {
 
 function formatConversationTime(timestamp) {
   const date = new Date(timestamp || Date.now());
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today.getTime() - 86400000);
+  const msgDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  if (msgDay.getTime() >= today.getTime()) return time;
+  if (msgDay.getTime() >= yesterday.getTime()) return `昨天 ${time}`;
+  return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")} ${time}`;
 }
 
 function formatElapsed(ms) {
@@ -445,6 +593,7 @@ function formatElapsed(ms) {
 }
 
 function formatToolStatus(status) {
+  if (status === "running") return "运行中";
   if (status === "completed") return "完成";
   if (status === "failed") return "失败";
   if (status === "denied") return "已拒绝";
@@ -486,7 +635,9 @@ function startTimer(message) {
 function updateConversationTitle(conversation) {
   const firstUserMessage = conversation.messages.find((message) => message.role === "user");
   if (!firstUserMessage) return;
-  conversation.title = firstUserMessage.content.slice(0, 20) || conversation.title;
+  const firstText = firstUserMessage.parts?.find((p) => p.type === "text");
+  const text = firstText?.content || "";
+  conversation.title = text.slice(0, 20) || conversation.title;
 }
 
 function createConversation() {
@@ -545,30 +696,161 @@ function appendMessage(role, content) {
     reactive({
       id: crypto.randomUUID(),
       role,
-      content,
-      elapsedLabel: "",
-      toolEvents: []
+      parts: content ? [{ type: "text", content }] : [],
+      elapsedLabel: ""
     })
   );
   activeConversation.value.updatedAt = Date.now();
   scrollToBottom();
 }
 
-async function loadCourses() {
-  loading.value = true;
+function updateActiveWorkspaceRoot(path) {
+  activeConversation.value.workspaceRoot = path;
+  activeConversation.value.updatedAt = Date.now();
+  persistConversations();
+}
+
+function fileStatusLabel(file) {
+  if (file.status === "indexed") return "已可提问";
+  if (file.status === "failed") return file.error || "解析失败";
+  if (file.status === "processing") return "解析中";
+  return "等待处理";
+}
+
+function isSupportedChatFile(file) {
+  const name = file?.name || "";
+  return CHAT_UPLOAD_EXTENSIONS.some((extension) => name.toLowerCase().endsWith(extension));
+}
+
+function openFilePicker() {
+  fileInput.value?.click();
+}
+
+function handleFileInput(event) {
+  const files = Array.from(event.target.files || []);
+  event.target.value = "";
+  uploadChatFiles(files);
+}
+
+function handleDragEnter(event) {
+  if (activeView.value !== "chat") return;
+  if (!Array.from(event.dataTransfer?.types || []).includes("Files")) return;
+  dragDepth.value += 1;
+}
+
+function handleDragOver(event) {
+  if (activeView.value !== "chat") return;
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "copy";
+  }
+}
+
+function handleDragLeave() {
+  dragDepth.value = Math.max(0, dragDepth.value - 1);
+}
+
+function handleFileDrop(event) {
+  if (activeView.value !== "chat") return;
+  dragDepth.value = 0;
+  uploadChatFiles(Array.from(event.dataTransfer?.files || []));
+}
+
+function makePendingFile(file) {
+  return {
+    id: `pending-${crypto.randomUUID()}`,
+    relative_path: file.name,
+    extension: file.name.slice(file.name.lastIndexOf(".")).toLowerCase(),
+    status: "processing",
+    error: null
+  };
+}
+
+async function loadSessionFiles(sessionId = activeConversation.value.id) {
   try {
-    const response = await getCourses();
-    const courses = response.data?.data ?? [];
-    const summary = courses.map((item) => `- ${item.name} (${item.blackboard_course_id})`).join("\n");
-    appendMessage("assistant", summary || "没有返回课程。");
+    const response = await apiClient.get("/rag/session-files", {
+      params: { session_id: sessionId }
+    });
+    const conversation = conversations.value.find((item) => item.id === sessionId);
+    if (conversation) {
+      conversation.sessionFiles = response.data?.data || [];
+      conversation.updatedAt = Date.now();
+    }
+  } catch {
+    // Session files are optional; chat should stay usable if the backend is unavailable.
+  }
+}
+
+async function uploadChatFiles(rawFiles) {
+  if (!rawFiles?.length || uploadingFiles.value) return;
+  const unsupported = rawFiles.filter((file) => !isSupportedChatFile(file));
+  const files = rawFiles.filter((file) => isSupportedChatFile(file));
+  if (unsupported.length) {
+    appendMessage(
+      "assistant",
+      `以下文件暂不支持：${unsupported.map((file) => file.name).join("、")}。请上传 PDF、PPTX、DOCX、Markdown 或 TXT。`
+    );
+  }
+  if (!files.length) return;
+
+  const conversation = activeConversation.value;
+  const pending = files.map((file) => reactive(makePendingFile(file)));
+  conversation.sessionFiles = [...(conversation.sessionFiles || []), ...pending];
+  conversation.updatedAt = Date.now();
+  filesPanelOpen.value = true;
+  uploadingFiles.value = true;
+  scrollToBottom();
+
+  const formData = new FormData();
+  formData.append("session_id", conversation.id);
+  files.forEach((file) => formData.append("files", file));
+
+  try {
+    const response = await apiClient.postForm("/rag/session-files/upload", formData);
+    const summary = response.data?.data || {};
+    conversation.sessionFiles = summary.sources || [];
+    const indexed = Number(summary.indexed || 0);
+    const failed = Number(summary.failed || 0);
+    if (indexed > 0) {
+      appendMessage("assistant", `已索引 ${indexed} 个上传文件，可以直接基于它们提问。`);
+    }
+    if (failed > 0) {
+      appendMessage("assistant", `${failed} 个文件解析失败，已在文件列表中标出原因。`);
+    }
   } catch (error) {
-    appendMessage("assistant", `课程请求失败: ${error.message}`);
+    pending.forEach((file) => {
+      file.status = "failed";
+      file.error = error.message;
+    });
+    appendMessage("assistant", `文件上传失败：${error.message}`);
   } finally {
-    loading.value = false;
+    uploadingFiles.value = false;
+    await loadSessionFiles(conversation.id);
+    filesPanelOpen.value = false;
+    persistConversations();
+  }
+}
+
+async function deleteChatFile(file) {
+  if (!file?.id || file.status === "processing") return;
+  const conversation = activeConversation.value;
+  if (String(file.id).startsWith("pending-")) {
+    conversation.sessionFiles = (conversation.sessionFiles || []).filter((item) => item.id !== file.id);
+    return;
+  }
+  try {
+    await apiClient.delete(`/rag/session-files/${encodeURIComponent(file.id)}`, {
+      params: { session_id: conversation.id }
+    });
+    conversation.sessionFiles = (conversation.sessionFiles || []).filter((item) => item.id !== file.id);
+    conversation.updatedAt = Date.now();
+  } catch (error) {
+    appendMessage("assistant", `删除上传文件失败：${error.message}`);
   }
 }
 
 async function submitMessage() {
+  if (loading.value) return;
+
   const content = draft.value.trim();
   if (!content) return;
 
@@ -577,16 +859,15 @@ async function submitMessage() {
     reactive({
       id: crypto.randomUUID(),
       role: "user",
-      content,
+      parts: [{ type: "text", content }],
       elapsedLabel: ""
     })
   );
   const assistantMessage = reactive({
     id: crypto.randomUUID(),
     role: "assistant",
-    content: "正在等待模型响应...",
-    elapsedLabel: "",
-    toolEvents: []
+    parts: [{ type: "text", content: "正在等待模型响应..." }],
+    elapsedLabel: ""
   });
   conversation.messages.push(assistantMessage);
   conversation.updatedAt = Date.now();
@@ -595,8 +876,13 @@ async function submitMessage() {
   draft.value = "";
   nextTick(() => resizeComposer(composerInput.value));
   loading.value = true;
+  chatStreaming.value = true;
+  chatStopRequested = false;
+  activeChatAbortController = new AbortController();
   const stopTimer = startTimer(assistantMessage);
   scrollToBottom();
+
+  const WAITING_TEXT = "正在等待模型响应...";
 
   try {
     await streamChat(
@@ -606,33 +892,117 @@ async function submitMessage() {
         workspace_root: conversation.workspaceRoot?.trim() || null
       },
       {
-        onChunk(chunk) {
-          if (assistantMessage.content === "正在等待模型响应...") {
-            assistantMessage.content = "";
+        onChunk(text) {
+          const lastPart = assistantMessage.parts.at(-1);
+          if (lastPart?.type === "text" && lastPart.content === WAITING_TEXT) {
+            lastPart.content = "";
           }
-          assistantMessage.content += chunk;
+          const appendPart = assistantMessage.parts.at(-1);
+          if (!appendPart || appendPart.type !== "text") {
+            assistantMessage.parts.push({ type: "text", content: text });
+          } else {
+            appendPart.content += text;
+          }
+          scrollToBottom();
+        },
+        onReasoning(thinking) {
+          const firstPart = assistantMessage.parts[0];
+          if (firstPart?.type === "text" && firstPart.content === WAITING_TEXT) {
+            assistantMessage.parts.shift();
+          }
+          const appendPart = assistantMessage.parts.at(-1);
+          if (!appendPart || appendPart.type !== "thinking") {
+            assistantMessage.parts.push({ type: "thinking", content: thinking });
+          } else {
+            appendPart.content += thinking;
+          }
+          scrollToBottom();
+        },
+        onToolEvents(toolEvents) {
+          const firstPart = assistantMessage.parts[0];
+          if (firstPart?.type === "text" && firstPart.content === WAITING_TEXT) {
+            assistantMessage.parts.shift();
+          }
+          const existingToolParts = assistantMessage.parts.filter((p) => p.type === "tool");
+          toolEvents.forEach((newEvent, idx) => {
+            if (idx < existingToolParts.length) {
+              existingToolParts[idx].toolEvent = newEvent;
+            } else {
+              assistantMessage.parts.push({ type: "tool", toolEvent: newEvent });
+            }
+          });
           scrollToBottom();
         },
         onApprovalRequired(approval) {
-          assistantMessage.content = "工具调用正在等待你的审批。";
-          assistantMessage.toolEvents = approval.tool_events || [];
+          const firstPart = assistantMessage.parts[0];
+          if (firstPart?.type === "text" && firstPart.content === WAITING_TEXT) {
+            assistantMessage.parts.shift();
+          }
+          const lastPart = assistantMessage.parts.at(-1);
+          if (lastPart?.type === "text") {
+            lastPart.content = "工具调用正在等待你的审批。";
+          } else {
+            assistantMessage.parts.push({ type: "text", content: "工具调用正在等待你的审批。" });
+          }
+          (approval.tool_events || []).forEach((te) => {
+            const toolParts = assistantMessage.parts.filter((p) => p.type === "tool");
+            const existingIdx = toolParts.findIndex(
+              (tp) => tp.toolEvent.tool_name === te.tool_name
+            );
+            if (existingIdx >= 0) {
+              toolParts[existingIdx].toolEvent = te;
+            } else {
+              assistantMessage.parts.push({ type: "tool", toolEvent: te });
+            }
+          });
           conversation.pendingApproval = approval;
           scrollToBottom();
         },
         onDone(payload) {
-          assistantMessage.content = assistantMessage.content.trim();
-          assistantMessage.toolEvents = payload.tool_events || assistantMessage.toolEvents || [];
+          const lastText = assistantMessage.parts.findLast((p) => p.type === "text");
+          if (lastText) {
+            lastText.content = lastText.content.trim();
+          }
+          const lastThinking = assistantMessage.parts.findLast((p) => p.type === "thinking");
+          if (lastThinking) {
+            lastThinking.content = lastThinking.content.trim();
+          }
           scrollToBottom();
         }
+      },
+      {
+        signal: activeChatAbortController.signal
       }
     );
   } catch (error) {
-    assistantMessage.content = `聊天失败: ${error.message}`;
+    const aborted = chatStopRequested || error?.name === "AbortError";
+    const lastText = assistantMessage.parts.findLast((p) => p.type === "text");
+    if (aborted) {
+      if (lastText) {
+        const partial = lastText.content.trim();
+        lastText.content = partial ? `${partial}\n\n[已停止生成]` : "已停止生成。";
+      }
+    } else {
+      if (lastText) {
+        lastText.content = `聊天失败: ${error.message}`;
+      } else {
+        assistantMessage.parts.push({ type: "text", content: `聊天失败: ${error.message}` });
+      }
+    }
   } finally {
     conversation.updatedAt = Date.now();
     stopTimer();
+    activeChatAbortController = null;
+    chatStopRequested = false;
+    chatStreaming.value = false;
     loading.value = false;
   }
+}
+
+function stopActiveChat() {
+  if (!chatStreaming.value || !activeChatAbortController) return;
+  chatStopRequested = true;
+  activeChatAbortController.abort();
 }
 
 async function resolveApproval(approved) {
@@ -640,12 +1010,12 @@ async function resolveApproval(approved) {
   const pending = conversation.pendingApproval;
   if (!pending) return;
 
+  const INITIAL_TEXT = approved ? "正在执行批准的操作..." : "审批被拒绝。让智能体继续...";
   const assistantMessage = reactive({
     id: crypto.randomUUID(),
     role: "assistant",
-    content: approved ? "正在执行批准的操作..." : "审批被拒绝。让智能体继续...",
-    elapsedLabel: "",
-    toolEvents: []
+    parts: [{ type: "text", content: INITIAL_TEXT }],
+    elapsedLabel: ""
   });
   conversation.messages.push(assistantMessage);
   conversation.pendingApproval = null;
@@ -653,6 +1023,7 @@ async function resolveApproval(approved) {
   loading.value = true;
   const stopTimer = startTimer(assistantMessage);
   scrollToBottom();
+
 
   try {
     await streamApprovalDecision(
@@ -662,31 +1033,92 @@ async function resolveApproval(approved) {
         approved
       },
       {
-        onChunk(chunk) {
-          if (
-            assistantMessage.content === "正在执行批准的操作..." ||
-            assistantMessage.content === "审批被拒绝。让智能体继续..."
-          ) {
-            assistantMessage.content = "";
+        onChunk(text) {
+          const lastPart = assistantMessage.parts.at(-1);
+          if (lastPart?.type === "text" && lastPart.content === INITIAL_TEXT) {
+            lastPart.content = "";
           }
-          assistantMessage.content += chunk;
+          const appendPart = assistantMessage.parts.at(-1);
+          if (!appendPart || appendPart.type !== "text") {
+            assistantMessage.parts.push({ type: "text", content: text });
+          } else {
+            appendPart.content += text;
+          }
+          scrollToBottom();
+        },
+        onReasoning(thinking) {
+          const firstPart = assistantMessage.parts[0];
+          if (firstPart?.type === "text" && firstPart.content === INITIAL_TEXT) {
+            assistantMessage.parts.shift();
+          }
+          const appendPart = assistantMessage.parts.at(-1);
+          if (!appendPart || appendPart.type !== "thinking") {
+            assistantMessage.parts.push({ type: "thinking", content: thinking });
+          } else {
+            appendPart.content += thinking;
+          }
+          scrollToBottom();
+        },
+        onToolEvents(toolEvents) {
+          const firstPart = assistantMessage.parts[0];
+          if (firstPart?.type === "text" && firstPart.content === INITIAL_TEXT) {
+            assistantMessage.parts.shift();
+          }
+          const existingToolParts = assistantMessage.parts.filter((p) => p.type === "tool");
+          toolEvents.forEach((newEvent, idx) => {
+            if (idx < existingToolParts.length) {
+              existingToolParts[idx].toolEvent = newEvent;
+            } else {
+              assistantMessage.parts.push({ type: "tool", toolEvent: newEvent });
+            }
+          });
           scrollToBottom();
         },
         onApprovalRequired(nextApproval) {
-          assistantMessage.content = "另一个操作正在等待你的审批。";
-          assistantMessage.toolEvents = nextApproval.tool_events || [];
+          const firstPart = assistantMessage.parts[0];
+          if (firstPart?.type === "text" && firstPart.content === INITIAL_TEXT) {
+            assistantMessage.parts.shift();
+          }
+          const lastPart = assistantMessage.parts.at(-1);
+          if (lastPart?.type === "text") {
+            lastPart.content = "另一个操作正在等待你的审批。";
+          } else {
+            assistantMessage.parts.push({ type: "text", content: "另一个操作正在等待你的审批。" });
+          }
+          (nextApproval.tool_events || []).forEach((te) => {
+            const toolParts = assistantMessage.parts.filter((p) => p.type === "tool");
+            const existingIdx = toolParts.findIndex(
+              (tp) => tp.toolEvent.tool_name === te.tool_name
+            );
+            if (existingIdx >= 0) {
+              toolParts[existingIdx].toolEvent = te;
+            } else {
+              assistantMessage.parts.push({ type: "tool", toolEvent: te });
+            }
+          });
           conversation.pendingApproval = nextApproval;
           scrollToBottom();
         },
         onDone(payload) {
-          assistantMessage.content = assistantMessage.content.trim();
-          assistantMessage.toolEvents = payload.tool_events || assistantMessage.toolEvents || [];
+          const lastText = assistantMessage.parts.findLast((p) => p.type === "text");
+          if (lastText) {
+            lastText.content = lastText.content.trim();
+          }
+          const lastThinking = assistantMessage.parts.findLast((p) => p.type === "thinking");
+          if (lastThinking) {
+            lastThinking.content = lastThinking.content.trim();
+          }
           scrollToBottom();
         }
       }
     );
   } catch (error) {
-    assistantMessage.content = `审批流程失败: ${error.message}`;
+    const lastText = assistantMessage.parts.findLast((p) => p.type === "text");
+    if (lastText) {
+      lastText.content = `审批流程失败: ${error.message}`;
+    } else {
+      assistantMessage.parts.push({ type: "text", content: `审批流程失败: ${error.message}` });
+    }
   } finally {
     conversation.updatedAt = Date.now();
     stopTimer();
@@ -714,12 +1146,21 @@ watch(
   { deep: true }
 );
 
+watch(activeConversationId, (sessionId) => {
+  loadSessionFiles(sessionId);
+});
+
 onBeforeUnmount(() => {
   if (activeTimer) window.clearInterval(activeTimer);
+  if (activeChatAbortController) {
+    activeChatAbortController.abort();
+    activeChatAbortController = null;
+  }
 });
 
 onMounted(() => {
   resizeComposer(composerInput.value);
+  loadSessionFiles(activeConversationId.value);
 });
 </script>
 
@@ -1063,6 +1504,42 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.6);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 20px 44px var(--shadow-glass);
   overflow-y: auto;
+  position: relative;
+}
+
+.file-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: rgba(252, 251, 248, 0.78);
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+}
+
+.file-drop-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  min-width: min(420px, calc(100vw - 48px));
+  padding: 28px;
+  border-radius: 24px;
+  border: 1px solid rgba(31, 111, 120, 0.18);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.16);
+  color: var(--accent);
+}
+
+.file-drop-card strong {
+  color: var(--text-primary);
+  font-size: 18px;
+}
+
+.file-drop-card span {
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 /* Header */
@@ -1200,6 +1677,10 @@ body {
   transition: all 0.2s ease;
 }
 
+.workspace-field input[readonly] {
+  cursor: default;
+}
+
 .workspace-field input:focus {
   outline: none;
   border-color: var(--accent-orange);
@@ -1265,8 +1746,9 @@ body {
 .message-row.user {
   flex-direction: row-reverse;
   margin-left: auto;
-  margin-right: calc(var(--send-btn-width) + 12px);
+  margin-right: calc(var(--send-btn-width) - 22px);
   margin-top: 4px;
+  max-width: min(600px, calc(100% - 108px));
 }
 
 .message-row.assistant {
@@ -1300,6 +1782,8 @@ body {
   max-width: 100%;
   width: fit-content;
   min-width: 0;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .message-row.user .message-bubble {
@@ -1408,6 +1892,57 @@ body {
   color: var(--accent);
 }
 
+/* Thinking Block */
+.thinking-block {
+  margin: 8px 0;
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.04), rgba(99, 102, 241, 0.02));
+  overflow: hidden;
+}
+
+.thinking-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  cursor: pointer;
+  list-style: none;
+  background: rgba(139, 92, 246, 0.06);
+  user-select: none;
+}
+
+.thinking-summary::-webkit-details-marker {
+  display: none;
+}
+
+.thinking-label {
+  font-weight: 700;
+  font-size: 13px;
+  color: #7c3aed;
+}
+
+.thinking-summary::after {
+  content: "▸";
+  margin-left: auto;
+  font-size: 12px;
+  color: #7c3aed;
+  transition: transform 0.2s ease;
+}
+
+.thinking-block[open] .thinking-summary::after {
+  transform: rotate(90deg);
+}
+
+.thinking-block[open] .thinking-summary {
+  border-bottom: 1px solid rgba(139, 92, 246, 0.1);
+}
+
+.thinking-content {
+  padding: 14px 16px;
+  border-left: 3px solid rgba(139, 92, 246, 0.18);
+}
+
 /* Tool Events */
 .tool-events {
   display: grid;
@@ -1417,6 +1952,7 @@ body {
 }
 
 .tool-event {
+  margin: 8px 0;
   border: 1px solid var(--border-light);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.82);
@@ -1456,6 +1992,11 @@ body {
   color: #15803d;
 }
 
+.tool-event-status.running {
+  background: rgba(59, 130, 246, 0.14);
+  color: #1d4ed8;
+}
+
 .tool-event-status.failed,
 .tool-event-status.denied {
   background: rgba(239, 68, 68, 0.12);
@@ -1491,20 +2032,64 @@ body {
   line-height: 1.55;
 }
 
-/* Approval Panel */
-.approval-panel {
+/* Approval Banner */
+.approval-slide-enter-active,
+.approval-slide-leave-active {
+  transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.approval-slide-enter-from,
+.approval-slide-leave-to {
+  opacity: 0;
+  transform: translateY(16px);
+}
+
+.approval-banner {
   display: flex;
   justify-content: space-between;
-  gap: 24px;
-  padding: 20px 22px;
-  margin: 16px 0;
-  border-radius: 20px;
-  background: linear-gradient(135deg, #fff8e7, #fff3cf);
-  border: 1px solid #efd596;
-  max-width: 800px;
-  margin-left: 0;
-  box-shadow: 0 14px 32px rgba(180, 131, 32, 0.08);
-  align-self: flex-start;
+  align-items: center;
+  gap: 20px;
+  padding: 18px 24px;
+  margin: 0 34px 16px 128px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(255, 251, 235, 0.95), rgba(255, 247, 237, 0.95));
+  border: 1px solid rgba(218, 106, 30, 0.18);
+  box-shadow: 0 16px 40px rgba(180, 131, 32, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(16px);
+  max-width: min(800px, calc(100% - 162px));
+  position: relative;
+  z-index: 10;
+}
+
+.approval-banner::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 16px;
+  bottom: 16px;
+  width: 4px;
+  border-radius: 0 4px 4px 0;
+  background: linear-gradient(180deg, var(--accent-orange), #ee8a3a);
+}
+
+.approval-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-width: 0;
+}
+
+.approval-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--accent-orange), #ee8a3a);
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 8px 20px rgba(218, 106, 30, 0.22);
 }
 
 .approval-content h3,
@@ -1513,56 +2098,86 @@ body {
 }
 
 .approval-content h3 {
-  margin-top: 4px;
-  margin-bottom: 8px;
+  margin-top: 2px;
+  margin-bottom: 6px;
+  font-family: var(--font-heading);
   font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.approval-content p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
 }
 
 .approval-content code {
   display: inline-block;
   margin-top: 8px;
-  padding: 6px 10px;
+  padding: 6px 12px;
   border-radius: 10px;
-  background: rgba(28, 36, 48, 0.08);
+  background: rgba(28, 36, 48, 0.05);
   font-family: var(--font-mono);
   font-size: 12px;
+  color: var(--ink-light);
 }
 
 .approval-actions {
   display: flex;
   gap: 10px;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .approval-actions button {
-  padding: 10px 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 20px;
   border: none;
-  border-radius: 999px;
+  border-radius: 14px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
 }
 
 .approval-actions button:first-child {
-  background: var(--accent-orange);
+  background: linear-gradient(135deg, var(--accent-orange), #ee8a3a);
   color: white;
 }
 
+.approval-actions button:first-child:hover {
+  background: #EA580C;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(218, 106, 30, 0.2);
+}
+
 .approval-actions button.secondary {
-  background: rgba(28, 36, 48, 0.12);
+  background: rgba(28, 36, 48, 0.06);
   color: var(--ink);
 }
 
+.approval-actions button.secondary:hover {
+  background: rgba(28, 36, 48, 0.12);
+}
+
 .approval-actions button:disabled {
-  opacity: 0.6;
-  cursor: wait;
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
 }
 
 /* Composer */
 .composer-wrapper {
   display: flex;
-  gap: 16px;
-  padding: 20px 34px 30px;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  padding: 20px clamp(24px, 4vw, 56px) 30px;
   background: linear-gradient(180deg, rgba(243, 240, 234, 0.12), rgba(255, 255, 255, 0.68));
   border-top: 1px solid rgba(53, 62, 72, 0.05);
   position: sticky;
@@ -1571,19 +2186,224 @@ body {
   backdrop-filter: blur(18px);
 }
 
+.composer-row {
+  flex: 0 0 100%;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  width: min(1280px, 100%);
+  margin: 0 auto;
+  min-width: 0;
+}
+
+.composer-side-tools {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.chat-file-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  width: 56px;
+  min-width: 56px;
+  height: 56px;
+  padding: 0;
+  border-radius: 18px;
+  border: 1px solid rgba(31, 111, 120, 0.14);
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text-secondary);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.chat-file-toggle:hover,
+.chat-file-toggle.open {
+  border-color: rgba(31, 111, 120, 0.24);
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.toggle-icon {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--accent);
+  background: rgba(31, 111, 120, 0.1);
+}
+
+.toggle-count {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  background: var(--accent-orange);
+  color: white;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1;
+  text-align: center;
+  box-shadow: 0 8px 16px rgba(218, 106, 30, 0.22);
+}
+
+.toggle-chevron {
+  display: none;
+}
+
+.chat-file-strip {
+  flex: 0 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: min(1280px, 100%);
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding-left: 66px;
+}
+
+.chat-file-chip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 280px;
+  min-height: 46px;
+  padding: 8px 10px;
+  border-radius: 16px;
+  border: 1px solid rgba(53, 62, 72, 0.1);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.05);
+}
+
+.chat-file-chip.indexed {
+  border-color: rgba(31, 111, 120, 0.2);
+}
+
+.chat-file-chip.failed {
+  border-color: rgba(179, 58, 36, 0.22);
+  background: rgba(255, 247, 244, 0.9);
+}
+
+.file-chip-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: rgba(31, 111, 120, 0.1);
+  flex: 0 0 auto;
+}
+
+.chat-file-chip.failed .file-chip-icon {
+  color: #b33a24;
+  background: rgba(179, 58, 36, 0.1);
+}
+
+.file-chip-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.file-chip-copy strong,
+.file-chip-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-chip-copy strong {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.file-chip-copy span {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.file-chip-remove {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.file-chip-remove:hover:not(:disabled) {
+  background: rgba(53, 62, 72, 0.08);
+  color: var(--text-primary);
+}
+
+.file-chip-remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .composer {
   flex: 1;
+  min-width: 0;
   position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
   padding: 10px;
   border-radius: 28px;
   background: rgba(255, 255, 255, 0.74);
   border: 1px solid rgba(255, 255, 255, 0.7);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 14px 30px rgba(15, 23, 42, 0.05);
-  max-width: 980px;
+  max-width: none;
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.attach-btn {
+  width: 46px;
+  height: 46px;
+  border: none;
+  border-radius: 17px;
+  display: grid;
+  place-items: center;
+  background: rgba(31, 111, 120, 0.1);
+  color: var(--accent);
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: all 0.18s ease;
+}
+
+.attach-btn:hover:not(:disabled) {
+  background: rgba(31, 111, 120, 0.16);
+  transform: translateY(-1px);
+}
+
+.attach-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .composer textarea {
   width: 100%;
+  flex: 1;
   resize: none;
   padding: 14px 16px;
   border-radius: 20px;
@@ -1626,6 +2446,15 @@ body {
 .send-btn:hover {
   background: #EA580C;
   transform: translateY(-1px);
+}
+
+.stop-btn {
+  background: linear-gradient(135deg, #b33a24, #cc4a2f);
+  box-shadow: 0 12px 24px rgba(179, 58, 36, 0.22);
+}
+
+.stop-btn:hover {
+  background: #a5321f;
 }
 
 .send-btn:disabled {
@@ -1719,6 +2548,18 @@ body {
     padding: 16px 24px 24px;
   }
 
+  .approval-banner {
+    margin: 0 24px 12px;
+    max-width: none;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+  }
+
+  .approval-actions {
+    justify-content: flex-end;
+  }
+
   .header {
     flex-direction: column;
     gap: 16px;
@@ -1800,7 +2641,27 @@ body {
 
   .composer-wrapper {
     padding: 14px 16px 18px;
-    flex-direction: column;
+  }
+
+  .composer-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: end;
+  }
+
+  .composer-side-tools {
+    flex-direction: row;
+  }
+
+  .chat-file-toggle {
+    width: 54px;
+    min-width: 54px;
+    height: 54px;
+  }
+
+  .chat-file-strip {
+    width: 100%;
+    padding-left: 0;
   }
 
   .composer {
@@ -1814,6 +2675,7 @@ body {
   }
 
   .send-btn {
+    grid-column: 1 / -1;
     width: 100%;
     align-self: stretch;
   }

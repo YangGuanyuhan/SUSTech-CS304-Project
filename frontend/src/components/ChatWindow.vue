@@ -69,30 +69,25 @@
         <div class="toolbar-actions">
           <label class="workspace-field">
             <span>Workspace Root</span>
-            <input
+            <WorkspaceDirectoryPicker
               v-model="activeConversation.workspaceRoot"
-              type="text"
-              placeholder="/path/to/your/project"
+              @error="handleWorkspacePickerError"
             />
           </label>
           <button :disabled="loading" @click="loadCourses">Load Blackboard Courses</button>
         </div>
       </header>
 
-      <div class="messages">
+      <div ref="messagesViewport" class="messages">
         <article
           v-for="message in activeConversation.messages"
           :key="message.id"
-          :class="['message', message.role]"
+          :class="['message', message.role, { streaming: message.isStreaming }]"
         >
           <div class="meta">
             <span class="role">{{ message.role }}</span>
             <span v-if="message.elapsedLabel" class="elapsed">{{ message.elapsedLabel }}</span>
           </div>
-          <div
-            class="markdown-body"
-            v-html="renderMarkdown(message.content)"
-          />
           <div v-if="message.toolEvents?.length" class="tool-events">
             <details
               v-for="(toolEvent, index) in message.toolEvents"
@@ -115,6 +110,25 @@
               </div>
             </details>
           </div>
+          <div v-show="message.thinking" class="thinking-block">
+            <div class="thinking-summary" @click="toggleThinking(message.id)">
+              <span class="thinking-label">思考过程</span>
+              <span class="thinking-toggle-icon">{{ thinkingExpanded[message.id] ? '▲' : '▼' }}</span>
+            </div>
+            <div v-show="thinkingExpanded[message.id]" class="markdown-body thinking-content" v-html="renderMarkdown(message.thinking)" />
+          </div>
+          <div
+            v-if="message.content && message.isStreaming"
+            class="streaming-body"
+          >
+            {{ message.content }}
+          </div>
+          <div
+            v-else-if="message.content"
+            class="markdown-body"
+            v-html="renderMarkdown(message.content)"
+          />
+          <span v-if="message.isStreaming" class="stream-cursor" aria-hidden="true"></span>
           <template
             v-for="(toolEvent, index) in message.toolEvents?.filter((event) => event.tool_name === 'create_quiz') || []"
             :key="`${message.id}-quiz-${index}`"
@@ -149,7 +163,15 @@
           placeholder="Ask about courses, search, or saved memory..."
         />
         <div class="actions">
-          <button :disabled="loading || !draft.trim()" type="submit">
+          <button
+            v-if="chatStreaming"
+            class="stop-btn"
+            type="button"
+            @click="stopActiveChat"
+          >
+            Stop
+          </button>
+          <button v-else :disabled="loading || !draft.trim()" type="submit">
             {{ loading ? "Streaming..." : "Send" }}
           </button>
         </div>
@@ -160,9 +182,14 @@
 
 <script setup>
 import MarkdownIt from "markdown-it";
-import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import QuizPanel from "./QuizPanel.vue";
-import { getCourses, streamApprovalDecision, streamChat } from "../api/client";
+import WorkspaceDirectoryPicker from "./WorkspaceDirectoryPicker.vue";
+import {
+  getCourses,
+  streamApprovalDecision,
+  streamChat
+} from "../api/client";
 
 const CHAT_CONVERSATIONS_KEY = "spa-conversations";
 const ACTIVE_CONVERSATION_KEY = "spa-active-conversation-id";
@@ -186,7 +213,9 @@ function makeConversation(title = "New Conversation") {
         id: crypto.randomUUID(),
         role: "assistant",
         content: "UI is connected to the backend contract. Start here or continue a previous session.",
+        thinking: "",
         elapsedLabel: "",
+        isStreaming: false,
         toolEvents: []
       })
     ]
@@ -207,6 +236,7 @@ function restoreConversations() {
         messages: (conversation.messages || []).map((message) =>
           reactive({
             ...message,
+            isStreaming: false,
             toolEvents: message.toolEvents || []
           })
         )
@@ -225,7 +255,15 @@ const editingConversationId = ref("");
 const editingTitle = ref("");
 const draft = ref("Show my Blackboard courses");
 const loading = ref(false);
+const chatStreaming = ref(false);
+const messagesViewport = ref(null);
+const thinkingExpanded = reactive({});
+function toggleThinking(id) {
+  thinkingExpanded[id] = !thinkingExpanded[id];
+}
 let activeTimer = null;
+let activeChatAbortController = null;
+let chatStopRequested = false;
 
 const sortedConversations = computed(() =>
   [...conversations.value].sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0))
@@ -248,6 +286,14 @@ function persistConversations() {
   window.localStorage.setItem(ACTIVE_CONVERSATION_KEY, activeConversationId.value);
 }
 
+function scrollMessagesToBottom() {
+  nextTick(() => {
+    const viewport = messagesViewport.value;
+    if (!viewport) return;
+    viewport.scrollTop = viewport.scrollHeight;
+  });
+}
+
 function renderMarkdown(content) {
   return markdown.render(content || "");
 }
@@ -268,6 +314,7 @@ function formatElapsed(ms) {
 }
 
 function formatToolStatus(status) {
+  if (status === "running") return "Running";
   if (status === "completed") return "Completed";
   if (status === "failed") return "Failed";
   if (status === "denied") return "Denied";
@@ -368,10 +415,16 @@ function appendMessage(role, content) {
       role,
       content,
       elapsedLabel: "",
+      isStreaming: false,
       toolEvents: []
     })
   );
   activeConversation.value.updatedAt = Date.now();
+  scrollMessagesToBottom();
+}
+
+function handleWorkspacePickerError(error) {
+  appendMessage("assistant", `Workspace picker failed: ${error.message}`);
 }
 
 async function loadCourses() {
@@ -394,23 +447,29 @@ async function loadCourses() {
 }
 
 async function submitMessage() {
+  if (loading.value) return;
+
   const content = draft.value.trim();
   if (!content) return;
 
   const conversation = activeConversation.value;
+  const waitingMessage = "Waiting for model response...";
   conversation.messages.push(
     reactive({
       id: crypto.randomUUID(),
       role: "user",
       content,
-      elapsedLabel: ""
+      elapsedLabel: "",
+      isStreaming: false
     })
   );
   const assistantMessage = reactive({
     id: crypto.randomUUID(),
     role: "assistant",
-    content: "Waiting for model response...",
+    content: waitingMessage,
+    thinking: "",
     elapsedLabel: "",
+    isStreaming: true,
     toolEvents: []
   });
   conversation.messages.push(assistantMessage);
@@ -419,6 +478,10 @@ async function submitMessage() {
   updateConversationTitle(conversation);
   draft.value = "";
   loading.value = true;
+  chatStreaming.value = true;
+  chatStopRequested = false;
+  activeChatAbortController = new AbortController();
+  scrollMessagesToBottom();
   const stopTimer = startTimer(assistantMessage);
 
   try {
@@ -430,29 +493,63 @@ async function submitMessage() {
       },
       {
         onChunk(chunk) {
-          if (assistantMessage.content === "Waiting for model response...") {
+          if (assistantMessage.content === waitingMessage) {
             assistantMessage.content = "";
           }
           assistantMessage.content += chunk;
+          scrollMessagesToBottom();
+        },
+        onReasoning(chunk) {
+          assistantMessage.thinking = (assistantMessage.thinking || "") + chunk;
+          scrollMessagesToBottom();
+        },
+        onToolEvents(toolEvents) {
+          assistantMessage.toolEvents = toolEvents || assistantMessage.toolEvents || [];
+          scrollMessagesToBottom();
         },
         onApprovalRequired(approval) {
           assistantMessage.content = "Tool invocation is waiting for your approval.";
+          assistantMessage.isStreaming = false;
           assistantMessage.toolEvents = approval.tool_events || [];
           conversation.pendingApproval = approval;
+          scrollMessagesToBottom();
         },
         onDone(payload) {
-          assistantMessage.content = assistantMessage.content.trim();
+          const finalContent = assistantMessage.content.trim();
+          assistantMessage.content = finalContent === waitingMessage ? "" : finalContent;
+          assistantMessage.thinking = (assistantMessage.thinking || "").trim();
+          assistantMessage.isStreaming = false;
           assistantMessage.toolEvents = payload.tool_events || assistantMessage.toolEvents || [];
+          scrollMessagesToBottom();
         }
+      },
+      {
+        signal: activeChatAbortController.signal
       }
     );
   } catch (error) {
-    assistantMessage.content = `Chat failed: ${error.message}`;
+    const aborted = chatStopRequested || error?.name === "AbortError";
+    if (aborted) {
+      const partial = assistantMessage.content === waitingMessage ? "" : assistantMessage.content.trim();
+      assistantMessage.content = partial ? `${partial}\n\n[Stopped generating]` : "Generation stopped.";
+    } else {
+      assistantMessage.content = `Chat failed: ${error.message}`;
+    }
+    assistantMessage.isStreaming = false;
   } finally {
     conversation.updatedAt = Date.now();
     stopTimer();
+    activeChatAbortController = null;
+    chatStopRequested = false;
+    chatStreaming.value = false;
     loading.value = false;
   }
+}
+
+function stopActiveChat() {
+  if (!chatStreaming.value || !activeChatAbortController) return;
+  chatStopRequested = true;
+  activeChatAbortController.abort();
 }
 
 async function resolveApproval(approved) {
@@ -464,13 +561,16 @@ async function resolveApproval(approved) {
     id: crypto.randomUUID(),
     role: "assistant",
     content: approved ? "Executing approved action..." : "Approval denied. Letting the agent continue...",
+    thinking: "",
     elapsedLabel: "",
+    isStreaming: true,
     toolEvents: []
   });
   conversation.messages.push(assistantMessage);
   conversation.pendingApproval = null;
   conversation.updatedAt = Date.now();
   loading.value = true;
+  scrollMessagesToBottom();
   const stopTimer = startTimer(assistantMessage);
 
   try {
@@ -489,20 +589,35 @@ async function resolveApproval(approved) {
             assistantMessage.content = "";
           }
           assistantMessage.content += chunk;
+          scrollMessagesToBottom();
+        },
+        onReasoning(chunk) {
+          assistantMessage.thinking = (assistantMessage.thinking || "") + chunk;
+          scrollMessagesToBottom();
+        },
+        onToolEvents(toolEvents) {
+          assistantMessage.toolEvents = toolEvents || assistantMessage.toolEvents || [];
+          scrollMessagesToBottom();
         },
         onApprovalRequired(nextApproval) {
           assistantMessage.content = "Another action is waiting for your approval.";
+          assistantMessage.isStreaming = false;
           assistantMessage.toolEvents = nextApproval.tool_events || [];
           conversation.pendingApproval = nextApproval;
+          scrollMessagesToBottom();
         },
         onDone(payload) {
           assistantMessage.content = assistantMessage.content.trim();
+          assistantMessage.thinking = (assistantMessage.thinking || "").trim();
+          assistantMessage.isStreaming = false;
           assistantMessage.toolEvents = payload.tool_events || assistantMessage.toolEvents || [];
+          scrollMessagesToBottom();
         }
       }
     );
   } catch (error) {
     assistantMessage.content = `Approval flow failed: ${error.message}`;
+    assistantMessage.isStreaming = false;
   } finally {
     conversation.updatedAt = Date.now();
     stopTimer();
@@ -520,6 +635,10 @@ watch(
 
 onBeforeUnmount(() => {
   if (activeTimer) window.clearInterval(activeTimer);
+  if (activeChatAbortController) {
+    activeChatAbortController.abort();
+    activeChatAbortController = null;
+  }
 });
 </script>
 
@@ -689,14 +808,6 @@ onBeforeUnmount(() => {
   color: var(--muted);
 }
 
-.workspace-field input {
-  border-radius: 14px;
-  border: 1px solid rgba(28, 36, 48, 0.12);
-  padding: 12px 14px;
-  background: rgba(255, 255, 255, 0.88);
-  font: inherit;
-}
-
 .toolbar h2 {
   margin: 0;
   font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
@@ -778,6 +889,10 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.75);
 }
 
+.message.streaming {
+  box-shadow: inset 0 0 0 1px rgba(31, 111, 120, 0.16);
+}
+
 .message.user {
   background: rgba(31, 111, 120, 0.12);
 }
@@ -807,6 +922,23 @@ onBeforeUnmount(() => {
 .markdown-body {
   color: var(--ink);
   line-height: 1.65;
+}
+
+.streaming-body {
+  color: var(--ink);
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.stream-cursor {
+  display: inline-block;
+  width: 0.68ch;
+  height: 1.05em;
+  margin-top: 6px;
+  border-radius: 3px;
+  background: var(--accent);
+  animation: stream-blink 1s steps(1) infinite;
 }
 
 .markdown-body :deep(p) {
@@ -893,6 +1025,11 @@ onBeforeUnmount(() => {
   color: #15803d;
 }
 
+.tool-event-status.running {
+  background: rgba(59, 130, 246, 0.14);
+  color: #1d4ed8;
+}
+
 .tool-event-status.failed,
 .tool-event-status.denied {
   background: rgba(239, 68, 68, 0.12);
@@ -927,6 +1064,42 @@ onBeforeUnmount(() => {
   line-height: 1.55;
 }
 
+.thinking-block {
+  margin: 8px 0;
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.04), rgba(99, 102, 241, 0.02));
+  overflow: hidden;
+}
+
+.thinking-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  background: rgba(139, 92, 246, 0.06);
+  user-select: none;
+}
+
+.thinking-toggle-icon {
+  font-size: 10px;
+  color: #7c3aed;
+  opacity: 0.7;
+}
+
+.thinking-label {
+  font-weight: 700;
+  font-size: 13px;
+  color: #7c3aed;
+}
+
+.thinking-content {
+  padding: 12px 14px;
+  border-left: 3px solid rgba(139, 92, 246, 0.18);
+}
+
 .composer textarea {
   width: 100%;
   box-sizing: border-box;
@@ -941,7 +1114,24 @@ onBeforeUnmount(() => {
 .actions {
   display: flex;
   justify-content: flex-end;
+  gap: 12px;
   margin-top: 12px;
+}
+
+.stop-btn {
+  background: #b42318;
+}
+
+@keyframes stream-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+
+  50%,
+  100% {
+    opacity: 0;
+  }
 }
 
 @media (max-width: 980px) {

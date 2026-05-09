@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
+import os
+import string
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
@@ -21,28 +26,37 @@ from backend.api.schemas import (
     ChatRequest,
     EmailConfirmRequest,
     EmailDraftRequest,
+    EmailProfileRequest,
+    EmailSettingsRequest,
     LLMConnectionTestRequest,
     LLMProfileRequest,
     LLMSettingsRequest,
     MemoryDeleteByQueryRequest,
     QuizAttemptRequest,
+    RAGIndexFolderRequest,
+    RAGQueryRequest,
+    RAGSettingsRequest,
 )
 from backend.config import get_settings
 from backend.db.database import get_db_session
 from backend.models.calendar import CalendarEventCreate, CalendarEventMove, CalendarEventUpdate
 from backend.models.common import ApiResponse
-from backend.models.settings import BlackboardProfile, LLMProfile
+from backend.models.rag import RAGDirectorySettings
+from backend.models.settings import BlackboardProfile, EmailProfile, LLMProfile
 from backend.services.approval_service import approval_service
 from backend.services.blackboard_file_service import BBContent, BBFileManager
 from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
 from backend.services.calendar_service import CalendarService
+from backend.services.chat_file_service import CHAT_FILE_CONTEXT_CHUNK_LIMIT, ChatFileService
 from backend.services.database_insights_service import DatabaseInsightsService
 from backend.services.email_service import EmailService, UnconfirmedSendError
 from backend.services.llm_service import LLMConnectionError, LLMService
 from backend.services.memory_service import MemoryService
 from backend.services.quiz_service import QuizService
+from backend.services.rag_service import RAGProviderError, RAGService, RAGServiceError
 from backend.services.runtime_settings import (
     RuntimeBlackboardUpdate,
+    RuntimeEmailUpdate,
     RuntimeLLMUpdate,
     runtime_settings,
 )
@@ -51,13 +65,111 @@ from backend.services.settings_service import SettingsService
 router = APIRouter(prefix="/api")
 
 
+def _workspace_system_roots() -> list[Path]:
+    candidates: list[Path] = []
+    if os.name == "nt":
+        candidates.extend(Path(f"{letter}:/") for letter in string.ascii_uppercase)
+    else:
+        candidates.append(Path("/"))
+
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.expanduser().resolve(strict=True)
+        except OSError:
+            continue
+        key = os.path.normcase(str(resolved))
+        if resolved.is_dir() and key not in seen:
+            roots.append(resolved)
+            seen.add(key)
+    return roots
+
+
+def _workspace_shortcuts() -> list[dict[str, str]]:
+    shortcuts = [
+        ("Home", Path.home()),
+        ("Project", Path.cwd()),
+    ]
+    items: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for name, shortcut in shortcuts:
+        try:
+            resolved = shortcut.expanduser().resolve(strict=True)
+        except OSError:
+            continue
+        key = os.path.normcase(str(resolved))
+        if resolved.is_dir() and key not in seen:
+            items.append({"name": name, "path": str(resolved)})
+            seen.add(key)
+    return items
+
+
+def _directory_payload(path: str | None = None) -> dict[str, object]:
+    requested = Path(path).expanduser() if path else Path.home()
+    try:
+        current = requested.resolve(strict=True)
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail=f"Directory not found: {requested}") from exc
+    if not current.is_dir():
+        raise HTTPException(status_code=400, detail=f"Path is not a directory: {current}")
+
+    entries: list[dict[str, str]] = []
+    try:
+        for child in current.iterdir():
+            try:
+                if child.is_dir():
+                    entries.append({"name": child.name, "path": str(child.resolve(strict=True))})
+            except OSError:
+                continue
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=f"Permission denied: {current}") from exc
+
+    entries.sort(key=lambda item: item["name"].lower())
+    parent = current.parent if current.parent != current else None
+    return {
+        "path": str(current),
+        "parent": str(parent) if parent else None,
+        "shortcuts": _workspace_shortcuts(),
+        "roots": [{"name": str(root), "path": str(root)} for root in _workspace_system_roots()],
+        "entries": entries,
+    }
+
+
 def _chunk_text(text: str, chunk_size: int = 2000) -> list[str]:
     if not text:
         return []
     return [text[index : index + chunk_size] for index in range(0, len(text), chunk_size)]
 
 
-async def _stream_agent_result(result: dict[str, object], *, session_id: str):
+def _serialize_tool_event(event: object) -> dict[str, object]:
+    if hasattr(event, "model_dump"):
+        return event.model_dump(mode="json")
+    if isinstance(event, dict):
+        return event
+    return {"tool_name": "unknown", "arguments": {}, "status": "failed", "output": str(event)}
+
+
+def _serialize_tool_events(tool_events: object) -> list[dict[str, object]]:
+    if not isinstance(tool_events, list):
+        return []
+    return [_serialize_tool_event(event) for event in tool_events]
+
+
+async def _stream_agent_result(
+    result: dict[str, object],
+    *,
+    session_id: str,
+    emit_initial_tool_events: bool = True,
+    emit_response: bool = True,
+):
+    tool_events = result.get("tool_events", [])
+    if emit_initial_tool_events and tool_events:
+        yield {
+            "event": "tool_events",
+            "data": json.dumps({"tool_events": tool_events}),
+        }
+
     approval_request = result.get("approval_request")
     if approval_request is not None:
         yield {
@@ -65,7 +177,7 @@ async def _stream_agent_result(result: dict[str, object], *, session_id: str):
             "data": json.dumps(
                 {
                     **approval_request,
-                    "tool_events": result.get("tool_events", []),
+                    "tool_events": tool_events,
                 }
             ),
         }
@@ -75,14 +187,15 @@ async def _stream_agent_result(result: dict[str, object], *, session_id: str):
                 {
                     "session_id": session_id,
                     "status": "approval_required",
-                    "tool_events": result.get("tool_events", []),
+                    "tool_events": tool_events,
                 }
             ),
         }
         return
 
-    # Return full response at once
-    yield {"event": "message", "data": json.dumps({"chunk": str(result.get("response", ""))})}
+    if emit_response:
+        for chunk in _chunk_text(str(result.get("response", ""))):
+            yield {"event": "message", "data": json.dumps({"chunk": chunk})}
     yield {
         "event": "done",
         "data": json.dumps(
@@ -90,15 +203,90 @@ async def _stream_agent_result(result: dict[str, object], *, session_id: str):
                 "session_id": session_id,
                 "status": "completed",
                 "tools_used": result.get("tools_used", []),
-                "tool_events": result.get("tool_events", []),
+                "tool_events": tool_events,
             }
         ),
     }
 
 
+async def _stream_agent_execution(*, session_id: str, execute):
+    event_queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+
+    async def on_tool_events(tool_events: list[object]) -> None:
+        await event_queue.put(
+            {
+                "event": "tool_events",
+                "data": json.dumps({"tool_events": _serialize_tool_events(tool_events)}),
+            }
+        )
+        # Yield once so the SSE loop can flush "running" updates before heavy tool work continues.
+        await asyncio.sleep(0)
+
+    async def on_response_chunk(chunk: str) -> None:
+        if not chunk:
+            return
+        await event_queue.put(
+            {
+                "event": "message",
+                "data": json.dumps({"chunk": chunk}),
+            }
+        )
+        # Yield once so the SSE loop can flush "running" updates before heavy tool work continues.
+        await asyncio.sleep(0)
+
+    async def on_thinking_chunk(chunk: str) -> None:
+        if not chunk:
+            return
+        await event_queue.put(
+            {
+                "event": "reasoning",
+                "data": json.dumps({"chunk": chunk}),
+            }
+        )
+        await asyncio.sleep(0)
+
+    thinking_handler = (
+        on_thinking_chunk if runtime_settings.get_llm_config().enable_reasoning else None
+    )
+    run_task = asyncio.create_task(execute(on_tool_events, on_response_chunk, thinking_handler))
+    response_streamed = False
+    try:
+        while True:
+            if run_task.done() and event_queue.empty():
+                break
+            try:
+                event = await asyncio.wait_for(event_queue.get(), timeout=0.1)
+            except TimeoutError:
+                continue
+            if event.get("event") == "message":
+                response_streamed = True
+            yield event
+
+        result = await run_task
+        async for event in _stream_agent_result(
+            result,
+            session_id=session_id,
+            emit_initial_tool_events=False,
+            emit_response=not response_streamed,
+        ):
+            yield event
+    finally:
+        if not run_task.done():
+            run_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                _ = await run_task
+
+
 @router.get("/health", response_model=ApiResponse[dict[str, str]])
 async def health() -> ApiResponse[dict[str, str]]:
     return ApiResponse(success=True, data={"status": "ok"})
+
+
+@router.get("/workspace/directories", response_model=ApiResponse[dict[str, object]])
+async def list_workspace_directories(
+    path: str | None = Query(default=None),
+) -> ApiResponse[dict[str, object]]:
+    return ApiResponse(success=True, data=_directory_payload(path))
 
 
 @router.get("/settings/llm", response_model=ApiResponse[object])
@@ -125,6 +313,7 @@ async def test_llm_settings(request: LLMConnectionTestRequest) -> ApiResponse[ob
                 model=request.model or previous.model,
                 base_url=request.base_url if request.base_url is not None else previous.base_url,
                 api_key=request.api_key,
+                enable_reasoning=request.enable_reasoning,
             )
         )
     try:
@@ -139,6 +328,7 @@ async def test_llm_settings(request: LLMConnectionTestRequest) -> ApiResponse[ob
                 base_url=previous.base_url,
                 api_key=previous_secret,
                 replace_api_key=True,
+                enable_reasoning=previous.enable_reasoning,
             )
         )
     return ApiResponse(success=True, data=result)
@@ -161,6 +351,7 @@ async def save_llm_profile(
             provider=request.provider,
             model=request.model,
             base_url=request.base_url,
+            enable_reasoning=request.enable_reasoning,
         ),
         api_key=request.api_key,
     )
@@ -295,6 +486,109 @@ async def test_blackboard_settings(request: BlackboardSettingsRequest) -> ApiRes
         return ApiResponse(success=False, data={"error": str(e)})
 
 
+# Email Profile Settings
+@router.get("/settings/email/profiles", response_model=ApiResponse[object])
+async def list_email_profiles(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    profiles = await SettingsService(session).list_email_profiles()
+    return ApiResponse(success=True, data=profiles)
+
+
+@router.put("/settings/email/profiles", response_model=ApiResponse[object])
+async def save_email_profile(
+    request: EmailProfileRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    profile = await SettingsService(session).save_email_profile(
+        EmailProfile(
+            name=request.name,
+            smtp_host=request.smtp_host,
+            smtp_port=request.smtp_port,
+            smtp_user=request.smtp_user,
+            smtp_encryption=request.smtp_encryption,
+            imap_host=request.imap_host,
+            imap_port=request.imap_port,
+        ),
+        password=request.password,
+    )
+    return ApiResponse(success=True, data=profile)
+
+
+@router.delete("/settings/email/profiles/{name}", response_model=ApiResponse[dict[str, bool]])
+async def delete_email_profile(
+    name: str, session: Session = Depends(get_db_session)
+) -> ApiResponse[dict[str, bool]]:
+    deleted = await SettingsService(session).delete_email_profile(name)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return ApiResponse(success=True, data={"deleted": True})
+
+
+@router.post("/settings/email/profiles/{name}/apply", response_model=ApiResponse[object])
+async def apply_email_profile(
+    name: str, session: Session = Depends(get_db_session)
+) -> ApiResponse[object]:
+    profile = await SettingsService(session).apply_email_profile(name)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return ApiResponse(success=True, data=profile)
+
+
+# Email Settings
+@router.get("/settings/email", response_model=ApiResponse[object])
+async def get_email_settings() -> ApiResponse[object]:
+    return ApiResponse(success=True, data=runtime_settings.get_email_config())
+
+
+@router.put("/settings/email", response_model=ApiResponse[object])
+async def update_email_settings(request: EmailSettingsRequest) -> ApiResponse[object]:
+    config = runtime_settings.update_email_config(
+        RuntimeEmailUpdate.model_validate(request.model_dump())
+    )
+    return ApiResponse(success=True, data=config)
+
+
+@router.post("/settings/email/test", response_model=ApiResponse[object])
+async def test_email_settings(request: EmailSettingsRequest) -> ApiResponse[object]:
+    """Test email SMTP connection and authentication without sending a real email."""
+    import smtplib
+
+    # Use request values, falling back to runtime config
+    email_config = runtime_settings.get_email_config()
+    smtp_host = request.smtp_host or email_config.smtp_host
+    smtp_port = request.smtp_port or email_config.smtp_port
+    smtp_user = request.smtp_user or email_config.smtp_user
+    smtp_encryption = request.smtp_encryption or email_config.smtp_encryption
+
+    if request.replace_password and request.password:
+        password = request.password
+    elif request.password:
+        password = request.password
+    else:
+        password = runtime_settings.get_secret_email_password()
+
+    if not smtp_user or not password:
+        return ApiResponse(
+            success=False,
+            data={"error": "Missing credentials - username or password not configured"},
+        )
+
+    try:
+        if smtp_encryption == "ssl":
+            server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=15)
+        else:
+            server = smtplib.SMTP(smtp_host, smtp_port, timeout=15)
+            if smtp_encryption == "tls":
+                server.starttls()
+        server.login(smtp_user, password)
+        server.quit()
+        return ApiResponse(
+            success=True,
+            data={"message": "SMTP connection and authentication successful (no email sent)"},
+        )
+    except Exception as e:
+        return ApiResponse(success=False, data={"error": f"Email test failed: {e}"})
+
+
 @router.post("/chat")
 async def chat(
     request: ChatRequest,
@@ -304,8 +598,17 @@ async def chat(
 
     async def event_generator():
         try:
-            result = await agent.run(request.message, request.session_id, request.workspace_root)
-            async for event in _stream_agent_result(result, session_id=request.session_id):
+            async for event in _stream_agent_execution(
+                session_id=request.session_id,
+                execute=lambda on_tool_events, on_response_chunk, on_thinking_chunk: agent.run(
+                    request.message,
+                    request.session_id,
+                    request.workspace_root,
+                    on_tool_events=on_tool_events,
+                    on_response_chunk=on_response_chunk,
+                    on_thinking_chunk=on_thinking_chunk,
+                ),
+            ):
                 yield event
         except Exception as e:
             yield {
@@ -332,9 +635,25 @@ async def handle_chat_approval(
     agent = StudentProductivityAgent(session)
 
     async def event_generator():
-        result = await agent.resume_approval(request.approval_id, approved=request.approved)
-        async for event in _stream_agent_result(result, session_id=request.session_id):
-            yield event
+        try:
+            async for event in _stream_agent_execution(
+                session_id=request.session_id,
+                execute=lambda on_tool_events, on_response_chunk, on_thinking_chunk: (
+                    agent.resume_approval(
+                        request.approval_id,
+                        approved=request.approved,
+                        on_tool_events=on_tool_events,
+                        on_response_chunk=on_response_chunk,
+                        on_thinking_chunk=on_thinking_chunk,
+                    )
+                ),
+            ):
+                yield event
+        except Exception as e:
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": str(e)}),
+            }
 
     return EventSourceResponse(event_generator())
 
@@ -446,6 +765,145 @@ async def sync_blackboard_calendar(
 async def get_database_overview(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
     overview = await DatabaseInsightsService(session).get_overview()
     return ApiResponse(success=True, data=overview)
+
+
+@router.get("/rag/settings", response_model=ApiResponse[object])
+async def get_rag_settings(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    return ApiResponse(success=True, data=RAGService(session).get_directory_settings())
+
+
+@router.put("/rag/settings", response_model=ApiResponse[object])
+async def update_rag_settings(
+    request: RAGSettingsRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    try:
+        settings = RAGService(session).save_directory_settings(
+            RAGDirectorySettings.model_validate(request.model_dump())
+        )
+    except RAGServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=settings)
+
+
+@router.post("/rag/index-folder", response_model=ApiResponse[object])
+async def index_rag_folder(
+    request: RAGIndexFolderRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    service = RAGService(session)
+    try:
+        workspace_root, path = service.resolve_index_scope(
+            path=request.path,
+            workspace_root=request.workspace_root,
+        )
+        directory_settings = service.get_directory_settings()
+        result = await service.index_folder(
+            path,
+            workspace_root=workspace_root,
+            recursive=(
+                request.recursive
+                if request.recursive is not None
+                else directory_settings.recursive_default
+            ),
+            extensions=request.extensions,
+        )
+    except RAGServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RAGProviderError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=result)
+
+
+@router.get("/rag/sources", response_model=ApiResponse[object])
+async def list_rag_sources(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    return ApiResponse(success=True, data=RAGService(session).list_sources())
+
+
+@router.get("/rag/status", response_model=ApiResponse[object])
+async def get_rag_status(session: Session = Depends(get_db_session)) -> ApiResponse[object]:
+    return ApiResponse(success=True, data=RAGService(session).status())
+
+
+@router.post("/rag/session-files/upload", response_model=ApiResponse[object])
+async def upload_rag_session_files(
+    session_id: str = Form(...),
+    files: list[UploadFile] = File(...),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    try:
+        result = await ChatFileService(session).upload_and_index(
+            session_id=session_id,
+            files=files,
+        )
+    except RAGServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RAGProviderError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=result)
+
+
+@router.get("/rag/session-files", response_model=ApiResponse[object])
+async def list_rag_session_files(
+    session_id: str = Query(...),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    try:
+        sources = ChatFileService(session).list_files(session_id)
+    except RAGServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=sources)
+
+
+@router.delete("/rag/session-files/{source_id}", response_model=ApiResponse[dict[str, bool]])
+async def delete_rag_session_file(
+    source_id: str,
+    session_id: str = Query(...),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[dict[str, bool]]:
+    try:
+        deleted = ChatFileService(session).delete_file(session_id=session_id, source_id=source_id)
+    except RAGServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Chat file source not found")
+    return ApiResponse(success=True, data={"deleted": True})
+
+
+@router.post("/rag/query", response_model=ApiResponse[object])
+async def query_rag(
+    request: RAGQueryRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    try:
+        owner_ids = (
+            ChatFileService(session).query_owner_ids(request.session_id)
+            if request.session_id
+            else None
+        )
+        result = await RAGService(session).query(
+            request.query,
+            top_k=request.top_k,
+            owner_ids=owner_ids,
+            prefer_owner_context=bool(request.session_id),
+            context_limit=CHAT_FILE_CONTEXT_CHUNK_LIMIT,
+        )
+    except RAGServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RAGProviderError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=result)
+
+
+@router.delete("/rag/sources/{source_id}", response_model=ApiResponse[dict[str, bool]])
+async def delete_rag_source(
+    source_id: str,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[dict[str, bool]]:
+    deleted = RAGService(session).delete_source(source_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="RAG source not found")
+    return ApiResponse(success=True, data={"deleted": True})
 
 
 @router.get("/memory", response_model=ApiResponse[object])
