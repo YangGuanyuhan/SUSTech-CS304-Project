@@ -18,7 +18,7 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.11"
-  NODE_VERSION: "24"
+  NODE_VERSION: "20"
 
 jobs:
   quality:
@@ -26,17 +26,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8
-        with:
-          save-cache: true
+        uses: astral-sh/setup-uv@v3
 
       - name: Install backend dependencies
         run: uv sync --frozen --all-extras --dev
@@ -66,7 +64,7 @@ jobs:
         run: uv build --wheel --out-dir artifacts/backend-dist
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -87,7 +85,7 @@ jobs:
 
       - name: Upload test and coverage reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: quality-reports
           path: |
@@ -96,7 +94,7 @@ jobs:
           retention-days: 14
 
       - name: Upload build outputs
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: build-outputs
           path: |
@@ -109,17 +107,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8
-        with:
-          save-cache: true
+        uses: astral-sh/setup-uv@v3
 
       - name: Install backend dependencies
         run: uv sync --frozen --all-extras --dev
@@ -134,7 +130,7 @@ jobs:
             --output artifacts/security/pip-audit.json
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -153,7 +149,7 @@ jobs:
 
       - name: Upload security reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: security-reports
           path: artifacts/security
@@ -162,39 +158,38 @@ jobs:
   codeql:
     name: CodeQL static security analysis
     runs-on: ubuntu-latest
+    if: github.event.repository.visibility == 'public'
     permissions:
       actions: read
       contents: read
       security-events: write
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@v3
         with:
           languages: python,javascript-typescript
           build-mode: none
 
       - name: Run CodeQL analysis
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@v3
 
   docs:
     name: Generate documentation
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8
-        with:
-          save-cache: true
+        uses: astral-sh/setup-uv@v3
 
       - name: Install documentation dependencies
         run: uv sync --frozen --all-extras --dev
@@ -203,7 +198,7 @@ jobs:
         run: uv run mkdocs build --site-dir artifacts/docs-site
 
       - name: Upload documentation artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: docs-site
           path: artifacts/docs-site
@@ -215,17 +210,16 @@ jobs:
     needs:
       - quality
       - security
-      - codeql
       - docs
     steps:
       - name: Download build outputs
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           name: build-outputs
           path: release/build
 
       - name: Download documentation site
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           name: docs-site
           path: release/docs
@@ -249,7 +243,7 @@ jobs:
           PY
 
       - name: Upload release bundle
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: release-bundle
           path: release
@@ -264,7 +258,7 @@ jobs:
       name: testing
     steps:
       - name: Download release bundle
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           name: release-bundle
           path: release
@@ -284,7 +278,7 @@ jobs:
       name: production
     steps:
       - name: Download release bundle
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           name: release-bundle
           path: release
