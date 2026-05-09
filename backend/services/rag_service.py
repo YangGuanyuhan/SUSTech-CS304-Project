@@ -55,7 +55,8 @@ class RAGProviderError(RuntimeError):
 class RAGProvider(Protocol):
     name: str
 
-    async def index_pdf(self, file_path: Path, *, output_dir: Path, doc_id: str) -> None: ...
+    async def index_pdf(self, file_path: Path, *, output_dir: Path, doc_id: str) -> None:
+        pass
 
     async def insert_content_list(
         self,
