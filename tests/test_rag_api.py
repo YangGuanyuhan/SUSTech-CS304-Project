@@ -149,6 +149,30 @@ def test_rag_session_file_upload_and_query(api_client, tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
+def test_rag_session_file_upload_accepts_markdown(api_client, tmp_path, monkeypatch):
+    get_settings.cache_clear()
+    monkeypatch.setenv("RAG_STORAGE_DIR", str(tmp_path / "rag"))
+
+    upload_response = api_client.post(
+        "/api/rag/session-files/upload",
+        data={"session_id": "chat-md"},
+        files=[("files", ("notes.md", b"# Notes\n\nMarkdown upload works.", "text/markdown"))],
+    )
+
+    assert upload_response.status_code == 200
+    upload_payload = upload_response.json()["data"]
+    assert upload_payload["indexed"] == 1
+    assert upload_payload["sources"][0]["relative_path"] == "notes.md"
+
+    query_response = api_client.post(
+        "/api/rag/query",
+        json={"query": "What works?", "session_id": "chat-md"},
+    )
+    assert query_response.status_code == 200
+    assert query_response.json()["data"]["citations"][0]["relative_path"] == "notes.md"
+    get_settings.cache_clear()
+
+
 def test_rag_session_file_upload_rejects_old_ppt(api_client, tmp_path, monkeypatch):
     get_settings.cache_clear()
     monkeypatch.setenv("RAG_STORAGE_DIR", str(tmp_path / "rag"))

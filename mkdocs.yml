@@ -1,0 +1,29 @@
+site_name: StudyAI Documentation
+site_description: Student productivity agent documentation
+repo_url: https://github.com/sustech-cs304/team-project-26spring-26s-8
+docs_dir: docs
+
+theme:
+  name: mkdocs
+  navigation_depth: 3
+
+nav:
+  - Home: index.md
+  - CI/CD Pipeline: ci-cd.md
+  - RAG Setup: RAG_README.md
+  - Architecture:
+      - Technical Design: architecture/TECHNICAL_DESIGN.md
+      - Database Overview: architecture/DATABASE_CURRENT_OVERVIEW.md
+      - Design Document: architecture/design-26s-8.md
+      - Proposal: architecture/proposal-26s-8.md
+  - Features:
+      - Memory System: features/MEMORY_SYSTEM_IMPLEMENTATION.md
+  - Development:
+      - Database Refactor: development/DATABASE_REFACTOR_SUMMARY.md
+      - Database Refactor Chinese: development/DATABASE_REFACTOR_SUMMARY_ZH.md
+
+markdown_extensions:
+  - toc:
+      permalink: true
+  - tables
+  - fenced_code

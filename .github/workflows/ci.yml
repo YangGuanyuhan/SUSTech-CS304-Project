@@ -1,22 +1,290 @@
-name: CI
+name: CI/CD
 
 on:
   push:
-    branches: [main, dev-pydanticAI]
+    branches:
+      - main
+      - dev-pydanticAI
+      - feature/**
+      - codex/**
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - dev-pydanticAI
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+
 jobs:
-  test:
+  quality:
+    name: Build, lint, test, and coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
-      - uses: actions/setup-python@v5
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - run: uv sync --all-extras --dev
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run pytest --cov=backend --cov-report=term-missing
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install backend dependencies
+        run: uv sync --frozen --all-extras --dev
+
+      - name: Backend static check (ruff lint)
+        run: uv run ruff check backend tests
+
+      - name: Backend format check
+        run: uv run ruff format --check backend tests
+
+      - name: Backend compile check
+        env:
+          PYTHONPYCACHEPREFIX: artifacts/pycache
+        run: uv run python -m compileall backend tests
+
+      - name: Backend tests with coverage
+        run: |
+          mkdir -p artifacts/test-results artifacts/coverage
+          uv run pytest \
+            --junitxml=artifacts/test-results/pytest.xml \
+            --cov=backend \
+            --cov-report=term-missing \
+            --cov-report=xml:artifacts/coverage/coverage.xml \
+            --cov-report=html:artifacts/coverage/html
+
+      - name: Backend package build
+        run: uv build --wheel --out-dir artifacts/backend-dist
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend production build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Collect frontend build artifact
+        run: |
+          mkdir -p artifacts/frontend-dist
+          cp -R frontend/dist/. artifacts/frontend-dist/
+
+      - name: Upload test and coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-reports
+          path: |
+            artifacts/test-results
+            artifacts/coverage
+          retention-days: 14
+
+      - name: Upload build outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-outputs
+          path: |
+            artifacts/backend-dist
+            artifacts/frontend-dist
+          retention-days: 14
+
+  security:
+    name: Dependency security scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install backend dependencies
+        run: uv sync --frozen --all-extras --dev
+
+      - name: Python dependency audit
+        continue-on-error: true
+        run: |
+          mkdir -p artifacts/security
+          uv run pip-audit \
+            --progress-spinner off \
+            --format json \
+            --output artifacts/security/pip-audit.json
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend production dependency audit
+        working-directory: frontend
+        continue-on-error: true
+        run: |
+          mkdir -p ../artifacts/security
+          npm audit --audit-level=high --omit=dev --json > ../artifacts/security/npm-audit.json
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: artifacts/security
+          retention-days: 14
+
+  codeql:
+    name: CodeQL static security analysis
+    runs-on: ubuntu-latest
+    if: vars.ENABLE_CODEQL == 'true'
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python,javascript-typescript
+          build-mode: none
+
+      - name: Run CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+
+  docs:
+    name: Generate documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install documentation dependencies
+        run: uv sync --frozen --all-extras --dev
+
+      - name: Build documentation site
+        run: uv run mkdocs build --site-dir artifacts/docs-site
+
+      - name: Upload documentation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-site
+          path: artifacts/docs-site
+          retention-days: 14
+
+  package:
+    name: Assemble release bundle
+    runs-on: ubuntu-latest
+    needs:
+      - quality
+      - security
+      - docs
+    steps:
+      - name: Download build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: build-outputs
+          path: release/build
+
+      - name: Download documentation site
+        uses: actions/download-artifact@v4
+        with:
+          name: docs-site
+          path: release/docs
+
+      - name: Create release manifest
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          manifest = {
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "ref": os.environ["GITHUB_REF"],
+              "sha": os.environ["GITHUB_SHA"],
+              "generated_at": datetime.now(timezone.utc).isoformat(),
+              "contents": ["backend wheel", "frontend dist", "documentation site"],
+          }
+          os.makedirs("release", exist_ok=True)
+          with open("release/deployment-manifest.json", "w", encoding="utf-8") as handle:
+              json.dump(manifest, handle, ensure_ascii=False, indent=2)
+          PY
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle
+          path: release
+          retention-days: 30
+
+  deploy-testing:
+    name: Deploy to testing environment
+    runs-on: ubuntu-latest
+    needs: package
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/dev-pydanticAI' || startsWith(github.ref, 'refs/heads/feature/') || startsWith(github.ref, 'refs/heads/codex/'))
+    environment:
+      name: testing
+    steps:
+      - name: Download release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: release-bundle
+          path: release
+
+      - name: Deployment placeholder
+        run: |
+          echo "Testing deployment gate passed."
+          echo "Replace this step with the testing server/cloud deployment command."
+          cat release/deployment-manifest.json
+
+  deploy-production:
+    name: Deploy to production environment
+    runs-on: ubuntu-latest
+    needs: package
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment:
+      name: production
+    steps:
+      - name: Download release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: release-bundle
+          path: release
+
+      - name: Deployment placeholder
+        run: |
+          echo "Production deployment gate passed."
+          echo "Configure required reviewers on the production environment before adding real deployment."
+          cat release/deployment-manifest.json
