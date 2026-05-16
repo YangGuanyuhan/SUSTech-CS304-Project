@@ -482,4 +482,6 @@ async def test_blackboard_download_files_recurses_and_returns_browser_links(
     assert result["files"][0]["path"] == "Course _101_1 / Lab 09 / Spec / Lab 9 中文.pdf"
     assert result["files"][0]["download_url"].startswith("/api/blackboard/files/download")
     assert "attachment_id=att%201" in result["files"][0]["browser_download_url"]
-    assert "file_name=Lab%209%20%E4%B8%AD%E6%96%87.pdf" in result["files"][0]["browser_download_url"]
+    assert (
+        "file_name=Lab%209%20%E4%B8%AD%E6%96%87.pdf" in result["files"][0]["browser_download_url"]
+    )

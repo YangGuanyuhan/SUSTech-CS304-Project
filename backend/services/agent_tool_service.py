@@ -1321,7 +1321,9 @@ class AgentToolService:
         node_type = "x-bb-folder"
         has_children = True
         try:
-            metadata = await manager._get_json(f"{manager.BASE_URL}/courses/{course_id}/contents/{node_id}")
+            metadata = await manager._get_json(
+                f"{manager.BASE_URL}/courses/{course_id}/contents/{node_id}"
+            )
             node_title = str(metadata.get("title") or node_title)
             handler = str(metadata.get("contentHandler", {}).get("id", "") or "")
             node_type = handler.rsplit("/", 1)[-1] if handler else node_type
@@ -1337,7 +1339,9 @@ class AgentToolService:
             has_children=has_children,
         )
 
-    async def _load_blackboard_tree(self, manager, node, *, depth: int = 0, max_depth: int = 12) -> None:
+    async def _load_blackboard_tree(
+        self, manager, node, *, depth: int = 0, max_depth: int = 12
+    ) -> None:
         await manager.fetch_node_children(node)
         if depth >= max_depth or not node.children:
             return
@@ -1365,7 +1369,9 @@ class AgentToolService:
         files = []
         current_path = [*(path or []), str(getattr(node, "title", "") or node.id)]
         path_text = " / ".join(current_path)
-        node_matched = ancestor_matched or query is None or query in self._normalize_blackboard_text(path_text)
+        node_matched = (
+            ancestor_matched or query is None or query in self._normalize_blackboard_text(path_text)
+        )
 
         for attachment in node.attachments:
             file_path = [*current_path, attachment.file_name]
