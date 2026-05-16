@@ -119,6 +119,13 @@ class EmailSettingsRequest(BaseModel):
     replace_password: bool = False
 
 
+class SearchSettingsRequest(BaseModel):
+    provider: str
+    api_key: str | None = None
+    replace_api_key: bool = False
+    timeout: int | None = Field(default=None, ge=1, le=120)
+
+
 class CalendarEventCreateRequest(BaseModel):
     title: str
     start_at: datetime

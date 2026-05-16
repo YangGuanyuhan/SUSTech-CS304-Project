@@ -36,10 +36,22 @@ _APPROVAL_REQUIRED_TOOLS = {
 }
 
 
+def _web_search_configured(settings: Any) -> bool:
+    from backend.services.runtime_settings import runtime_settings
+
+    search_config = runtime_settings.get_search_config()
+    provider = (
+        search_config.provider or str(getattr(settings, "search_provider", "brave")).strip().lower()
+    )
+    if provider == "mock":
+        return True
+    return bool(runtime_settings.get_secret_search_api_key(provider))
+
+
 def get_tool_definitions() -> list[dict[str, Any]]:
     """Return OpenAI-compatible tool schemas."""
 
-    return [
+    tools = [
         {
             "type": "function",
             "function": {
@@ -524,6 +536,58 @@ def get_tool_definitions() -> list[dict[str, Any]]:
         },
     ]
 
+    # Only add web_search tool if the configured search provider is available.
+    from backend.config import get_settings
+
+    settings = get_settings()
+    if _web_search_configured(settings):
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": (
+                        "Search the internet using Brave Search. "
+                        "Use for current events, real-time data, prices, weather, "
+                        "recent events, or uncertain facts."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Search keywords, keep concise and precise",
+                            },
+                            "max_results": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 10,
+                                "default": 5,
+                            },
+                            "country": {
+                                "type": "string",
+                                "default": "CN",
+                                "description": "Country preference (CN, US, JP, etc.)",
+                            },
+                            "search_lang": {
+                                "type": "string",
+                                "default": "zh-hans",
+                                "description": "Search language (zh-hans, en, etc.)",
+                            },
+                            "freshness": {
+                                "type": "string",
+                                "enum": ["pd", "pw", "pm", "py"],
+                                "description": "Time filter: pd=today, pw=this week, pm=this month, py=this year",
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                },
+            }
+        )
+
+    return tools
+
 
 class ToolExecutionError(ValueError):
     """Raised when a tool request is invalid or unsafe."""
@@ -638,6 +702,8 @@ class AgentToolService:
             return await self._email_read_latest(arguments)
         if tool_name == "email_send":
             return await self._email_send(arguments)
+        if tool_name == "web_search":
+            return await self._web_search(arguments)
         raise ToolExecutionError(f"Unknown tool `{tool_name}`.")
 
     async def _memory_search(self, arguments: dict[str, Any]) -> str:
@@ -946,11 +1012,31 @@ class AgentToolService:
         max_chars = int(arguments.get("max_chars", 12000))
         if not url.startswith(("http://", "https://")):
             raise ToolExecutionError("`url` must start with http:// or https://")
-        async with httpx.AsyncClient(
-            timeout=20.0, follow_redirects=True, trust_env=False
-        ) as client:
-            response = await client.get(url)
-            response.raise_for_status()
+        try:
+            async with httpx.AsyncClient(
+                timeout=20.0, follow_redirects=True, trust_env=False
+            ) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "url": url,
+                    "status_code": exc.response.status_code,
+                    "error": f"Fetch failed with HTTP {exc.response.status_code}",
+                },
+                ensure_ascii=False,
+            )
+        except httpx.HTTPError as exc:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "url": url,
+                    "error": f"Fetch failed: {exc}",
+                },
+                ensure_ascii=False,
+            )
         content_type = response.headers.get("content-type", "")
         text = response.text
         if "html" in content_type:
@@ -1587,6 +1673,55 @@ class AgentToolService:
                 {"ok": False, "error": f"Send failed: {e}"},
                 ensure_ascii=False,
             )
+
+    async def _web_search(self, arguments: dict[str, Any]) -> str:
+        """Execute web search using Brave Search API."""
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            raise ToolExecutionError("`query` is required for web_search.")
+
+        from backend.services.search_service import SearchService
+
+        service = SearchService()
+
+        try:
+            results = await service.search_web(
+                query=query,
+                max_results=int(arguments.get("max_results", 5)),
+                country=str(arguments.get("country", "CN")),
+                search_lang=str(arguments.get("search_lang", "zh-hans")),
+                freshness=arguments.get("freshness"),
+            )
+        except Exception as e:
+            return json.dumps(
+                {
+                    "results": [],
+                    "query": query,
+                    "count": 0,
+                    "message": f"Search failed: {e}",
+                },
+                ensure_ascii=False,
+            )
+
+        if not results:
+            return json.dumps(
+                {
+                    "results": [],
+                    "query": query,
+                    "count": 0,
+                    "message": "No search results found.",
+                },
+                ensure_ascii=False,
+            )
+
+        return json.dumps(
+            {
+                "results": [r.model_dump(mode="json") for r in results],
+                "query": query,
+                "count": len(results),
+            },
+            ensure_ascii=False,
+        )
 
     def _workspace_root(self, workspace_root: str | None) -> Path:
         root = Path(workspace_root or "").expanduser()

@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     search_provider: str = "mock"
     brave_api_key: str | None = None
     tavily_api_key: str | None = None
+    bocha_api_key: str | None = None
 
     database_url: str = "sqlite+aiosqlite:///./data/agent.db"
     search_timeout: int = 30

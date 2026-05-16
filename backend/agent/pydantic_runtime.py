@@ -71,11 +71,23 @@ Tool usage rules:
 15. RAG indexing is limited to directories configured in the Knowledge Base page. Use
     rag_index_folder with a relative path under the default RAG directory whenever possible.
     Do not ask to index arbitrary computer paths outside the configured RAG roots.
-16. For Blackboard file download requests, use only this sequence:
+16. web_search usage rules (IMPORTANT - follow these strictly):
+   - ONLY use web_search when: the user explicitly asks to search/look up something online,
+     the question requires REAL-TIME information (today's news, current prices, live scores),
+     after trying local tools (rag_search, rag_answer, memory_search) and they return no results,
+     or the question is about recent events (within last few months) that you don't know.
+   - Do NOT use web_search for: general knowledge questions you can answer from training data,
+     questions about uploaded files or local documents (use rag_search/rag_answer),
+     questions about previous conversations (use memory_search),
+     academic concepts, definitions, well-established facts,
+     or programming help, code examples, technical documentation.
+   - Search workflow: first check if local tools can answer (rag_search, memory_search).
+     Only if local tools fail or user explicitly requests web search, use web_search.
+17. For Blackboard file download requests, use only this sequence:
     blackboard_get_all_courses if you need the course_id, then blackboard_download_files.
     Use the query argument for folder/topic names such as "lab9". Return browser_download_url
     links to the user instead of claiming you saved files locally.
-17. For Blackboard file download requests, never call calendar tools, announcement tools,
+18. For Blackboard file download requests, never call calendar tools, announcement tools,
     webpage tools, or local file tools unless the user explicitly asks for those separate actions.
 
 Response style:
@@ -183,6 +195,28 @@ async def build_tool_examples_prompt(session: Session, user_query: str) -> str:
     ):
         relevant_tools.append("blackboard_get_all_courses")
         relevant_tools.append("blackboard_download_files")
+
+    # Only add web_search if the configured search provider is available.
+    from backend.config import get_settings
+    from backend.services.agent_tool_service import _web_search_configured
+
+    settings = get_settings()
+    if _web_search_configured(settings):
+        # Only suggest web_search when user explicitly asks for search or real-time info
+        explicit_search_terms = [
+            "search",
+            "look up",
+            "find online",
+            "google",
+            "browse",
+            "latest news",
+            "current price",
+            "today's",
+            "live",
+            "real-time",
+        ]
+        if any(word in query_lower for word in explicit_search_terms):
+            relevant_tools.append("web_search")
 
     if not relevant_tools:
         return ""
@@ -681,6 +715,39 @@ class PydanticAIRuntime:
             return await _execute_tool(
                 ctx, "email_send", {"to": to, "subject": subject, "body": body}
             )
+
+        # Only register web_search tool if the configured search provider is available.
+        from backend.config import get_settings
+        from backend.services.agent_tool_service import _web_search_configured
+
+        settings = get_settings()
+        if _web_search_configured(settings):
+
+            @agent.tool(name="web_search")
+            async def web_search(
+                ctx: RunContext[AgentDeps],
+                query: str,
+                max_results: int = 5,
+                country: str = "CN",
+                search_lang: str = "zh-hans",
+                freshness: str | None = None,
+            ) -> str:
+                """Search the internet for current information.
+
+                Use for news, real-time data, prices, weather, recent events,
+                or facts you're uncertain about.
+                """
+                return await _execute_tool(
+                    ctx,
+                    "web_search",
+                    {
+                        "query": query,
+                        "max_results": max_results,
+                        "country": country,
+                        "search_lang": search_lang,
+                        "freshness": freshness,
+                    },
+                )
 
         return agent
 
