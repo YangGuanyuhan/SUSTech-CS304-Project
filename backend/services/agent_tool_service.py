@@ -37,7 +37,9 @@ def _web_search_configured(settings: Any) -> bool:
     from backend.services.runtime_settings import runtime_settings
 
     search_config = runtime_settings.get_search_config()
-    provider = search_config.provider or str(getattr(settings, "search_provider", "brave")).strip().lower()
+    provider = (
+        search_config.provider or str(getattr(settings, "search_provider", "brave")).strip().lower()
+    )
     if provider == "mock":
         return True
     return bool(runtime_settings.get_secret_search_api_key(provider))

@@ -21,14 +21,15 @@ def test_web_search_tool_not_registered_without_api_key():
     with (
         patch(
             "backend.services.runtime_settings.runtime_settings.get_search_config",
-            return_value=RuntimeSearchConfig(provider="brave", api_key_configured=False, timeout=30),
+            return_value=RuntimeSearchConfig(
+                provider="brave", api_key_configured=False, timeout=30
+            ),
         ),
         patch(
             "backend.services.runtime_settings.runtime_settings.get_secret_search_api_key",
             return_value=None,
         ),
     ):
-
         tools = get_tool_definitions()
         tool_names = [t["function"]["name"] for t in tools]
         assert "web_search" not in tool_names
@@ -39,14 +40,15 @@ def test_web_search_tool_not_registered_with_empty_api_key():
     with (
         patch(
             "backend.services.runtime_settings.runtime_settings.get_search_config",
-            return_value=RuntimeSearchConfig(provider="brave", api_key_configured=False, timeout=30),
+            return_value=RuntimeSearchConfig(
+                provider="brave", api_key_configured=False, timeout=30
+            ),
         ),
         patch(
             "backend.services.runtime_settings.runtime_settings.get_secret_search_api_key",
             return_value="",
         ),
     ):
-
         tools = get_tool_definitions()
         tool_names = [t["function"]["name"] for t in tools]
         assert "web_search" not in tool_names
@@ -64,7 +66,6 @@ def test_web_search_tool_registered_with_api_key():
             return_value="BSA-test-key",
         ),
     ):
-
         tools = get_tool_definitions()
         tool_names = [t["function"]["name"] for t in tools]
         assert "web_search" in tool_names
@@ -88,7 +89,6 @@ def test_web_search_tool_registered_with_bocha_api_key():
             return_value="sk-test-key",
         ),
     ):
-
         tools = get_tool_definitions()
         tool_names = [t["function"]["name"] for t in tools]
         assert "web_search" in tool_names
@@ -100,7 +100,6 @@ def test_web_search_tool_registered_with_mock_provider():
         "backend.services.runtime_settings.runtime_settings.get_search_config",
         return_value=RuntimeSearchConfig(provider="mock", api_key_configured=True, timeout=30),
     ):
-
         tools = get_tool_definitions()
         tool_names = [t["function"]["name"] for t in tools]
         assert "web_search" in tool_names
@@ -301,7 +300,9 @@ async def test_search_service_bocha_provider_parses_results():
             "backend.services.runtime_settings.runtime_settings.get_secret_search_api_key",
             return_value=settings.bocha_api_key,
         ),
-        patch("backend.services.runtime_settings.runtime_settings.get_search_timeout", return_value=30),
+        patch(
+            "backend.services.runtime_settings.runtime_settings.get_search_timeout", return_value=30
+        ),
         patch("httpx.AsyncClient", MockClient),
     ):
         results = await SearchService().search_web(
