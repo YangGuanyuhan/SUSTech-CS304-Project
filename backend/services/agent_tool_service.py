@@ -33,6 +33,16 @@ _APPROVAL_REQUIRED_TOOLS = {
 }
 
 
+def _web_search_configured(settings: Any) -> bool:
+    from backend.services.runtime_settings import runtime_settings
+
+    search_config = runtime_settings.get_search_config()
+    provider = search_config.provider or str(getattr(settings, "search_provider", "brave")).strip().lower()
+    if provider == "mock":
+        return True
+    return bool(runtime_settings.get_secret_search_api_key(provider))
+
+
 def get_tool_definitions() -> list[dict[str, Any]]:
     """Return OpenAI-compatible tool schemas."""
 
@@ -489,11 +499,11 @@ def get_tool_definitions() -> list[dict[str, Any]]:
         },
     ]
 
-    # Only add web_search tool if Brave API key is configured
+    # Only add web_search tool if the configured search provider is available.
     from backend.config import get_settings
 
     settings = get_settings()
-    if settings.brave_api_key and settings.brave_api_key.strip():
+    if _web_search_configured(settings):
         tools.append(
             {
                 "type": "function",
@@ -963,11 +973,31 @@ class AgentToolService:
         max_chars = int(arguments.get("max_chars", 12000))
         if not url.startswith(("http://", "https://")):
             raise ToolExecutionError("`url` must start with http:// or https://")
-        async with httpx.AsyncClient(
-            timeout=20.0, follow_redirects=True, trust_env=False
-        ) as client:
-            response = await client.get(url)
-            response.raise_for_status()
+        try:
+            async with httpx.AsyncClient(
+                timeout=20.0, follow_redirects=True, trust_env=False
+            ) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "url": url,
+                    "status_code": exc.response.status_code,
+                    "error": f"Fetch failed with HTTP {exc.response.status_code}",
+                },
+                ensure_ascii=False,
+            )
+        except httpx.HTTPError as exc:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "url": url,
+                    "error": f"Fetch failed: {exc}",
+                },
+                ensure_ascii=False,
+            )
         content_type = response.headers.get("content-type", "")
         text = response.text
         if "html" in content_type:

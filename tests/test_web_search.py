@@ -12,12 +12,22 @@ from backend.services.agent_tool_service import (
     ToolExecutionError,
     get_tool_definitions,
 )
+from backend.services.runtime_settings import RuntimeSearchConfig
+from backend.services.search_service import SearchService
 
 
 def test_web_search_tool_not_registered_without_api_key():
     """Test that web_search tool is NOT registered when BRAVE_API_KEY is not set."""
-    with patch("backend.config.get_settings") as mock_settings:
-        mock_settings.return_value = SimpleNamespace(brave_api_key=None)
+    with (
+        patch(
+            "backend.services.runtime_settings.runtime_settings.get_search_config",
+            return_value=RuntimeSearchConfig(provider="brave", api_key_configured=False, timeout=30),
+        ),
+        patch(
+            "backend.services.runtime_settings.runtime_settings.get_secret_search_api_key",
+            return_value=None,
+        ),
+    ):
 
         tools = get_tool_definitions()
         tool_names = [t["function"]["name"] for t in tools]
@@ -26,8 +36,16 @@ def test_web_search_tool_not_registered_without_api_key():
 
 def test_web_search_tool_not_registered_with_empty_api_key():
     """Test that web_search tool is NOT registered when BRAVE_API_KEY is empty string."""
-    with patch("backend.config.get_settings") as mock_settings:
-        mock_settings.return_value = SimpleNamespace(brave_api_key="")
+    with (
+        patch(
+            "backend.services.runtime_settings.runtime_settings.get_search_config",
+            return_value=RuntimeSearchConfig(provider="brave", api_key_configured=False, timeout=30),
+        ),
+        patch(
+            "backend.services.runtime_settings.runtime_settings.get_secret_search_api_key",
+            return_value="",
+        ),
+    ):
 
         tools = get_tool_definitions()
         tool_names = [t["function"]["name"] for t in tools]
@@ -36,8 +54,16 @@ def test_web_search_tool_not_registered_with_empty_api_key():
 
 def test_web_search_tool_registered_with_api_key():
     """Test that web_search tool IS registered when BRAVE_API_KEY is set."""
-    with patch("backend.config.get_settings") as mock_settings:
-        mock_settings.return_value = SimpleNamespace(brave_api_key="BSA-test-key")
+    with (
+        patch(
+            "backend.services.runtime_settings.runtime_settings.get_search_config",
+            return_value=RuntimeSearchConfig(provider="brave", api_key_configured=True, timeout=30),
+        ),
+        patch(
+            "backend.services.runtime_settings.runtime_settings.get_secret_search_api_key",
+            return_value="BSA-test-key",
+        ),
+    ):
 
         tools = get_tool_definitions()
         tool_names = [t["function"]["name"] for t in tools]
@@ -48,6 +74,36 @@ def test_web_search_tool_registered_with_api_key():
         assert web_search_tool["type"] == "function"
         assert "query" in web_search_tool["function"]["parameters"]["properties"]
         assert "query" in web_search_tool["function"]["parameters"]["required"]
+
+
+def test_web_search_tool_registered_with_bocha_api_key():
+    """Test that web_search tool is registered when Bocha is configured."""
+    with (
+        patch(
+            "backend.services.runtime_settings.runtime_settings.get_search_config",
+            return_value=RuntimeSearchConfig(provider="bocha", api_key_configured=True, timeout=30),
+        ),
+        patch(
+            "backend.services.runtime_settings.runtime_settings.get_secret_search_api_key",
+            return_value="sk-test-key",
+        ),
+    ):
+
+        tools = get_tool_definitions()
+        tool_names = [t["function"]["name"] for t in tools]
+        assert "web_search" in tool_names
+
+
+def test_web_search_tool_registered_with_mock_provider():
+    """Test that mock provider registers web_search without a real API key."""
+    with patch(
+        "backend.services.runtime_settings.runtime_settings.get_search_config",
+        return_value=RuntimeSearchConfig(provider="mock", api_key_configured=True, timeout=30),
+    ):
+
+        tools = get_tool_definitions()
+        tool_names = [t["function"]["name"] for t in tools]
+        assert "web_search" in tool_names
 
 
 async def test_web_search_returns_results(db_session):
@@ -187,3 +243,74 @@ async def test_web_search_with_custom_parameters(db_session):
             search_lang="en",
             freshness="pw",
         )
+
+
+async def test_search_service_bocha_provider_parses_results():
+    """Test that Bocha provider calls the expected endpoint and parses results."""
+    settings = SimpleNamespace(
+        search_provider="bocha",
+        bocha_api_key="sk-test-key",
+        search_timeout=30,
+    )
+    payload = {
+        "data": {
+            "webPages": {
+                "value": [
+                    {
+                        "name": "Bocha Result",
+                        "url": "https://example.com/bocha",
+                        "summary": "Bocha summary",
+                        "datePublished": "2026-05-16T10:00:00Z",
+                    }
+                ]
+            }
+        }
+    }
+
+    class MockResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return payload
+
+    class MockClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, json, headers):
+            assert url == "https://api.bochaai.com/v1/web-search"
+            assert json["query"] == "bocha query"
+            assert json["count"] == 2
+            assert json["freshness"] == "oneWeek"
+            assert headers["Authorization"] == "Bearer sk-test-key"
+            return MockResponse()
+
+    with (
+        patch(
+            "backend.services.runtime_settings.runtime_settings.get_search_config",
+            return_value=RuntimeSearchConfig(provider="bocha", api_key_configured=True, timeout=30),
+        ),
+        patch(
+            "backend.services.runtime_settings.runtime_settings.get_secret_search_api_key",
+            return_value=settings.bocha_api_key,
+        ),
+        patch("backend.services.runtime_settings.runtime_settings.get_search_timeout", return_value=30),
+        patch("httpx.AsyncClient", MockClient),
+    ):
+        results = await SearchService().search_web(
+            query="bocha query",
+            max_results=2,
+            freshness="pw",
+        )
+
+    assert len(results) == 1
+    assert results[0].title == "Bocha Result"
+    assert results[0].url == "https://example.com/bocha"
+    assert results[0].snippet == "Bocha summary"

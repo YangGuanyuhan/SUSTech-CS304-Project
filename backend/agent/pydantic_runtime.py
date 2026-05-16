@@ -184,11 +184,12 @@ async def build_tool_examples_prompt(session: Session, user_query: str) -> str:
     if any(word in query_lower for word in ["class", "courses"]):
         relevant_tools.append("blackboard_get_all_courses")
 
-    # Only add web_search if Brave API key is configured
+    # Only add web_search if the configured search provider is available.
     from backend.config import get_settings
+    from backend.services.agent_tool_service import _web_search_configured
 
     settings = get_settings()
-    if settings.brave_api_key and settings.brave_api_key.strip():
+    if _web_search_configured(settings):
         # Only suggest web_search when user explicitly asks for search or real-time info
         explicit_search_terms = [
             "search",
@@ -663,11 +664,12 @@ class PydanticAIRuntime:
                 ctx, "email_send", {"to": to, "subject": subject, "body": body}
             )
 
-        # Only register web_search tool if Brave API key is configured
+        # Only register web_search tool if the configured search provider is available.
         from backend.config import get_settings
+        from backend.services.agent_tool_service import _web_search_configured
 
         settings = get_settings()
-        if settings.brave_api_key and settings.brave_api_key.strip():
+        if _web_search_configured(settings):
 
             @agent.tool(name="web_search")
             async def web_search(

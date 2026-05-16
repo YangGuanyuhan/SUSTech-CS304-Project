@@ -401,6 +401,82 @@
           </section>
         </template>
 
+        <template v-else-if="activeSection === 'search'">
+          <section class="content-panel hero-panel search-hero">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Web Search</p>
+                <h3>联网搜索配置</h3>
+              </div>
+              <span class="badge" :class="{ ready: searchState.api_key_configured }">
+                {{ searchState.api_key_configured ? "已配置" : "未配置" }}
+              </span>
+            </div>
+            <p class="hint">
+              选择 Agent 使用的搜索提供商。Mock 用于本地调试，Brave 和 Bocha 需要各自的 API 密钥。
+            </p>
+
+            <div class="status-grid">
+              <article class="status-card">
+                <span>当前提供商</span>
+                <strong>{{ searchState.provider || "未设置" }}</strong>
+              </article>
+              <article class="status-card">
+                <span>密钥状态</span>
+                <strong>{{ searchState.api_key_configured ? "已存在" : "待输入" }}</strong>
+              </article>
+              <article class="status-card">
+                <span>超时</span>
+                <strong>{{ searchState.timeout }}s</strong>
+              </article>
+            </div>
+          </section>
+
+          <section class="content-panel editor-panel">
+            <div class="section-top">
+              <div>
+                <strong>搜索运行时</strong>
+                <p class="hint compact">保存后立即影响 web_search 工具。API 密钥不会返回到浏览器。</p>
+              </div>
+            </div>
+
+            <form class="config-form" @submit.prevent="saveSearch">
+              <label>
+                <span>提供商</span>
+                <select v-model="searchForm.provider">
+                  <option value="mock">Mock 调试</option>
+                  <option value="bocha">Bocha 博查</option>
+                  <option value="brave">Brave Search</option>
+                </select>
+              </label>
+              <label>
+                <span>超时秒数</span>
+                <input v-model.number="searchForm.timeout" type="number" min="1" max="120" />
+              </label>
+              <label class="full">
+                <span>API 密钥</span>
+                <input
+                  v-model="searchForm.api_key"
+                  type="password"
+                  :placeholder="searchForm.provider === 'mock' ? 'Mock 不需要密钥' : '留空以保持当前密钥'"
+                  autocomplete="new-password"
+                />
+              </label>
+              <label class="toggle-label full">
+                <span class="toggle-row">
+                  <span>清空当前提供商的密钥</span>
+                  <input v-model="searchForm.replace_api_key" type="checkbox" class="toggle-input" />
+                </span>
+              </label>
+              <div class="actions full">
+                <button type="button" class="secondary" :disabled="saving" @click="refreshSearch">刷新</button>
+                <button type="button" class="secondary" :disabled="saving" @click="testSearch">测试连接</button>
+                <button type="submit" :disabled="saving">{{ saving ? "保存中..." : "应用搜索配置" }}</button>
+              </div>
+            </form>
+          </section>
+        </template>
+
         <template v-else-if="activeSection === 'backend'">
           <section class="content-panel hero-panel backend-hero">
             <div class="panel-heading">
@@ -511,15 +587,18 @@ import {
   getHealth,
   getLLMProfiles,
   getLLMSettings,
+  getSearchSettings,
   saveBBProfile as saveBBProfileAPI,
   saveEmailProfile,
   saveLLMProfile,
   testBlackboardSettings,
   testEmailSettings,
   testLLMSettings,
+  testSearchSettings,
   updateBlackboardSettings,
   updateEmailSettings,
-  updateLLMSettings
+  updateLLMSettings,
+  updateSearchSettings
 } from "../api/client";
 
 defineEmits(["close", "open-database-overview"]);
@@ -543,6 +622,7 @@ const sections = [
   { id: "llm", label: "LLM 后端", description: "模型、网关与密钥", icon: "AI" },
   { id: "bb", label: "Blackboard", description: "课程系统登录", icon: "BB" },
   { id: "email", label: "Email 邮箱", description: "SMTP 邮件服务", icon: "@@" },
+  { id: "search", label: "Web Search", description: "搜索提供商与密钥", icon: "SE" },
   { id: "backend", label: "后端服务", description: "状态与联通性", icon: "BE" },
   { id: "dev", label: "开发者工具", description: "数据库与调试入口", icon: "DV" }
 ];
@@ -603,6 +683,19 @@ const emailForm = reactive({
   imap_port: 993,
   password: "",
   replace_password: false
+});
+
+const searchState = reactive({
+  provider: "mock",
+  api_key_configured: false,
+  timeout: 30
+});
+
+const searchForm = reactive({
+  provider: "mock",
+  api_key: "",
+  replace_api_key: false,
+  timeout: 30
 });
 
 const emailEditorOpen = ref(false);
@@ -674,6 +767,16 @@ function applyBBState(payload) {
   bbForm.base_url = payload.base_url ?? "";
   bbForm.password = "";
   bbForm.replace_password = false;
+}
+
+function applySearchState(payload) {
+  searchState.provider = payload.provider ?? "mock";
+  searchState.api_key_configured = Boolean(payload.api_key_configured);
+  searchState.timeout = payload.timeout ?? 30;
+  searchForm.provider = payload.provider ?? "mock";
+  searchForm.api_key = "";
+  searchForm.replace_api_key = false;
+  searchForm.timeout = payload.timeout ?? 30;
 }
 
 function closeBBEditor() {
@@ -978,6 +1081,59 @@ async function refreshEmailProfiles() {
   emailProfiles.value = response.data ?? [];
 }
 
+async function refreshSearch() {
+  saving.value = true;
+  try {
+    const response = await getSearchSettings();
+    applySearchState(response.data);
+    showMessage("搜索配置已加载。");
+  } catch (error) {
+    showMessage(`加载搜索配置失败: ${error.message}`, "error");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function saveSearch() {
+  saving.value = true;
+  try {
+    const response = await updateSearchSettings({
+      provider: searchForm.provider,
+      api_key: searchForm.api_key || null,
+      replace_api_key: searchForm.replace_api_key,
+      timeout: searchForm.timeout
+    });
+    applySearchState(response.data);
+    showMessage("搜索配置已应用到运行时。");
+  } catch (error) {
+    showMessage(`保存搜索配置失败: ${error.message}`, "error");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function testSearch() {
+  saving.value = true;
+  try {
+    const response = await testSearchSettings({
+      provider: searchForm.provider,
+      api_key: searchForm.api_key || null,
+      replace_api_key: searchForm.replace_api_key,
+      timeout: searchForm.timeout
+    });
+    const result = response.data ?? {};
+    if (response.success) {
+      showMessage(`搜索连接正常。预览: ${result.preview || result.message}`);
+    } else {
+      showMessage(`搜索测试无结果: ${result.message || "未知错误"}`, "error");
+    }
+  } catch (error) {
+    showMessage(`搜索测试失败: ${error.message}`, "error");
+  } finally {
+    saving.value = false;
+  }
+}
+
 async function saveEmail() {
   saving.value = true;
   try {
@@ -1134,10 +1290,11 @@ async function testConnection() {
 async function refreshAll() {
   saving.value = true;
   try {
-    const [llmResponse, bbResponse, emailResponse, llmProfilesResponse, bbProfilesResponse, emailProfilesResponse, healthResponse] = await Promise.all([
+    const [llmResponse, bbResponse, emailResponse, searchResponse, llmProfilesResponse, bbProfilesResponse, emailProfilesResponse, healthResponse] = await Promise.all([
       getLLMSettings(),
       getBlackboardSettings(),
       getEmailSettings(),
+      getSearchSettings(),
       getLLMProfiles(),
       getBBProfiles(),
       getEmailProfiles(),
@@ -1147,6 +1304,7 @@ async function refreshAll() {
     applyState(llmResponse.data);
     applyBBState(bbResponse.data);
     applyEmailState(emailResponse.data);
+    applySearchState(searchResponse.data);
     profiles.value = llmProfilesResponse.data ?? [];
     bbProfiles.value = bbProfilesResponse.data ?? [];
     emailProfiles.value = emailProfilesResponse.data ?? [];
@@ -1167,7 +1325,7 @@ watch(activeSection, () => {
 });
 
 onMounted(async () => {
-  await Promise.all([refresh(), refreshBlackboard(), refreshBBProfiles(), refreshEmail(), refreshEmailProfiles(), checkBackendHealth()]);
+  await Promise.all([refresh(), refreshBlackboard(), refreshBBProfiles(), refreshEmail(), refreshEmailProfiles(), refreshSearch(), checkBackendHealth()]);
 });
 
 onBeforeUnmount(() => {
@@ -1326,6 +1484,10 @@ onBeforeUnmount(() => {
 
 .backend-hero {
   background: linear-gradient(135deg, rgba(14, 116, 144, 0.12), rgba(255, 255, 255, 0.94) 45%, rgba(15, 23, 42, 0.06));
+}
+
+.search-hero {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(255, 255, 255, 0.94) 42%, rgba(14, 116, 144, 0.1));
 }
 
 .developer-panel {
