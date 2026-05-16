@@ -10,7 +10,7 @@ services:
       - DATABASE_URL=sqlite+aiosqlite:///./data/agent.db
       - LLM_LOG_DIR=./data/llm-logs
       - RAG_STORAGE_DIR=./data/rag
-      - ALLOWED_ORIGINS=["http://localhost","http://127.0.0.1"]
+      - ALLOWED_ORIGINS=http://localhost,http://127.0.0.1
     volumes:
       - ./data:/app/data
     restart: unless-stopped
