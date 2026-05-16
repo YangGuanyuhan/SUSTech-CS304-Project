@@ -29,7 +29,7 @@ from pydantic_ai.tools import DeferredToolRequests, ToolApproved, ToolDenied
 from sqlalchemy.orm import Session
 
 from backend.models.tooling import ToolTrace
-from backend.services.agent_tool_service import AgentToolService
+from backend.services.agent_tool_service import AgentToolService, ToolExecutionError
 from backend.services.chat_file_service import ChatFileService
 from backend.services.rag_service import RAGServiceError
 from backend.services.runtime_settings import runtime_settings
@@ -71,6 +71,12 @@ Tool usage rules:
 15. RAG indexing is limited to directories configured in the Knowledge Base page. Use
     rag_index_folder with a relative path under the default RAG directory whenever possible.
     Do not ask to index arbitrary computer paths outside the configured RAG roots.
+16. For Blackboard file download requests, use only this sequence:
+    blackboard_get_all_courses if you need the course_id, then blackboard_download_files.
+    Use the query argument for folder/topic names such as "lab9". Return browser_download_url
+    links to the user instead of claiming you saved files locally.
+17. For Blackboard file download requests, never call calendar tools, announcement tools,
+    webpage tools, or local file tools unless the user explicitly asks for those separate actions.
 
 Response style:
 - Be concise and practical.
@@ -171,6 +177,12 @@ async def build_tool_examples_prompt(session: Session, user_query: str) -> str:
         relevant_tools.append("read_local_file")
     if any(word in query_lower for word in ["class", "courses"]):
         relevant_tools.append("blackboard_get_all_courses")
+    if any(word in query_lower for word in ["download", "下载"]) and any(
+        word in query_lower
+        for word in ["blackboard", "bb", "course", "课程", "lab", "文件", "file"]
+    ):
+        relevant_tools.append("blackboard_get_all_courses")
+        relevant_tools.append("blackboard_download_files")
 
     if not relevant_tools:
         return ""
@@ -303,14 +315,26 @@ class PydanticAIRuntime:
                     chat_session_id=ctx.deps.session_id,
                     workspace_root=ctx.deps.workspace_root,
                 )
-            except Exception as exc:
+            except ToolExecutionError as exc:
                 running_event.status = "failed"
                 running_event.output = json.dumps(
-                    {"ok": False, "error": str(exc)},
+                    {"ok": False, "tool_name": tool_name, "error": str(exc)},
                     ensure_ascii=False,
                 )
                 await _notify_tool_events(ctx)
-                raise
+                return running_event.output
+            except Exception as exc:
+                running_event.status = "failed"
+                running_event.output = json.dumps(
+                    {
+                        "ok": False,
+                        "tool_name": tool_name,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    },
+                    ensure_ascii=False,
+                )
+                await _notify_tool_events(ctx)
+                return running_event.output
 
             running_event.status = "failed" if '"ok": false' in output.lower() else "completed"
             running_event.output = output
@@ -608,6 +632,34 @@ class PydanticAIRuntime:
         @agent.tool(name="blackboard_get_calendar_items")
         async def blackboard_get_calendar_items(ctx: RunContext[AgentDeps]) -> str:
             return await _execute_tool(ctx, "blackboard_get_calendar_items", {})
+
+        @agent.tool(name="blackboard_download_files")
+        async def blackboard_download_files(
+            ctx: RunContext[AgentDeps],
+            course_id: str,
+            node_id: str | None = None,
+            query: str | None = None,
+            max_files: int = 100,
+        ) -> str:
+            """
+            Find files from a Blackboard course/folder and return browser-download URLs.
+
+            Args:
+                course_id: The course ID from blackboard_get_all_courses.
+                node_id: Optional specific folder/node ID to download from.
+                query: Optional folder/file title filter, e.g. lab9.
+                max_files: Maximum number of matching file links to return.
+            """
+            return await _execute_tool(
+                ctx,
+                "blackboard_download_files",
+                {
+                    "course_id": course_id,
+                    "node_id": node_id,
+                    "query": query,
+                    "max_files": max_files,
+                },
+            )
 
         @agent.tool(name="email_test_connection")
         async def email_test_connection(ctx: RunContext[AgentDeps]) -> str:

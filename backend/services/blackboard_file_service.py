@@ -22,7 +22,7 @@ class BBFile:
     id: str
     file_name: str
     download_url: str
-    parent_content: BBContent = None
+    parent_content: BBContent | None = None
 
 
 @dataclass
@@ -156,8 +156,9 @@ class BBFileManager:
             return
 
         try:
-            # Fetch child contents
-            if node.type in ("x-bb-course", "x-bb-folder"):
+            # Blackboard can report children under document/lesson-like nodes too,
+            # so follow has_children instead of only folder nodes.
+            if node.type == "x-bb-course" or node.has_children:
                 if node.type == "x-bb-course":
                     url = f"{self.BASE_URL}/courses/{node.course_id}/contents"
                 else:
@@ -166,7 +167,7 @@ class BBFileManager:
                     data = await self._get_json(url)
                     for item in data.get("results", []):
                         handler = item.get("contentHandler", {}).get("id", "")
-                        ctype = handler.split("/")[-1] if "/" in handler else "unknown"
+                        ctype = handler.rsplit("/", 1)[-1] if handler else "unknown"
                         child = BBContent(
                             id=item["id"],
                             title=item["title"],
@@ -179,10 +180,10 @@ class BBFileManager:
                 except Exception as e:
                     print(f"[WARN] Failed to fetch children ({node.title}): {e}")
 
-            # Fetch attachments for attachment-capable content types.
-            # Folders usually return 400 on /attachments and should be skipped.
-            attachment_types = {"x-bb-document", "x-bb-file", "x-bb-assignment"}
-            if node.type in attachment_types:
+            # Fetch attachments for content-like nodes. Lessons and some unknown
+            # handler types can still expose attachments. Folders usually return
+            # 400 and are skipped to avoid unnecessary probes.
+            if node.type not in {"x-bb-course", "x-bb-folder"}:
                 attach_url = (
                     f"{self.BASE_URL}/courses/{node.course_id}/contents/{node.id}/attachments"
                 )
