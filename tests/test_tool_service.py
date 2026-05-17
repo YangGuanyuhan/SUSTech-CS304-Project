@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic_ai.tools import DeferredToolRequests
 
-from backend.config import get_settings
 from backend.agent.core import StudentProductivityAgent
+from backend.config import get_settings
 from backend.models.rag import RAGDirectorySettings
 from backend.models.tooling import AgentTurnResult
 from backend.services.agent_tool_service import AgentToolService, ToolExecutionError
