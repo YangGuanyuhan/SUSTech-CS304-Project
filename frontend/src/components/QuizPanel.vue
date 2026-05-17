@@ -35,7 +35,7 @@
             <span>{{ labelForType(question.question_type) }}</span>
           </div>
         </div>
-        <p class="quiz-prompt">{{ question.prompt }}</p>
+        <div class="markdown-body quiz-prompt" v-html="renderMarkdown(question.prompt)" />
 
         <!-- Single Choice -->
         <div v-if="question.question_type === 'single_choice'" class="quiz-options">
@@ -46,7 +46,7 @@
           >
             <input v-model="answers[question.id]" type="radio" :name="question.id" :value="option" />
             <span class="option-indicator"></span>
-            <span class="option-text">{{ option }}</span>
+            <span class="option-text markdown-body" v-html="renderMarkdown(option)" />
           </label>
         </div>
 
@@ -85,8 +85,8 @@
             </svg>
             {{ scoreLabel(resultMap[question.id]) }}
           </span>
-          <p class="feedback"><strong>反馈：</strong> {{ resultMap[question.id].feedback }}</p>
-          <p class="reference"><strong>正确答案：</strong> {{ resultMap[question.id].correct_answer }}</p>
+          <div class="feedback markdown-body"><strong>反馈：</strong><span v-html="renderMarkdown(resultMap[question.id].feedback)" /></div>
+          <div class="reference markdown-body"><strong>正确答案：</strong><span v-html="renderMarkdown(resultMap[question.id].correct_answer)" /></div>
         </div>
       </article>
     </div>
@@ -105,6 +105,7 @@
 <script setup>
 import { computed, reactive, ref } from "vue";
 import { submitQuizAttempt } from "../api/client";
+import { renderMarkdown } from "../utils/markdown.js";
 
 const props = defineProps({
   quiz: {
@@ -436,6 +437,47 @@ async function submitAnswers() {
   margin: 0;
   font-size: 13px;
   color: var(--text-secondary);
+}
+
+.markdown-body :deep(p) {
+  margin: 0 0 8px;
+}
+
+.markdown-body :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.markdown-body :deep(ul),
+.markdown-body :deep(ol) {
+  margin: 0 0 8px 16px;
+  padding: 0;
+}
+
+.markdown-body :deep(code) {
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: rgba(28, 36, 48, 0.08);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.92em;
+}
+
+.markdown-body :deep(pre) {
+  margin: 0 0 8px;
+  padding: 14px;
+  border-radius: 16px;
+  overflow: auto;
+  background: rgba(28, 36, 48, 0.92);
+  color: white;
+}
+
+.markdown-body :deep(pre code) {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.markdown-body :deep(a) {
+  color: var(--accent-orange);
 }
 
 @media (max-width: 600px) {
