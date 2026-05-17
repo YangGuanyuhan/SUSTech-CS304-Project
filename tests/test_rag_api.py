@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,6 +10,10 @@ from backend.config import get_settings
 from backend.db.database import get_db_session
 from backend.main import app
 from backend.services.rag_service import RAGService
+
+
+def shared_root() -> Path:
+    return Path(get_settings().shared_workspace_dir).resolve()
 
 
 @pytest.fixture()
@@ -23,7 +28,7 @@ def api_client(db_session) -> Iterator[TestClient]:
 
 
 def test_rag_settings_api_round_trip(api_client, tmp_path):
-    root = tmp_path / "notes"
+    root = shared_root()
     default = root / "course-a"
     default.mkdir(parents=True)
 
@@ -47,9 +52,9 @@ def test_rag_settings_api_round_trip(api_client, tmp_path):
 
 
 def test_rag_settings_api_rejects_default_outside_allowed_root(api_client, tmp_path):
-    root = tmp_path / "notes"
+    root = shared_root()
     outside = tmp_path / "outside"
-    root.mkdir()
+    root.mkdir(parents=True, exist_ok=True)
     outside.mkdir()
 
     response = api_client.put(
@@ -62,12 +67,12 @@ def test_rag_settings_api_rejects_default_outside_allowed_root(api_client, tmp_p
     )
 
     assert response.status_code == 400
-    assert "Default RAG directory" in response.json()["detail"]
+    assert "shared workspace" in response.json()["detail"]
 
 
 def test_rag_index_folder_api_uses_default_directory(api_client, tmp_path):
-    root = tmp_path / "notes"
-    root.mkdir()
+    root = shared_root()
+    root.mkdir(parents=True, exist_ok=True)
     (root / "policy.md").write_text("The add/drop deadline is Friday.", encoding="utf-8")
     api_client.put(
         "/api/rag/settings",
@@ -87,9 +92,9 @@ def test_rag_index_folder_api_uses_default_directory(api_client, tmp_path):
 
 
 def test_rag_index_folder_api_rejects_unauthorized_absolute_path(api_client, tmp_path):
-    root = tmp_path / "notes"
+    root = shared_root()
     outside = tmp_path / "outside"
-    root.mkdir()
+    root.mkdir(parents=True, exist_ok=True)
     outside.mkdir()
     api_client.put(
         "/api/rag/settings",
@@ -103,7 +108,7 @@ def test_rag_index_folder_api_rejects_unauthorized_absolute_path(api_client, tmp
     response = api_client.post("/api/rag/index-folder", json={"path": str(outside)})
 
     assert response.status_code == 400
-    assert "outside the authorized directories" in response.json()["detail"]
+    assert "outside the shared workspace" in response.json()["detail"]
 
 
 def test_rag_session_file_upload_and_query(api_client, tmp_path, monkeypatch):

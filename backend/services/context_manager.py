@@ -6,6 +6,13 @@ import tiktoken
 from sqlalchemy.orm import Session
 
 
+class ApproximateEncoding:
+    """Offline fallback when tiktoken cannot load its bundled encoding data."""
+
+    def encode(self, text: str) -> list[str]:
+        return [text[index : index + 4] for index in range(0, len(text), 4)]
+
+
 class TokenCounter:
     """Estimate token counts for messages."""
 
@@ -13,9 +20,12 @@ class TokenCounter:
         """Initialize with a model name for tiktoken encoding."""
         try:
             self.encoding = tiktoken.encoding_for_model(model)
-        except KeyError:
-            # Fallback to cl100k_base for unknown models (works for most modern models)
-            self.encoding = tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            try:
+                # Fallback to cl100k_base for unknown models (works for most modern models)
+                self.encoding = tiktoken.get_encoding("cl100k_base")
+            except Exception:
+                self.encoding = ApproximateEncoding()
 
     def count_tokens(self, text: str) -> int:
         """Count tokens in a text string."""

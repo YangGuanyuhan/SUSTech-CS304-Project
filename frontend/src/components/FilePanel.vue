@@ -37,14 +37,14 @@
           <input
             v-model="ragFolderPath"
             type="text"
-            placeholder="Folder path inside the chat workspace"
+            placeholder="Shared folder path, empty means root"
           />
         </div>
         <label class="kb-check">
           <input v-model="ragRecursive" type="checkbox" />
           <span>Recursive</span>
         </label>
-        <button class="refresh-btn" :disabled="ragIndexing || !ragFolderPath.trim()" @click="indexRagFolder">
+        <button class="refresh-btn" :disabled="ragIndexing" @click="indexRagFolder">
           {{ ragIndexing ? 'Indexing...' : 'Index' }}
         </button>
         <button class="refresh-btn secondary" :disabled="ragLoading" @click="loadRagSources">
@@ -245,8 +245,7 @@ const loadRagStatus = async () => {
 }
 
 const indexRagFolder = async () => {
-  const folder = ragFolderPath.value.trim()
-  if (!folder) return
+  const folder = ragFolderPath.value.trim() || '.'
   await loadRagStatus()
   if (ragStatus.value && !ragStatus.value.ready) {
     setStatus(`RAG is not ready: ${(ragStatus.value.issues || []).join(' ')}`, 'error')
@@ -256,8 +255,7 @@ const indexRagFolder = async () => {
   try {
     setStatus('Indexing knowledge folder...', 'info')
     const response = await apiClient.post('/rag/index-folder', {
-      path: '.',
-      workspace_root: folder,
+      path: folder,
       recursive: ragRecursive.value
     })
     const summary = response.data?.data

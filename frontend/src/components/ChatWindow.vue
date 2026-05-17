@@ -68,7 +68,7 @@
         </div>
         <div class="toolbar-actions">
           <label class="workspace-field">
-            <span>Workspace Root</span>
+            <span>Shared Workspace</span>
             <WorkspaceDirectoryPicker
               v-model="activeConversation.workspaceRoot"
               @error="handleWorkspacePickerError"

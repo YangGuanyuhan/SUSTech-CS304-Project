@@ -17,7 +17,10 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
 # Copy dependency manifests (README.md required by hatchling build backend)
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev && \
+    uv pip install --index-url https://download.pytorch.org/whl/cpu --force-reinstall torch torchvision && \
+    rm -rf /app/.venv/lib/python*/site-packages/nvidia* \
+           /root/.cache /app/.venv/cache
 
 # -------------------------
 # Stage 2: Final runtime
@@ -34,8 +37,8 @@ COPY --from=deps /app/.venv /app/.venv
 # Copy application code
 COPY backend/ ./backend/
 
-# Prepare data directory
-RUN mkdir -p /app/data && chown -R appuser:appuser /app/data
+# Prepare writable directories
+RUN mkdir -p /app/data /app/shared && chown -R appuser:appuser /app/data /app/shared
 
 USER appuser
 

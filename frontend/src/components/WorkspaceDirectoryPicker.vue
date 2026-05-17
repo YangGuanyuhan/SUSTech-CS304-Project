@@ -5,14 +5,14 @@
       :value="modelValue"
       type="text"
       :placeholder="placeholder"
-      title="Selected workspace root"
-      @input="emit('update:modelValue', $event.target.value)"
+      title="Selected shared folder"
+      readonly
     />
     <button
       class="workspace-picker-btn"
       type="button"
       :disabled="disabled || pickerOpen"
-      title="Select workspace directory"
+      title="Select shared folder"
       @click="openPicker"
     >
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -24,11 +24,11 @@
 
   <teleport to="body">
     <div v-if="pickerOpen" class="directory-modal" @click.self="closePicker">
-      <section class="directory-dialog" role="dialog" aria-modal="true" aria-label="Select workspace directory">
+      <section class="directory-dialog" role="dialog" aria-modal="true" aria-label="Select shared folder">
         <header class="directory-header">
           <div>
-            <p>Workspace Root</p>
-            <h3>{{ currentPath || "Select Directory" }}</h3>
+            <p>Shared Folder</p>
+            <h3>{{ currentDisplayPath || "Select Directory" }}</h3>
           </div>
           <button class="directory-icon-btn" type="button" title="Close" @click="closePicker">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -38,7 +38,7 @@
           </button>
         </header>
 
-        <div v-if="shortcuts.length || roots.length" class="directory-location-groups">
+        <div v-if="shortcuts.length" class="directory-location-groups">
           <div v-if="shortcuts.length" class="directory-location-group">
             <span>Quick Access</span>
             <button
@@ -49,18 +49,6 @@
               @click="loadDirectory(shortcut.path)"
             >
               {{ shortcut.name }}
-            </button>
-          </div>
-          <div v-if="roots.length" class="directory-location-group">
-            <span>Drives</span>
-            <button
-              v-for="root in roots"
-              :key="root.path"
-              type="button"
-              :class="{ active: root.path === currentPath }"
-              @click="loadDirectory(root.path)"
-            >
-              {{ root.name }}
             </button>
           </div>
         </div>
@@ -132,7 +120,7 @@ const props = defineProps({
   },
   placeholder: {
     type: String,
-    default: "E:\\2026_Spring\\Course Notes"
+    default: "Shared folder"
   }
 });
 
@@ -141,9 +129,9 @@ const emit = defineEmits(["update:modelValue", "error"]);
 const pickerOpen = ref(false);
 const loading = ref(false);
 const currentPath = ref("");
+const currentDisplayPath = ref("");
 const parentPath = ref("");
 const entries = ref([]);
-const roots = ref([]);
 const shortcuts = ref([]);
 const errorMessage = ref("");
 
@@ -154,9 +142,9 @@ async function loadDirectory(path = "") {
     const response = await listWorkspaceDirectories(path);
     const data = response.data || {};
     currentPath.value = data.path || "";
+    currentDisplayPath.value = data.display_path || data.relative_path || "";
     parentPath.value = data.parent || "";
     entries.value = data.entries || [];
-    roots.value = data.roots || [];
     shortcuts.value = data.shortcuts || [];
   } catch (error) {
     errorMessage.value = error.message;

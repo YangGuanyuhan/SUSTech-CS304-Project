@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     tavily_api_key: str | None = None
 
     database_url: str = "sqlite+aiosqlite:///./data/agent.db"
+    shared_workspace_dir: str = "./shared"
     search_timeout: int = 30
     api_timeout: int = 60
     task_timeout: int = 120

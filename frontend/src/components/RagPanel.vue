@@ -102,98 +102,25 @@
           </svg>
         </div>
         <div>
-          <h3>工作目录</h3>
-          <p>设置当前对话使用的本地项目目录。</p>
+          <h3>共享文件夹</h3>
+          <p>Docker 部署时，资料放在宿主机 shared/ 文件夹内；这里只能选择共享文件夹内的子目录。</p>
         </div>
       </div>
       <div class="workspace-config">
         <label class="workspace-field">
-          <span>工作目录</span>
+          <span>当前目录</span>
           <WorkspaceDirectoryPicker
             v-model="workspaceRootModel"
-            placeholder="E:\2026_Spring\Course Notes"
+            placeholder="共享文件夹根目录"
             @error="handleDirectoryPickerError"
           />
         </label>
-        <button class="primary" type="button" :disabled="!workspaceRootModel.trim()" @click="saveWorkspaceRoot">
-          保存目录
-        </button>
+        <button class="primary" type="button" @click="saveWorkspaceRoot">使用此目录</button>
       </div>
     </section>
 
     <!-- Two Column Layout -->
     <main class="rag-layout">
-      <!-- Directory Permissions -->
-      <section class="content-panel">
-        <div class="panel-heading">
-          <div class="heading-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-            </svg>
-          </div>
-          <div>
-            <h3>目录权限</h3>
-            <p>模型只能索引这里授权过的目录，默认目录也必须在授权目录内。</p>
-          </div>
-        </div>
-
-        <form class="config-form" @submit.prevent="addAllowedRoot">
-          <label class="full">
-            <span>授权目录</span>
-            <input v-model="newRoot" type="text" placeholder="E:\2026_Spring\Course Notes" />
-          </label>
-          <div class="actions full">
-            <WorkspaceDirectoryPicker
-              v-model="newRoot"
-              button-only
-              :disabled="saving"
-              @error="handleDirectoryPickerError"
-            />
-            <button type="submit" class="primary" :disabled="saving || !newRoot.trim()">添加目录</button>
-          </div>
-        </form>
-
-        <div v-if="settings.allowed_roots.length" class="root-list">
-          <article v-for="root in settings.allowed_roots" :key="root" class="root-row">
-            <div class="root-info">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-              </svg>
-              <code>{{ root }}</code>
-            </div>
-            <div class="root-actions">
-              <button class="ghost" @click="makeDefault(root)">设为默认</button>
-              <button class="danger" @click="removeAllowedRoot(root)">移除</button>
-            </div>
-          </article>
-        </div>
-        <p v-else class="empty-hint">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/>
-            <line x1="12" y1="8" x2="12" y2="12"/>
-            <line x1="12" y1="16" x2="12.01" y2="16"/>
-          </svg>
-          还没有授权目录。先添加一个课程资料文件夹。
-        </p>
-
-        <form class="config-form default-form" @submit.prevent="saveDefaultRoot">
-          <label class="full">
-            <span>默认 RAG 目录</span>
-            <input v-model="defaultRootDraft" type="text" placeholder="必须位于某个授权目录内" list="allowed-root-options" />
-            <datalist id="allowed-root-options">
-              <option v-for="root in settings.allowed_roots" :key="root" :value="root" />
-            </datalist>
-          </label>
-          <label class="checkbox-field">
-            <input v-model="settings.recursive_default" type="checkbox" />
-            <span>默认递归索引</span>
-          </label>
-          <div class="actions">
-            <button type="submit" class="primary" :disabled="saving">保存</button>
-          </div>
-        </form>
-      </section>
-
       <!-- Indexing -->
       <section class="content-panel">
         <div class="panel-heading">
@@ -206,15 +133,23 @@
           </div>
           <div>
             <h3>索引</h3>
-            <p>默认索引当前默认目录，也可以填授权目录内的相对路径或绝对子目录。</p>
+            <p>默认索引共享文件夹根目录，也可以选择共享文件夹内的子目录。</p>
           </div>
         </div>
 
         <form class="config-form" @submit.prevent="indexKnowledge">
           <label class="full">
             <span>索引路径</span>
-            <input v-model="indexPath" type="text" placeholder="留空或 . 表示默认目录" />
+            <input v-model="indexPath" type="text" placeholder="留空或 . 表示共享文件夹根目录" />
           </label>
+          <div class="actions full">
+            <WorkspaceDirectoryPicker
+              v-model="indexPath"
+              button-only
+              :disabled="indexing"
+              @error="handleDirectoryPickerError"
+            />
+          </div>
           <label class="checkbox-field">
             <input v-model="indexRecursive" type="checkbox" />
             <span>递归索引子目录</span>
@@ -417,9 +352,8 @@ function handleDirectoryPickerError(error) {
 
 function saveWorkspaceRoot() {
   const root = workspaceRootModel.value.trim();
-  if (!root) return;
   emit("update:workspaceRoot", root);
-  showMessage("工作目录已保存。", "success");
+  showMessage(root ? "共享工作目录已保存。" : "已使用共享文件夹根目录。", "success");
 }
 
 function applySettings(payload) {

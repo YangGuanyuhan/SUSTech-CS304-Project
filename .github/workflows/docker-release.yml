@@ -120,41 +120,9 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
-      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Free up disk space
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull images for export
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.ref_name }}
-          docker pull ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.ref_name }}
-
-      - name: Export images to tarball artifacts
-        run: |
-          mkdir -p release
-          docker save ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.ref_name }} \
-            | gzip > "release/backend-${{ github.ref_name }}.tar.gz"
-          docker save ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.ref_name }} \
-            | gzip > "release/frontend-${{ github.ref_name }}.tar.gz"
 
       - name: Prepare release bundle files
         run: |
@@ -195,18 +163,23 @@ jobs:
           cat > release/README.txt << 'EOF'
           # Docker Release
 
-          ## Quick Start (online - pull from ghcr.io)
+          Images are published to GitHub Container Registry (ghcr.io).
+
+          ## Quick Start
           ```bash
           docker compose -f docker-compose.yml up -d
           ```
 
-          ## Air-gapped / Offline Start (with tarballs)
+          ## Air-gapped / Offline Start
+          If you need to run in an air-gapped environment, export the images locally:
           ```bash
-          # 1. Load images from tarballs
-          docker load -i backend-*.tar.gz
-          docker load -i frontend-*.tar.gz
-
-          # 2. Start services
+          docker pull ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.ref_name }}
+          docker pull ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.ref_name }}
+          docker save ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.ref_name }} | gzip > backend.tar.gz
+          docker save ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.ref_name }} | gzip > frontend.tar.gz
+          # Transfer tar.gz files to the offline machine, then:
+          docker load -i backend.tar.gz
+          docker load -i frontend.tar.gz
           docker compose -f docker-compose.yml up -d
           ```
 
