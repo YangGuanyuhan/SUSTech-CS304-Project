@@ -77,6 +77,23 @@ class RuntimeEmailUpdate(BaseModel):
     replace_password: bool = False
 
 
+class RuntimeSearchConfig(BaseModel):
+    """Public runtime search config without exposing provider secrets."""
+
+    provider: str
+    api_key_configured: bool = False
+    timeout: int
+
+
+class RuntimeSearchUpdate(BaseModel):
+    """Writable runtime search config payload."""
+
+    provider: str
+    api_key: str | None = None
+    replace_api_key: bool = False
+    timeout: int | None = None
+
+
 class RuntimeSettingsManager:
     """Keep sensitive runtime config in process memory only."""
 
@@ -105,6 +122,14 @@ class RuntimeSettingsManager:
         )
         self._imap_host = settings.imap_host
         self._imap_port = settings.imap_port
+        # Search config
+        self._search_provider = settings.search_provider
+        self._search_timeout = settings.search_timeout
+        self._search_api_keys = {
+            "brave": settings.brave_api_key,
+            "bocha": settings.bocha_api_key,
+            "tavily": settings.tavily_api_key,
+        }
         self._lock = Lock()
 
     def _load_blackboard_password(self, stored_password: str | None) -> str | None:
@@ -270,6 +295,49 @@ class RuntimeSettingsManager:
 
         with self._lock:
             return self._smtp_password
+
+    # Search config methods
+    def get_search_config(self) -> RuntimeSearchConfig:
+        """Return safe runtime search config without exposing API keys."""
+
+        with self._lock:
+            provider = self._search_provider.strip().lower()
+            return RuntimeSearchConfig(
+                provider=provider,
+                api_key_configured=bool(self._search_api_keys.get(provider)) or provider == "mock",
+                timeout=self._search_timeout,
+            )
+
+    def update_search_config(self, update: RuntimeSearchUpdate) -> RuntimeSearchConfig:
+        """Update runtime search config. Empty api_key leaves the previous secret unchanged."""
+
+        with self._lock:
+            provider = update.provider.strip().lower()
+            self._search_provider = provider
+            if update.timeout is not None:
+                self._search_timeout = update.timeout
+            if update.replace_api_key:
+                self._search_api_keys[provider] = update.api_key.strip() if update.api_key else None
+            elif update.api_key:
+                self._search_api_keys[provider] = update.api_key.strip()
+            return RuntimeSearchConfig(
+                provider=provider,
+                api_key_configured=bool(self._search_api_keys.get(provider)) or provider == "mock",
+                timeout=self._search_timeout,
+            )
+
+    def get_secret_search_api_key(self, provider: str | None = None) -> str | None:
+        """Return the in-memory search API key for internal use only."""
+
+        with self._lock:
+            resolved_provider = (provider or self._search_provider).strip().lower()
+            return self._search_api_keys.get(resolved_provider)
+
+    def get_search_timeout(self) -> int:
+        """Return the runtime search timeout."""
+
+        with self._lock:
+            return self._search_timeout
 
 
 runtime_settings = RuntimeSettingsManager()

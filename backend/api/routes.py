@@ -36,6 +36,7 @@ from backend.api.schemas import (
     RAGIndexFolderRequest,
     RAGQueryRequest,
     RAGSettingsRequest,
+    SearchSettingsRequest,
 )
 from backend.config import get_settings
 from backend.db.database import get_db_session
@@ -58,6 +59,7 @@ from backend.services.runtime_settings import (
     RuntimeBlackboardUpdate,
     RuntimeEmailUpdate,
     RuntimeLLMUpdate,
+    RuntimeSearchUpdate,
     runtime_settings,
 )
 from backend.services.settings_service import SettingsService
@@ -587,6 +589,55 @@ async def test_email_settings(request: EmailSettingsRequest) -> ApiResponse[obje
         )
     except Exception as e:
         return ApiResponse(success=False, data={"error": f"Email test failed: {e}"})
+
+
+@router.get("/settings/search", response_model=ApiResponse[object])
+async def get_search_settings() -> ApiResponse[object]:
+    return ApiResponse(success=True, data=runtime_settings.get_search_config())
+
+
+@router.put("/settings/search", response_model=ApiResponse[object])
+async def update_search_settings(request: SearchSettingsRequest) -> ApiResponse[object]:
+    config = runtime_settings.update_search_config(
+        RuntimeSearchUpdate.model_validate(request.model_dump())
+    )
+    return ApiResponse(success=True, data=config)
+
+
+@router.post("/settings/search/test", response_model=ApiResponse[object])
+async def test_search_settings(request: SearchSettingsRequest) -> ApiResponse[object]:
+    previous = runtime_settings.get_search_config()
+    previous_secret = runtime_settings.get_secret_search_api_key(previous.provider)
+    runtime_settings.update_search_config(
+        RuntimeSearchUpdate(
+            provider=request.provider or previous.provider,
+            api_key=request.api_key,
+            replace_api_key=bool(request.api_key) or request.replace_api_key,
+            timeout=request.timeout if request.timeout is not None else previous.timeout,
+        )
+    )
+    try:
+        from backend.services.search_service import SearchService
+
+        results = await SearchService().search_web("南方科技大学", max_results=1)
+        return ApiResponse(
+            success=bool(results),
+            data={
+                "provider": runtime_settings.get_search_config().provider,
+                "result_count": len(results),
+                "preview": results[0].title if results else "",
+                "message": "Search provider responded" if results else "No search results returned",
+            },
+        )
+    finally:
+        runtime_settings.update_search_config(
+            RuntimeSearchUpdate(
+                provider=previous.provider,
+                api_key=previous_secret,
+                replace_api_key=True,
+                timeout=previous.timeout,
+            )
+        )
 
 
 @router.post("/chat")
