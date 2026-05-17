@@ -126,6 +126,7 @@ jobs:
 
       - name: Prepare release bundle files
         run: |
+          mkdir -p release
           cat > release/docker-compose.yml << 'COMPOSE'
           services:
             backend:
