@@ -10,6 +10,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from sqlalchemy.orm import Session
@@ -22,6 +23,8 @@ from backend.services.datetime_service import DateTimeService
 from backend.services.memory_service import MemoryService
 from backend.services.quiz_service import QuizService
 from backend.services.rag_service import RAGProviderError, RAGService, RAGServiceError
+from backend.services.runtime_settings import runtime_settings
+from backend.services.settings_service import SettingsService
 from backend.services.shared_workspace_service import SharedWorkspaceError, SharedWorkspaceService
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -34,10 +37,22 @@ _APPROVAL_REQUIRED_TOOLS = {
 }
 
 
+def _web_search_configured(settings: Any) -> bool:
+    from backend.services.runtime_settings import runtime_settings
+
+    search_config = runtime_settings.get_search_config()
+    provider = (
+        search_config.provider or str(getattr(settings, "search_provider", "brave")).strip().lower()
+    )
+    if provider == "mock":
+        return True
+    return bool(runtime_settings.get_secret_search_api_key(provider))
+
+
 def get_tool_definitions() -> list[dict[str, Any]]:
     """Return OpenAI-compatible tool schemas."""
 
-    return [
+    tools = [
         {
             "type": "function",
             "function": {
@@ -461,6 +476,38 @@ def get_tool_definitions() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "blackboard_download_files",
+                "description": "Find Blackboard files in a course or folder and return browser-download URLs. Use query for folders/topics such as lab9. Use course_id from blackboard_get_all_courses.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "course_id": {
+                            "type": "string",
+                            "description": "The course ID from blackboard_get_all_courses.",
+                        },
+                        "node_id": {
+                            "type": "string",
+                            "description": "Optional specific node/folder ID to download from that node only.",
+                        },
+                        "query": {
+                            "type": "string",
+                            "description": "Optional case-insensitive folder/file title filter, e.g. lab9 or assignment 3.",
+                        },
+                        "max_files": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 500,
+                            "default": 100,
+                            "description": "Maximum number of matching file links to return.",
+                        },
+                    },
+                    "required": ["course_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "email_test_connection",
                 "description": "Test whether the configured email SMTP server is reachable and credentials are valid.",
                 "parameters": {
@@ -489,6 +536,58 @@ def get_tool_definitions() -> list[dict[str, Any]]:
             },
         },
     ]
+
+    # Only add web_search tool if the configured search provider is available.
+    from backend.config import get_settings
+
+    settings = get_settings()
+    if _web_search_configured(settings):
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": (
+                        "Search the internet using Brave Search. "
+                        "Use for current events, real-time data, prices, weather, "
+                        "recent events, or uncertain facts."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Search keywords, keep concise and precise",
+                            },
+                            "max_results": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 10,
+                                "default": 5,
+                            },
+                            "country": {
+                                "type": "string",
+                                "default": "CN",
+                                "description": "Country preference (CN, US, JP, etc.)",
+                            },
+                            "search_lang": {
+                                "type": "string",
+                                "default": "zh-hans",
+                                "description": "Search language (zh-hans, en, etc.)",
+                            },
+                            "freshness": {
+                                "type": "string",
+                                "enum": ["pd", "pw", "pm", "py"],
+                                "description": "Time filter: pd=today, pw=this week, pm=this month, py=this year",
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                },
+            }
+        )
+
+    return tools
 
 
 class ToolExecutionError(ValueError):
@@ -596,12 +695,16 @@ class AgentToolService:
             return await self._blackboard_test_api_available()
         if tool_name == "blackboard_get_calendar_items":
             return await self._blackboard_get_calendar_items()
+        if tool_name == "blackboard_download_files":
+            return await self._blackboard_download_files(arguments)
         if tool_name == "email_test_connection":
             return await self._email_test_connection()
         if tool_name == "email_read_latest":
             return await self._email_read_latest(arguments)
         if tool_name == "email_send":
             return await self._email_send(arguments)
+        if tool_name == "web_search":
+            return await self._web_search(arguments)
         raise ToolExecutionError(f"Unknown tool `{tool_name}`.")
 
     async def _memory_search(self, arguments: dict[str, Any]) -> str:
@@ -900,11 +1003,31 @@ class AgentToolService:
         max_chars = int(arguments.get("max_chars", 12000))
         if not url.startswith(("http://", "https://")):
             raise ToolExecutionError("`url` must start with http:// or https://")
-        async with httpx.AsyncClient(
-            timeout=20.0, follow_redirects=True, trust_env=False
-        ) as client:
-            response = await client.get(url)
-            response.raise_for_status()
+        try:
+            async with httpx.AsyncClient(
+                timeout=20.0, follow_redirects=True, trust_env=False
+            ) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "url": url,
+                    "status_code": exc.response.status_code,
+                    "error": f"Fetch failed with HTTP {exc.response.status_code}",
+                },
+                ensure_ascii=False,
+            )
+        except httpx.HTTPError as exc:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "url": url,
+                    "error": f"Fetch failed: {exc}",
+                },
+                ensure_ascii=False,
+            )
         content_type = response.headers.get("content-type", "")
         text = response.text
         if "html" in content_type:
@@ -1093,7 +1216,8 @@ class AgentToolService:
         return json.dumps(datetime_info.model_dump(mode="json"), ensure_ascii=False)
 
     async def _blackboard_get_all_courses(self) -> str:
-        service = BlackboardService(self.session, DemoBlackboardProvider())
+        provider = await self._authenticated_blackboard_provider()
+        service = BlackboardService(self.session, provider)
         result = await service.get_all_courses()
         return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
 
@@ -1101,7 +1225,8 @@ class AgentToolService:
         course_id = str(arguments.get("course_id", "")).strip()
         if not course_id:
             raise ToolExecutionError("`course_id` is required.")
-        service = BlackboardService(self.session, DemoBlackboardProvider())
+        provider = await self._authenticated_blackboard_provider()
+        service = BlackboardService(self.session, provider)
         result = await service.get_announcements(course_id)
         return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
 
@@ -1110,8 +1235,7 @@ class AgentToolService:
 
         logger = logging.getLogger(__name__)
 
-        from backend.services.runtime_settings import runtime_settings
-
+        await self._ensure_blackboard_runtime_from_profile()
         bb_config = runtime_settings.get_blackboard_config()
         password = runtime_settings.get_secret_blackboard_password()
 
@@ -1122,13 +1246,28 @@ class AgentToolService:
         provider = DemoBlackboardProvider(
             student_id=bb_config.student_id, password=password, base_url=bb_config.base_url
         )
-        available = await provider.test_api_available()
-        logger.info(f"BB test_api_available result: {available}")
-        return json.dumps({"available": available}, ensure_ascii=False)
+        authenticated = await provider.bypass_cas_login()
+        api_available = await provider.test_api_available() if authenticated else False
+        logger.info(
+            "BB test_api_available result: authenticated=%s, api_available=%s",
+            authenticated,
+            api_available,
+        )
+        return json.dumps(
+            {
+                "available": authenticated,
+                "authenticated": authenticated,
+                "api_available": api_available,
+                "message": (
+                    "Blackboard CAS 登录成功。"
+                    if authenticated
+                    else "Blackboard CAS 登录失败，请检查学号和 CAS 密码。"
+                ),
+            },
+            ensure_ascii=False,
+        )
 
     async def _blackboard_get_calendar_items(self) -> str:
-        from backend.services.runtime_settings import runtime_settings
-
         bb_config = runtime_settings.get_blackboard_config()
         password = runtime_settings.get_secret_blackboard_password()
         provider = DemoBlackboardProvider(
@@ -1136,6 +1275,210 @@ class AgentToolService:
         )
         items = await provider.get_calendar_items()
         return json.dumps({"items": items}, ensure_ascii=False)
+
+    async def _blackboard_download_files(self, arguments: dict[str, Any]) -> str:
+        course_id = str(arguments.get("course_id", "")).strip()
+        if not course_id:
+            raise ToolExecutionError("`course_id` is required for blackboard_download_files.")
+
+        node_id = self._optional_string(arguments.get("node_id"))
+        query = self._optional_string(arguments.get("query"))
+        try:
+            max_files = int(arguments.get("max_files") or 100)
+        except (TypeError, ValueError) as exc:
+            raise ToolExecutionError("`max_files` must be an integer between 1 and 500.") from exc
+        max_files = max(1, min(max_files, 500))
+
+        provider = await self._authenticated_blackboard_provider()
+
+        from backend.services.blackboard_file_service import BBFileManager
+
+        if provider._cas_session is None:
+            raise ToolExecutionError("Blackboard 未登录，请在设置中配置账号密码。")
+        cookies = provider._cas_session.cookies.get_dict()
+        manager = BBFileManager(cookies, download_root="./BB_Files")
+
+        try:
+            node = await self._build_blackboard_node(manager, course_id=course_id, node_id=node_id)
+            await self._load_blackboard_tree(manager, node)
+            files = self._collect_files_from_node(
+                node,
+                course_id,
+                query=self._normalize_blackboard_text(query) if query else None,
+            )
+            total_found = len(files)
+            files = files[:max_files]
+
+            if not files:
+                return json.dumps(
+                    {
+                        "message": "没有找到匹配的可下载文件",
+                        "course_id": course_id,
+                        "node_id": node_id,
+                        "query": query,
+                        "files_found": 0,
+                        "files_returned": 0,
+                        "files": [],
+                    },
+                    ensure_ascii=False,
+                )
+
+            download_urls = []
+            for file_info in files:
+                relative_url = (
+                    f"/blackboard/files/download?course_id={quote(course_id, safe='')}"
+                    f"&content_id={quote(file_info['content_id'], safe='')}"
+                    f"&attachment_id={quote(file_info['id'], safe='')}"
+                    f"&file_name={quote(file_info['file_name'], safe='')}"
+                )
+                api_url = f"/api{relative_url}"
+                download_urls.append(
+                    {
+                        "file_name": file_info["file_name"],
+                        "path": file_info["path"],
+                        "content_id": file_info["content_id"],
+                        "attachment_id": file_info["id"],
+                        "download_url": api_url,
+                        "browser_download_url": f"http://127.0.0.1:8000{api_url}",
+                    }
+                )
+
+            return json.dumps(
+                {
+                    "message": (
+                        f"找到 {total_found} 个匹配文件，返回 {len(download_urls)} 个浏览器下载链接。"
+                        "打开 browser_download_url 会使用浏览器默认下载路径。"
+                    ),
+                    "course_id": course_id,
+                    "node_id": node_id,
+                    "query": query,
+                    "files_found": total_found,
+                    "files_returned": len(download_urls),
+                    "truncated": total_found > len(download_urls),
+                    "files": download_urls,
+                },
+                ensure_ascii=False,
+            )
+        finally:
+            await manager.close()
+
+    async def _authenticated_blackboard_provider(self) -> DemoBlackboardProvider:
+        await self._ensure_blackboard_runtime_from_profile()
+        bb_config = runtime_settings.get_blackboard_config()
+        password = runtime_settings.get_secret_blackboard_password()
+        provider = DemoBlackboardProvider(
+            student_id=bb_config.student_id,
+            password=password,
+            base_url=bb_config.base_url,
+        )
+        logged_in = await provider.bypass_cas_login()
+        if not logged_in or provider._cas_session is None:
+            raise ToolExecutionError("Blackboard 未登录，请在设置中配置账号密码。")
+        return provider
+
+    async def _ensure_blackboard_runtime_from_profile(self) -> None:
+        bb_config = runtime_settings.get_blackboard_config()
+        if bb_config.student_id:
+            return
+
+        profiles = await SettingsService(self.session).list_bb_profiles()
+        if profiles:
+            await SettingsService(self.session).apply_bb_profile(profiles[0].name)
+
+    async def _build_blackboard_node(self, manager, *, course_id: str, node_id: str | None):
+        from backend.services.blackboard_file_service import BBContent
+
+        if not node_id:
+            return BBContent(
+                id=course_id,
+                title=f"Course {course_id}",
+                type="x-bb-course",
+                course_id=course_id,
+                has_children=True,
+            )
+
+        node_title = "Target Node"
+        node_type = "x-bb-folder"
+        has_children = True
+        try:
+            metadata = await manager._get_json(
+                f"{manager.BASE_URL}/courses/{course_id}/contents/{node_id}"
+            )
+            node_title = str(metadata.get("title") or node_title)
+            handler = str(metadata.get("contentHandler", {}).get("id", "") or "")
+            node_type = handler.rsplit("/", 1)[-1] if handler else node_type
+            has_children = bool(metadata.get("hasChildren", has_children))
+        except Exception as exc:
+            print(f"[BB][agent_tool] failed to resolve node metadata for {node_id}: {exc}")
+
+        return BBContent(
+            id=node_id,
+            title=node_title,
+            type=node_type,
+            course_id=course_id,
+            has_children=has_children,
+        )
+
+    async def _load_blackboard_tree(
+        self, manager, node, *, depth: int = 0, max_depth: int = 12
+    ) -> None:
+        await manager.fetch_node_children(node)
+        if depth >= max_depth or not node.children:
+            return
+        await asyncio.gather(
+            *(
+                self._load_blackboard_tree(manager, child, depth=depth + 1, max_depth=max_depth)
+                for child in node.children
+            )
+        )
+
+    @staticmethod
+    def _normalize_blackboard_text(value: str | None) -> str:
+        text = re.sub(r"[\s_\-]+", "", str(value or "").casefold())
+        return re.sub(r"\d+", lambda match: str(int(match.group(0))), text)
+
+    def _collect_files_from_node(
+        self,
+        node,
+        course_id: str,
+        *,
+        query: str | None = None,
+        ancestor_matched: bool = False,
+        path: list[str] | None = None,
+    ) -> list:
+        files = []
+        current_path = [*(path or []), str(getattr(node, "title", "") or node.id)]
+        path_text = " / ".join(current_path)
+        node_matched = (
+            ancestor_matched or query is None or query in self._normalize_blackboard_text(path_text)
+        )
+
+        for attachment in node.attachments:
+            file_path = [*current_path, attachment.file_name]
+            file_path_text = " / ".join(file_path)
+            if node_matched or (query and query in self._normalize_blackboard_text(file_path_text)):
+                files.append(
+                    {
+                        "id": attachment.id,
+                        "file_name": attachment.file_name,
+                        "download_url": attachment.download_url,
+                        "content_id": node.id,
+                        "course_id": course_id,
+                        "path": file_path_text,
+                    }
+                )
+
+        for child in node.children:
+            files.extend(
+                self._collect_files_from_node(
+                    child,
+                    course_id,
+                    query=query,
+                    ancestor_matched=node_matched,
+                    path=current_path,
+                )
+            )
+        return files
 
     async def _email_test_connection(self) -> str:
         import smtplib
@@ -1324,6 +1667,55 @@ class AgentToolService:
                 {"ok": False, "error": f"Send failed: {e}"},
                 ensure_ascii=False,
             )
+
+    async def _web_search(self, arguments: dict[str, Any]) -> str:
+        """Execute web search using Brave Search API."""
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            raise ToolExecutionError("`query` is required for web_search.")
+
+        from backend.services.search_service import SearchService
+
+        service = SearchService()
+
+        try:
+            results = await service.search_web(
+                query=query,
+                max_results=int(arguments.get("max_results", 5)),
+                country=str(arguments.get("country", "CN")),
+                search_lang=str(arguments.get("search_lang", "zh-hans")),
+                freshness=arguments.get("freshness"),
+            )
+        except Exception as e:
+            return json.dumps(
+                {
+                    "results": [],
+                    "query": query,
+                    "count": 0,
+                    "message": f"Search failed: {e}",
+                },
+                ensure_ascii=False,
+            )
+
+        if not results:
+            return json.dumps(
+                {
+                    "results": [],
+                    "query": query,
+                    "count": 0,
+                    "message": "No search results found.",
+                },
+                ensure_ascii=False,
+            )
+
+        return json.dumps(
+            {
+                "results": [r.model_dump(mode="json") for r in results],
+                "query": query,
+                "count": len(results),
+            },
+            ensure_ascii=False,
+        )
 
     def _workspace_root(self, workspace_root: str | None) -> Path:
         try:

@@ -1,4 +1,4 @@
-const API_BASE = "http://127.0.0.1:8000/api";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000/api";
 
 async function parseJson(response) {
   if (!response.ok) {
@@ -237,6 +237,29 @@ export async function deleteEmailProfile(name) {
 export async function applyEmailProfile(name) {
   const response = await fetch(`${API_BASE}/settings/email/profiles/${encodeURIComponent(name)}/apply`, {
     method: "POST"
+  });
+  return parseJson(response);
+}
+
+export async function getSearchSettings() {
+  const response = await fetch(`${API_BASE}/settings/search`);
+  return parseJson(response);
+}
+
+export async function updateSearchSettings(payload) {
+  const response = await fetch(`${API_BASE}/settings/search`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function testSearchSettings(payload) {
+  const response = await fetch(`${API_BASE}/settings/search/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
   });
   return parseJson(response);
 }

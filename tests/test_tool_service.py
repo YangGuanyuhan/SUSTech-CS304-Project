@@ -367,6 +367,11 @@ async def test_blackboard_get_all_courses_tool_returns_payload(db_session, monke
     monkeypatch.setattr(agent_tool_service, "BlackboardService", FakeBlackboardService)
 
     service = AgentToolService(db_session)
+    monkeypatch.setattr(
+        service,
+        "_authenticated_blackboard_provider",
+        AsyncMock(return_value=object()),
+    )
     result_raw = await service.execute(
         "blackboard_get_all_courses",
         {},
@@ -377,3 +382,119 @@ async def test_blackboard_get_all_courses_tool_returns_payload(db_session, monke
     assert result["is_cached"] is False
     assert len(result["data"]) == 1
     assert result["data"][0]["course_id"] == "_101_1"
+
+
+async def test_blackboard_download_files_recurses_and_returns_browser_links(
+    db_session, monkeypatch
+):
+    from backend.services import blackboard_file_service
+    from backend.services.blackboard_file_service import BBContent, BBFile
+
+    class FakeCookieJar:
+        def get_dict(self):
+            return {"session": "ok"}
+
+    class FakeSession:
+        cookies = FakeCookieJar()
+
+    class FakeProvider:
+        _cas_session = FakeSession()
+
+    class FakeManager:
+        BASE_URL = "https://bb.example.test/learn/api/public/v1"
+
+        def __init__(self, cookies, download_root="./BB_Files"):
+            self.cookies = cookies
+            self.download_root = download_root
+
+        async def fetch_node_children(self, node):
+            if node.is_loaded:
+                return
+            if node.id == "_101_1":
+                node.children = [
+                    BBContent(
+                        id="lab9",
+                        title="Lab 09",
+                        type="x-bb-folder",
+                        course_id="_101_1",
+                        has_children=True,
+                        parent_node=node,
+                    ),
+                    BBContent(
+                        id="lab10",
+                        title="Lab 10",
+                        type="x-bb-folder",
+                        course_id="_101_1",
+                        has_children=True,
+                        parent_node=node,
+                    ),
+                ]
+            elif node.id == "lab9":
+                node.children = [
+                    BBContent(
+                        id="doc9",
+                        title="Spec",
+                        type="x-bb-document",
+                        course_id="_101_1",
+                        parent_node=node,
+                    )
+                ]
+            elif node.id == "doc9":
+                node.attachments = [
+                    BBFile(
+                        id="att 1",
+                        file_name="Lab 9 中文.pdf",
+                        download_url="https://bb.example.test/raw",
+                        parent_content=node,
+                    )
+                ]
+            elif node.id == "lab10":
+                node.children = [
+                    BBContent(
+                        id="doc10",
+                        title="Spec",
+                        type="x-bb-document",
+                        course_id="_101_1",
+                        parent_node=node,
+                    )
+                ]
+            elif node.id == "doc10":
+                node.attachments = [
+                    BBFile(
+                        id="att 10",
+                        file_name="Lab 10.pdf",
+                        download_url="https://bb.example.test/raw10",
+                        parent_content=node,
+                    )
+                ]
+            node.is_loaded = True
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(blackboard_file_service, "BBFileManager", FakeManager)
+
+    service = AgentToolService(db_session)
+    monkeypatch.setattr(
+        service,
+        "_authenticated_blackboard_provider",
+        AsyncMock(return_value=FakeProvider()),
+    )
+
+    result_raw = await service.execute(
+        "blackboard_download_files",
+        {"course_id": "_101_1", "query": "lab9"},
+        chat_session_id="chat-1",
+        workspace_root=None,
+    )
+    result = json.loads(result_raw)
+
+    assert result["files_found"] == 1
+    assert result["files_returned"] == 1
+    assert result["files"][0]["file_name"] == "Lab 9 中文.pdf"
+    assert result["files"][0]["path"] == "Course _101_1 / Lab 09 / Spec / Lab 9 中文.pdf"
+    assert result["files"][0]["download_url"].startswith("/api/blackboard/files/download")
+    assert "attachment_id=att%201" in result["files"][0]["browser_download_url"]
+    assert (
+        "file_name=Lab%209%20%E4%B8%AD%E6%96%87.pdf" in result["files"][0]["browser_download_url"]
+    )
