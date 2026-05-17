@@ -1,0 +1,38 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: spa-backend
+    user: "1000:1000"
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:///./data/agent.db
+      - LLM_LOG_DIR=./data/llm-logs
+      - RAG_STORAGE_DIR=./data/rag
+      - SHARED_WORKSPACE_DIR=/app/shared
+      - ALLOWED_ORIGINS=http://localhost,http://127.0.0.1
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+      - ./BB_Files:/app/BB_Files
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: spa-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped

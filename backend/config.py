@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     bocha_api_key: str | None = None
 
     database_url: str = "sqlite+aiosqlite:///./data/agent.db"
+    shared_workspace_dir: str = "./shared"
     search_timeout: int = 30
     api_timeout: int = 60
     task_timeout: int = 120
@@ -57,9 +58,7 @@ class Settings(BaseSettings):
     rag_top_k: int = 5
     rag_index_timeout_seconds: int = 180
     rag_query_timeout_seconds: int = 20
-    allowed_origins: list[str] = Field(
-        default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
-    )
+    allowed_origins: str = Field(default="http://localhost:5173,http://127.0.0.1:5173")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

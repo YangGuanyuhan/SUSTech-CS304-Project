@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from backend.config import get_settings
 from backend.db.models import Base
 
 
@@ -21,6 +22,8 @@ def event_loop() -> Iterator[asyncio.AbstractEventLoop]:
 @pytest.fixture()
 def db_session(tmp_path) -> Iterator[Session]:
     os.environ["DATABASE_URL"] = f"sqlite+pysqlite:///{tmp_path}/test.db"
+    os.environ["SHARED_WORKSPACE_DIR"] = str(tmp_path / "shared")
+    get_settings.cache_clear()
     engine = create_engine(os.environ["DATABASE_URL"])
     Base.metadata.create_all(bind=engine)
     session_factory = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
@@ -30,3 +33,4 @@ def db_session(tmp_path) -> Iterator[Session]:
     finally:
         session.close()
         engine.dispose()
+        get_settings.cache_clear()

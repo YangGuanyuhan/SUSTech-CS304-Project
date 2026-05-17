@@ -86,11 +86,23 @@ npm run dev
 Open `http://127.0.0.1:5173`, go to the file panel, enter a local folder path in
 `Knowledge folder`, then click `Index`.
 
+Docker Compose mounts the host `./shared` directory into the backend container
+as `/app/shared`:
+
+```bash
+docker compose up --build
+```
+
+Put persistent files for local file tools and RAG under `shared/`. The frontend
+shared-folder picker and RAG indexing UI only browse this mounted directory.
+
 ## Folder Rules
 
-The folder path you enter is treated as the approved workspace root for that
-indexing run. The backend only reads files inside that folder. Original files are
-not copied or moved.
+Local file tools and RAG indexing are sandboxed to the configured shared
+workspace root (`SHARED_WORKSPACE_DIR`, default `./shared`, `/app/shared` in
+Docker). Paths outside that shared workspace are rejected, including absolute
+paths and symlinks that escape the shared folder. Original files are not copied
+or moved.
 
 Index data is stored under:
 

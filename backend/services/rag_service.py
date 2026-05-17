@@ -31,6 +31,7 @@ from backend.models.rag import (
 )
 from backend.services.llm_service import LLMService
 from backend.services.runtime_settings import runtime_settings
+from backend.services.shared_workspace_service import SharedWorkspaceError, SharedWorkspaceService
 
 try:
     from markitdown import MarkItDown
@@ -350,13 +351,13 @@ class RAGService:
             None,
         )
         if record is None:
-            return RAGDirectorySettings()
+            return self._normalize_directory_settings(RAGDirectorySettings())
         try:
             return self._normalize_directory_settings(
                 RAGDirectorySettings.model_validate(json.loads(record.value))
             )
         except Exception:
-            return RAGDirectorySettings()
+            return self._normalize_directory_settings(RAGDirectorySettings())
 
     def save_directory_settings(
         self,
@@ -376,27 +377,20 @@ class RAGService:
         self,
         settings: RAGDirectorySettings,
     ) -> RAGDirectorySettings:
-        allowed_roots: list[str] = []
-        seen: set[str] = set()
-        for raw_root in settings.allowed_roots:
-            if not str(raw_root).strip():
-                continue
-            root = self._resolve_existing_directory(str(raw_root), field_name="allowed_root")
-            key = os.path.normcase(str(root))
-            if key in seen:
-                continue
-            seen.add(key)
-            allowed_roots.append(str(root))
+        shared = SharedWorkspaceService()
+        shared_root = shared.root()
+        allowed_roots = [str(shared_root)]
 
         default_root: str | None = None
         if settings.default_root and settings.default_root.strip():
-            default_path = self._resolve_existing_directory(
-                settings.default_root,
-                field_name="default_root",
-            )
-            if not self._find_authorized_root(default_path, allowed_roots):
-                raise RAGServiceError("Default RAG directory must be inside an authorized root.")
-            default_root = str(default_path)
+            try:
+                default_root = str(shared.resolve_workspace_root(settings.default_root))
+            except SharedWorkspaceError as exc:
+                raise RAGServiceError(
+                    "Default RAG directory must be inside the shared workspace."
+                ) from exc
+        else:
+            default_root = str(shared_root)
 
         return RAGDirectorySettings(
             allowed_roots=allowed_roots,
@@ -410,43 +404,22 @@ class RAGService:
         path: str | None = None,
         workspace_root: str | None = None,
     ) -> tuple[str, str]:
-        directory_settings = self.get_directory_settings()
-        if not directory_settings.allowed_roots:
-            raise RAGServiceError(
-                "No RAG directories are authorized. Configure an authorized directory in the "
-                "Knowledge Base page first."
-            )
-
+        shared = SharedWorkspaceService()
         requested_text = (path or ".").strip() or "."
-        requested = Path(requested_text).expanduser()
-        if workspace_root and workspace_root.strip():
-            workspace = self._resolve_existing_directory(
-                workspace_root, field_name="workspace_root"
-            )
-            if not self._find_authorized_root(workspace, directory_settings.allowed_roots):
-                raise RAGServiceError("Workspace root is not inside an authorized RAG directory.")
-            candidate = (
-                requested.resolve()
-                if requested.is_absolute()
-                else (workspace / requested).resolve()
-            )
-        elif requested.is_absolute():
-            candidate = requested.resolve()
-        else:
-            if not directory_settings.default_root:
-                raise RAGServiceError(
-                    "No default RAG directory is configured. Set one in the Knowledge Base page."
-                )
-            candidate = (Path(directory_settings.default_root) / requested).resolve()
+        try:
+            if workspace_root and workspace_root.strip():
+                base = shared.resolve_workspace_root(workspace_root)
+            else:
+                base = shared.resolve_workspace_root(self.get_directory_settings().default_root)
+            candidate = shared.resolve_path(requested_text, base=base)
+        except SharedWorkspaceError as exc:
+            raise RAGServiceError("Requested RAG path is outside the shared workspace.") from exc
 
         if not candidate.is_dir():
             raise RAGServiceError(f"`{candidate}` is not a directory.")
-        authorized_root = self._find_authorized_root(candidate, directory_settings.allowed_roots)
-        if authorized_root is None:
-            raise RAGServiceError("Requested RAG path is outside the authorized directories.")
-
-        relative = candidate.relative_to(authorized_root)
-        return str(authorized_root), "." if str(relative) == "." else relative.as_posix()
+        shared_root = shared.root()
+        relative = candidate.relative_to(shared_root)
+        return str(shared_root), "." if str(relative) == "." else relative.as_posix()
 
     def _resolve_existing_directory(self, value: str, *, field_name: str) -> Path:
         try:

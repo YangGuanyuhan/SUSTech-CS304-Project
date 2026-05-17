@@ -25,6 +25,7 @@ from backend.services.quiz_service import QuizService
 from backend.services.rag_service import RAGProviderError, RAGService, RAGServiceError
 from backend.services.runtime_settings import runtime_settings
 from backend.services.settings_service import SettingsService
+from backend.services.shared_workspace_service import SharedWorkspaceError, SharedWorkspaceService
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -613,16 +614,16 @@ class AgentToolService:
         workspace_root: str | None,
     ) -> str:
         if tool_name == "list_local_files":
-            return f"List files under `{arguments.get('path', '.')}` in workspace `{workspace_root or '<unset>'}`."
+            return f"List files under `{arguments.get('path', '.')}` in the shared workspace."
         if tool_name == "read_local_file":
-            return f"Read local file `{arguments.get('path', '')}` in workspace `{workspace_root or '<unset>'}`."
+            return f"Read local file `{arguments.get('path', '')}` in the shared workspace."
         if tool_name == "write_local_file":
             mode = "append to" if arguments.get("append") else "write"
-            return f"{mode.capitalize()} local file `{arguments.get('path', '')}` in workspace `{workspace_root or '<unset>'}`."
+            return f"{mode.capitalize()} local file `{arguments.get('path', '')}` in the shared workspace."
         if tool_name == "run_local_command":
             raw_command = arguments.get("command", [])
             command = raw_command if isinstance(raw_command, str) else " ".join(raw_command)
-            return f"Run local command `{command}` in workspace `{workspace_root or '<unset>'}`."
+            return f"Run local command `{command}` in the shared workspace."
         if tool_name == "fetch_webpage":
             return f"Visit webpage `{arguments.get('url', '')}` and extract content."
         if tool_name == "rag_index_folder":
@@ -871,13 +872,8 @@ class AgentToolService:
         )
 
     async def _list_local_files(self, arguments: dict[str, Any], workspace_root: str | None) -> str:
-        effective_root = self._effective_workspace_root_for_path(
-            workspace_root,
-            str(arguments.get("path", ".")),
-            directory_request=True,
-            allow_rag_roots=True,
-        )
-        base = self._resolve_path(effective_root, str(arguments.get("path", ".")))
+        effective_root = self._workspace_root(workspace_root)
+        base = self._resolve_path(str(effective_root), str(arguments.get("path", ".")))
         recursive = bool(arguments.get("recursive", False))
         max_entries = int(arguments.get("max_entries", 50))
         pattern = "**/*" if recursive else "*"
@@ -887,27 +883,22 @@ class AgentToolService:
                 continue
             entries.append(
                 {
-                    "path": item.relative_to(self._workspace_root(effective_root)).as_posix(),
+                    "path": item.relative_to(effective_root).as_posix(),
                     "type": "directory" if item.is_dir() else "file",
                 }
             )
         return json.dumps({"directory": base.as_posix(), "entries": entries}, ensure_ascii=False)
 
     async def _read_local_file(self, arguments: dict[str, Any], workspace_root: str | None) -> str:
-        effective_root = self._effective_workspace_root_for_path(
-            workspace_root,
-            str(arguments.get("path", "")),
-            directory_request=False,
-            allow_rag_roots=True,
-        )
-        path = self._resolve_path(effective_root, str(arguments.get("path", "")))
+        effective_root = self._workspace_root(workspace_root)
+        path = self._resolve_path(str(effective_root), str(arguments.get("path", "")))
         max_chars = int(arguments.get("max_chars", 12000))
         if not path.is_file():
             raise ToolExecutionError(f"`{path}` is not a readable file.")
         content = path.read_text(encoding="utf-8", errors="ignore")
         truncated = len(content) > max_chars
         payload = {
-            "path": path.relative_to(self._workspace_root(effective_root)).as_posix(),
+            "path": path.relative_to(effective_root).as_posix(),
             "truncated": truncated,
             "content": content[:max_chars],
         }
@@ -1053,7 +1044,10 @@ class AgentToolService:
         path = str(arguments.get("path", ".")).strip() or "."
         service = RAGService(self.session)
         try:
-            effective_root, safe_path = service.resolve_index_scope(path=path)
+            effective_root, safe_path = service.resolve_index_scope(
+                path=path,
+                workspace_root=workspace_root,
+            )
             directory_settings = service.get_directory_settings()
             result = await service.index_folder(
                 safe_path,
@@ -1724,109 +1718,17 @@ class AgentToolService:
         )
 
     def _workspace_root(self, workspace_root: str | None) -> Path:
-        root = Path(workspace_root or "").expanduser()
-        if not workspace_root:
-            raise ToolExecutionError(
-                "No workspace root is configured. Ask the user to set one first."
-            )
         try:
-            resolved = root.resolve(strict=True)
-        except FileNotFoundError as exc:
-            raise ToolExecutionError(f"Workspace root `{workspace_root}` does not exist.") from exc
-        if not resolved.is_dir():
-            raise ToolExecutionError(f"Workspace root `{workspace_root}` is not a directory.")
-        return resolved
-
-    def _effective_workspace_root_for_path(
-        self,
-        workspace_root: str | None,
-        requested_path: str,
-        *,
-        directory_request: bool,
-        allow_rag_roots: bool = False,
-    ) -> str | None:
-        if workspace_root:
-            return workspace_root
-        requested = Path(requested_path).expanduser()
-        if not requested.is_absolute():
-            # For read operations, try RAG authorized roots as fallback
-            if allow_rag_roots:
-                rag_root = self._find_rag_root_for_relative_path(requested_path)
-                if rag_root:
-                    return rag_root
-            return workspace_root
-        resolved = requested.resolve()
-        # For read operations, check if path is inside an authorized RAG root
-        if allow_rag_roots:
-            rag_root = self._find_rag_root_containing(resolved)
-            if rag_root:
-                return rag_root
-        if directory_request:
-            if not resolved.is_dir():
-                raise ToolExecutionError(f"`{requested_path}` is not a directory.")
-            return str(resolved)
-        parent = resolved.parent
-        if not parent.is_dir():
-            raise ToolExecutionError(f"Parent directory for `{requested_path}` does not exist.")
-        return str(parent)
-
-    def _find_rag_root_containing(self, resolved_path: Path) -> str | None:
-        """Return a RAG authorized root containing `resolved_path`, or None."""
-        try:
-            from backend.services.rag_service import RAGService
-
-            directory_settings = RAGService(self.session).get_directory_settings()
-        except Exception:
-            return None
-        for root_str in directory_settings.allowed_roots or []:
-            try:
-                root = Path(root_str).expanduser().resolve()
-            except Exception:
-                continue
-            try:
-                resolved_path.relative_to(root)
-                return str(root)
-            except ValueError:
-                continue
-        return None
-
-    def _find_rag_root_for_relative_path(self, requested_path: str) -> str | None:
-        """For a relative path, return the default RAG root if the path exists under it."""
-        try:
-            from backend.services.rag_service import RAGService
-
-            directory_settings = RAGService(self.session).get_directory_settings()
-        except Exception:
-            return None
-        candidate_roots: list[str] = []
-        if directory_settings.default_root:
-            candidate_roots.append(directory_settings.default_root)
-        candidate_roots.extend(directory_settings.allowed_roots or [])
-        for root_str in candidate_roots:
-            try:
-                root = Path(root_str).expanduser().resolve()
-                candidate = (root / requested_path).resolve()
-                candidate.relative_to(root)
-                if candidate.exists():
-                    return str(root)
-            except Exception:
-                continue
-        return None
+            return SharedWorkspaceService().resolve_workspace_root(workspace_root)
+        except SharedWorkspaceError as exc:
+            raise ToolExecutionError(str(exc)) from exc
 
     def _resolve_path(self, workspace_root: str | None, requested_path: str) -> Path:
-        root = self._workspace_root(workspace_root)
-        candidate = (
-            (root / requested_path).resolve()
-            if not Path(requested_path).is_absolute()
-            else Path(requested_path).resolve()
-        )
         try:
-            candidate.relative_to(root)
-        except ValueError as exc:
-            raise ToolExecutionError(
-                "Requested path escapes the configured workspace root."
-            ) from exc
-        return candidate
+            root = self._workspace_root(workspace_root)
+            return SharedWorkspaceService().resolve_path(requested_path, base=root)
+        except SharedWorkspaceError as exc:
+            raise ToolExecutionError(str(exc)) from exc
 
     def _optional_string(self, value: Any) -> str | None:
         if value is None:

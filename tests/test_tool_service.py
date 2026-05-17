@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -6,12 +7,17 @@ import pytest
 from pydantic_ai.tools import DeferredToolRequests
 
 from backend.agent.core import StudentProductivityAgent
+from backend.config import get_settings
 from backend.models.rag import RAGDirectorySettings
 from backend.models.tooling import AgentTurnResult
 from backend.services.agent_tool_service import AgentToolService, ToolExecutionError
 from backend.services.approval_service import approval_service
 from backend.services.chat_file_service import ChatFileService
 from backend.services.rag_service import RAGService
+
+
+def shared_root() -> Path:
+    return Path(get_settings().shared_workspace_dir).resolve()
 
 
 def _fake_tool_call(name: str, arguments: dict[str, object], tool_call_id: str = "tool-1"):
@@ -64,37 +70,41 @@ async def test_file_tool_rejects_path_escape(db_session, tmp_path):
 async def test_file_tool_accepts_approved_absolute_directory_without_workspace(
     db_session, tmp_path
 ):
-    (tmp_path / "notes.md").write_text("hello", encoding="utf-8")
+    root = shared_root()
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "notes.md").write_text("hello", encoding="utf-8")
     service = AgentToolService(db_session)
 
     result_raw = await service.execute(
         "list_local_files",
-        {"path": str(tmp_path), "recursive": False},
+        {"path": str(root), "recursive": False},
         chat_session_id="chat-1",
         workspace_root=None,
     )
 
     result = json.loads(result_raw)
-    assert result["directory"] == tmp_path.as_posix()
+    assert result["directory"] == root.as_posix()
     assert result["entries"][0]["path"] == "notes.md"
 
 
-async def test_rag_index_folder_requires_configured_directory(db_session, tmp_path):
-    (tmp_path / "notes.md").write_text("hello", encoding="utf-8")
+async def test_rag_index_folder_rejects_shared_workspace_escape(db_session, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "notes.md").write_text("hello", encoding="utf-8")
     service = AgentToolService(db_session)
 
     with pytest.raises(ToolExecutionError):
         await service.execute(
             "rag_index_folder",
-            {"path": str(tmp_path)},
+            {"path": str(outside)},
             chat_session_id="chat-1",
             workspace_root=None,
         )
 
 
 async def test_rag_index_folder_uses_authorized_default_directory(db_session, tmp_path):
-    notes_root = tmp_path / "notes"
-    notes_root.mkdir()
+    notes_root = shared_root() / "notes"
+    notes_root.mkdir(parents=True)
     (notes_root / "policy.md").write_text("The add/drop deadline is Friday.", encoding="utf-8")
     RAGService(db_session).save_directory_settings(
         RAGDirectorySettings(allowed_roots=[str(notes_root)], default_root=str(notes_root))
@@ -105,18 +115,18 @@ async def test_rag_index_folder_uses_authorized_default_directory(db_session, tm
         "rag_index_folder",
         {"path": "."},
         chat_session_id="chat-1",
-        workspace_root=str(tmp_path.parent),
+        workspace_root=None,
     )
 
     result = json.loads(result_raw)
     assert result["indexed"] == 1
-    assert result["sources"][0]["relative_path"] == "policy.md"
+    assert result["sources"][0]["relative_path"] == "notes/policy.md"
 
 
 async def test_rag_index_folder_rejects_path_outside_authorized_roots(db_session, tmp_path):
-    notes_root = tmp_path / "notes"
+    notes_root = shared_root() / "notes"
     outside = tmp_path / "outside"
-    notes_root.mkdir()
+    notes_root.mkdir(parents=True)
     outside.mkdir()
     RAGService(db_session).save_directory_settings(
         RAGDirectorySettings(allowed_roots=[str(notes_root)], default_root=str(notes_root))
@@ -298,19 +308,22 @@ async def test_agent_resume_approval_executes_tool_and_finishes(db_session, tmp_
 
 
 async def test_command_tool_accepts_string_command(db_session, tmp_path):
+    root = shared_root()
     service = AgentToolService(db_session)
     result_raw = await service.execute(
         "run_local_command",
         {"command": "echo test"},
         chat_session_id="chat-1",
-        workspace_root=str(tmp_path),
+        workspace_root=str(root),
     )
     result = json.loads(result_raw)
     assert result["returncode"] == 0
 
 
 async def test_command_tool_runs_python_script_with_interpreter(db_session, tmp_path):
-    script = tmp_path / "hello.py"
+    root = shared_root()
+    root.mkdir(parents=True, exist_ok=True)
+    script = root / "hello.py"
     script.write_text("print('hello from script')\n", encoding="utf-8")
 
     service = AgentToolService(db_session)
@@ -318,7 +331,7 @@ async def test_command_tool_runs_python_script_with_interpreter(db_session, tmp_
         "run_local_command",
         {"command": ["hello.py"]},
         chat_session_id="chat-1",
-        workspace_root=str(tmp_path),
+        workspace_root=str(root),
     )
     result = json.loads(result_raw)
     assert result["returncode"] == 0

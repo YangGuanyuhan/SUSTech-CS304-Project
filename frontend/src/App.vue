@@ -416,8 +416,8 @@
   </main>
 </template>
 <script setup>
-import MarkdownIt from "markdown-it";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { renderMarkdown } from "./utils/markdown.js";
 import CalendarPanel from "./components/CalendarPanel.vue";
 import QuizPanel from "./components/QuizPanel.vue";
 import DatabaseOverviewPanel from "./components/DatabaseOverviewPanel.vue";
@@ -430,12 +430,6 @@ import { apiClient, getHealth, streamApprovalDecision, streamChat } from "./api/
 const CHAT_CONVERSATIONS_KEY = "spa-conversations";
 const ACTIVE_CONVERSATION_KEY = "spa-active-conversation-id";
 const CHAT_UPLOAD_EXTENSIONS = [".pdf", ".pptx", ".docx", ".md", ".txt"];
-
-const markdown = new MarkdownIt({
-  html: false,
-  breaks: true,
-  linkify: true
-});
 
 function makeConversation(title = "新对话") {
   return reactive({
@@ -569,10 +563,6 @@ const activeConversation = computed(() => {
 function persistConversations() {
   window.localStorage.setItem(CHAT_CONVERSATIONS_KEY, JSON.stringify(conversations.value));
   window.localStorage.setItem(ACTIVE_CONVERSATION_KEY, activeConversationId.value);
-}
-
-function renderMarkdown(content) {
-  return markdown.render(content || "");
 }
 
 function formatConversationTime(timestamp) {

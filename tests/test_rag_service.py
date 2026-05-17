@@ -7,9 +7,14 @@ from pathlib import Path
 
 import pytest
 
+from backend.config import get_settings
 from backend.db.models import RAGSourceRecord
 from backend.models.rag import RAGDirectorySettings
 from backend.services.rag_service import RAGAnythingProvider, RAGService, RAGServiceError
+
+
+def shared_root() -> Path:
+    return Path(get_settings().shared_workspace_dir).resolve()
 
 
 class FakeRAGProvider:
@@ -91,7 +96,7 @@ async def test_rag_rejects_path_escape(db_session, tmp_path):
 
 
 async def test_rag_directory_settings_round_trip(db_session, tmp_path):
-    root = tmp_path / "notes"
+    root = shared_root()
     default = root / "course-a"
     default.mkdir(parents=True)
     service = RAGService(db_session, provider=FakeRAGProvider())
@@ -111,14 +116,14 @@ async def test_rag_directory_settings_round_trip(db_session, tmp_path):
 
 
 async def test_rag_directory_settings_reject_invalid_paths(db_session, tmp_path):
-    root = tmp_path / "notes"
+    root = shared_root()
     root.mkdir()
-    file_path = tmp_path / "not-a-folder.md"
+    file_path = root / "not-a-folder.md"
     file_path.write_text("hello", encoding="utf-8")
     service = RAGService(db_session, provider=FakeRAGProvider())
 
     with pytest.raises(RAGServiceError):
-        service.save_directory_settings(RAGDirectorySettings(allowed_roots=[str(file_path)]))
+        service.save_directory_settings(RAGDirectorySettings(default_root=str(file_path)))
 
     with pytest.raises(RAGServiceError):
         service.save_directory_settings(
@@ -130,7 +135,7 @@ async def test_rag_directory_settings_reject_invalid_paths(db_session, tmp_path)
 
 
 async def test_rag_resolve_index_scope_uses_default_root(db_session, tmp_path):
-    root = tmp_path / "notes"
+    root = shared_root()
     default = root / "course-a"
     default.mkdir(parents=True)
     service = RAGService(db_session, provider=FakeRAGProvider())
@@ -145,7 +150,7 @@ async def test_rag_resolve_index_scope_uses_default_root(db_session, tmp_path):
 
 
 async def test_rag_resolve_index_scope_rejects_unauthorized_absolute_path(db_session, tmp_path):
-    root = tmp_path / "notes"
+    root = shared_root()
     root.mkdir()
     outside = tmp_path / "outside"
     outside.mkdir()
