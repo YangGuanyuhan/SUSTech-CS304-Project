@@ -29,7 +29,9 @@ class SharedWorkspaceService:
             return root
         candidate = self.resolve_path(workspace_root, base=root)
         if not candidate.is_dir():
-            raise SharedWorkspaceError(f"Workspace directory `{workspace_root}` is not a directory.")
+            raise SharedWorkspaceError(
+                f"Workspace directory `{workspace_root}` is not a directory."
+            )
         return candidate
 
     def resolve_path(self, requested_path: str | None, *, base: Path | None = None) -> Path:
@@ -84,9 +86,7 @@ class SharedWorkspaceService:
                         }
                     )
         except PermissionError as exc:
-            raise SharedWorkspaceError(
-                f"Permission denied: {self.relative_path(current)}"
-            ) from exc
+            raise SharedWorkspaceError(f"Permission denied: {self.relative_path(current)}") from exc
 
         entries.sort(key=lambda item: item["name"].lower())
         root = self.root()
