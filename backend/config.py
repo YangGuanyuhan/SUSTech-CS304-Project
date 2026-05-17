@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -58,9 +58,7 @@ class Settings(BaseSettings):
     rag_top_k: int = 5
     rag_index_timeout_seconds: int = 180
     rag_query_timeout_seconds: int = 20
-    allowed_origins: list[str] = Field(
-        default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
-    )
+    allowed_origins: str = Field(default="http://localhost:5173,http://127.0.0.1:5173")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
