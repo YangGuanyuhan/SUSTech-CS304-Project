@@ -68,7 +68,7 @@
         </div>
         <div class="toolbar-actions">
           <label class="workspace-field">
-            <span>Workspace Root</span>
+            <span>Shared Workspace</span>
             <WorkspaceDirectoryPicker
               v-model="activeConversation.workspaceRoot"
               @error="handleWorkspacePickerError"
@@ -181,8 +181,8 @@
 </template>
 
 <script setup>
-import MarkdownIt from "markdown-it";
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { renderMarkdown } from "../utils/markdown.js";
 import QuizPanel from "./QuizPanel.vue";
 import WorkspaceDirectoryPicker from "./WorkspaceDirectoryPicker.vue";
 import {
@@ -193,12 +193,6 @@ import {
 
 const CHAT_CONVERSATIONS_KEY = "spa-conversations";
 const ACTIVE_CONVERSATION_KEY = "spa-active-conversation-id";
-
-const markdown = new MarkdownIt({
-  html: false,
-  breaks: true,
-  linkify: true
-});
 
 function makeConversation(title = "New Conversation") {
   return reactive({
@@ -292,10 +286,6 @@ function scrollMessagesToBottom() {
     if (!viewport) return;
     viewport.scrollTop = viewport.scrollHeight;
   });
-}
-
-function renderMarkdown(content) {
-  return markdown.render(content || "");
 }
 
 function previewConversation(conversation) {

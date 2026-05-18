@@ -104,3 +104,4 @@ docs/          Documentation
 - Blackboard V1 defaults to a mock provider behind a stable interface.
 - Production migration to PostgreSQL is driven by `DATABASE_URL`.
 - First-time setup may take 10-20 minutes to download ML dependencies (PyTorch, CUDA libraries for RAG).
+- Docker Compose mounts host `./shared` to backend `/app/shared`; place files there for local file tools and RAG indexing.
