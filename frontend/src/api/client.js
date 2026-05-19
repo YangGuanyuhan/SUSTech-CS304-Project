@@ -1,4 +1,32 @@
 const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000/api";
+const AUTH_TOKEN_KEY = "studyai-auth-token";
+
+function authHeaders(extra = {}) {
+  const token = window.localStorage.getItem(AUTH_TOKEN_KEY);
+  return {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...extra
+  };
+}
+
+export function getAuthToken() {
+  return window.localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+export function setAuthToken(token) {
+  if (token) {
+    window.localStorage.setItem(AUTH_TOKEN_KEY, token);
+  } else {
+    window.localStorage.removeItem(AUTH_TOKEN_KEY);
+  }
+}
+
+export function apiAssetUrl(path) {
+  if (!path) return "";
+  if (/^https?:\/\//.test(path)) return path;
+  const origin = API_BASE.replace(/\/api\/?$/, "");
+  return `${origin}${path}`;
+}
 
 async function parseJson(response) {
   if (!response.ok) {
@@ -15,7 +43,88 @@ async function parseJson(response) {
 }
 
 export async function getHealth() {
-  const response = await fetch(`${API_BASE}/health`);
+  const response = await fetch(`${API_BASE}/health`, { headers: authHeaders() });
+  return parseJson(response);
+}
+
+export async function loginUser(payload) {
+  const response = await fetch(`${API_BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const parsed = await parseJson(response);
+  if (parsed.data?.token) {
+    setAuthToken(parsed.data.token);
+  }
+  return parsed;
+}
+
+export async function logoutUser() {
+  const response = await fetch(`${API_BASE}/auth/logout`, {
+    method: "POST",
+    headers: authHeaders()
+  });
+  setAuthToken("");
+  return parseJson(response);
+}
+
+export async function getUserProfile() {
+  const response = await fetch(`${API_BASE}/user/profile`, {
+    headers: authHeaders()
+  });
+  return parseJson(response);
+}
+
+export async function updateUserProfile(payload) {
+  const response = await fetch(`${API_BASE}/user/profile`, {
+    method: "PATCH",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function uploadUserAvatar(file) {
+  const formData = new FormData();
+  formData.append("avatar", file);
+  const response = await fetch(`${API_BASE}/user/avatar`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: formData
+  });
+  return parseJson(response);
+}
+
+export async function listMemories(category = "") {
+  const query = category ? `?category=${encodeURIComponent(category)}` : "";
+  const response = await fetch(`${API_BASE}/memory${query}`, {
+    headers: authHeaders()
+  });
+  return parseJson(response);
+}
+
+export async function deleteMemory(memoryId) {
+  const response = await fetch(`${API_BASE}/memory/${encodeURIComponent(memoryId)}`, {
+    method: "DELETE",
+    headers: authHeaders()
+  });
+  return parseJson(response);
+}
+
+export async function listLongTermMemories(memoryType = "") {
+  const query = memoryType ? `?memory_type=${encodeURIComponent(memoryType)}` : "";
+  const response = await fetch(`${API_BASE}/memory/long-term${query}`, {
+    headers: authHeaders()
+  });
+  return parseJson(response);
+}
+
+export async function deleteLongTermMemory(memoryId) {
+  const response = await fetch(`${API_BASE}/memory/long-term/${encodeURIComponent(memoryId)}`, {
+    method: "DELETE",
+    headers: authHeaders()
+  });
   return parseJson(response);
 }
 
@@ -396,7 +505,7 @@ async function consumeSSE(response, handlers) {
 export async function streamChat(payload, handlers, requestOptions = {}) {
   const response = await fetch(`${API_BASE}/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
     signal: requestOptions.signal
   });
@@ -406,7 +515,7 @@ export async function streamChat(payload, handlers, requestOptions = {}) {
 export async function streamApprovalDecision(payload, handlers) {
   const response = await fetch(`${API_BASE}/chat/approval`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(payload)
   });
   return consumeSSE(response, handlers);
@@ -415,7 +524,7 @@ export async function streamApprovalDecision(payload, handlers) {
 // Generic API client for convenience
 export const apiClient = {
   async get(endpoint, options = {}) {
-    const url = new URL(`${API_BASE}${endpoint}`);
+    const url = new URL(`${API_BASE}${endpoint}`, window.location.href);
     if (options.params) {
       Object.entries(options.params).forEach(([key, value]) => {
         if (value !== null && value !== undefined) {
@@ -425,13 +534,13 @@ export const apiClient = {
     }
     const response = await fetch(url.toString(), {
       method: "GET",
-      headers: options.headers || {}
+      headers: authHeaders(options.headers || {})
     });
     return { data: await parseJson(response) };
   },
 
   async post(endpoint, data, options = {}) {
-    const url = new URL(`${API_BASE}${endpoint}`);
+    const url = new URL(`${API_BASE}${endpoint}`, window.location.href);
     if (options.params) {
       Object.entries(options.params).forEach(([key, value]) => {
         if (value !== null && value !== undefined) {
@@ -442,8 +551,8 @@ export const apiClient = {
     const response = await fetch(url.toString(), {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
-        ...options.headers
+        ...authHeaders({ "Content-Type": "application/json" }),
+        ...(options.headers || {})
       },
       body: data ? JSON.stringify(data) : undefined
     });
@@ -451,7 +560,7 @@ export const apiClient = {
   },
 
   async postForm(endpoint, formData, options = {}) {
-    const url = new URL(`${API_BASE}${endpoint}`);
+    const url = new URL(`${API_BASE}${endpoint}`, window.location.href);
     if (options.params) {
       Object.entries(options.params).forEach(([key, value]) => {
         if (value !== null && value !== undefined) {
@@ -461,14 +570,14 @@ export const apiClient = {
     }
     const response = await fetch(url.toString(), {
       method: "POST",
-      headers: options.headers || {},
+      headers: authHeaders(options.headers || {}),
       body: formData
     });
     return { data: await parseJson(response) };
   },
 
   async put(endpoint, data, options = {}) {
-    const url = new URL(`${API_BASE}${endpoint}`);
+    const url = new URL(`${API_BASE}${endpoint}`, window.location.href);
     if (options.params) {
       Object.entries(options.params).forEach(([key, value]) => {
         if (value !== null && value !== undefined) {
@@ -479,8 +588,8 @@ export const apiClient = {
     const response = await fetch(url.toString(), {
       method: "PUT",
       headers: {
-        "Content-Type": "application/json",
-        ...options.headers
+        ...authHeaders({ "Content-Type": "application/json" }),
+        ...(options.headers || {})
       },
       body: data ? JSON.stringify(data) : undefined
     });
@@ -488,7 +597,7 @@ export const apiClient = {
   },
 
   async delete(endpoint, options = {}) {
-    const url = new URL(`${API_BASE}${endpoint}`);
+    const url = new URL(`${API_BASE}${endpoint}`, window.location.href);
     if (options.params) {
       Object.entries(options.params).forEach(([key, value]) => {
         if (value !== null && value !== undefined) {
@@ -498,7 +607,7 @@ export const apiClient = {
     }
     const response = await fetch(url.toString(), {
       method: "DELETE",
-      headers: options.headers || {}
+      headers: authHeaders(options.headers || {})
     });
     return { data: await parseJson(response) };
   }
