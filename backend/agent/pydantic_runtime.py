@@ -576,7 +576,7 @@ class PydanticAIRuntime:
                 {"command": command, "timeout_seconds": timeout_seconds},
             )
 
-        @agent.tool(name="fetch_webpage", requires_approval=True)
+        @agent.tool(name="fetch_webpage", requires_approval=False)
         async def fetch_webpage(
             ctx: RunContext[AgentDeps], url: str, max_chars: int = 12000
         ) -> str:
