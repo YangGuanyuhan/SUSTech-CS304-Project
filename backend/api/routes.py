@@ -8,7 +8,8 @@ import json
 from datetime import datetime
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Response, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
@@ -28,17 +29,20 @@ from backend.api.schemas import (
     LLMConnectionTestRequest,
     LLMProfileRequest,
     LLMSettingsRequest,
+    LoginRequest,
     MemoryDeleteByQueryRequest,
     QuizAttemptRequest,
     RAGIndexFolderRequest,
     RAGQueryRequest,
     RAGSettingsRequest,
     SearchSettingsRequest,
+    UserProfileUpdateRequest,
 )
 from backend.config import get_settings
 from backend.db.database import get_db_session
 from backend.models.calendar import CalendarEventCreate, CalendarEventMove, CalendarEventUpdate
 from backend.models.common import ApiResponse
+from backend.models.memory import MemoryType
 from backend.models.rag import RAGDirectorySettings
 from backend.models.settings import BlackboardProfile, EmailProfile, LLMProfile
 from backend.services.approval_service import approval_service
@@ -61,8 +65,22 @@ from backend.services.runtime_settings import (
 )
 from backend.services.settings_service import SettingsService
 from backend.services.shared_workspace_service import SharedWorkspaceError, SharedWorkspaceService
+from backend.services.user_service import (
+    AuthenticationError,
+    AvatarUploadError,
+    UserService,
+)
 
 router = APIRouter(prefix="/api")
+
+
+def _extract_bearer_token(authorization: str | None) -> str:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    return token
 
 
 def _chunk_text(text: str, chunk_size: int = 2000) -> list[str]:
@@ -209,6 +227,84 @@ async def _stream_agent_execution(*, session_id: str, execute):
 @router.get("/health", response_model=ApiResponse[dict[str, str]])
 async def health() -> ApiResponse[dict[str, str]]:
     return ApiResponse(success=True, data={"status": "ok"})
+
+
+@router.post("/auth/login", response_model=ApiResponse[object])
+async def login(
+    request: LoginRequest,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    service = UserService(session)
+    service.ensure_default_user()
+    try:
+        result = service.login(request.username, request.password)
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=result)
+
+
+@router.post("/auth/logout", response_model=ApiResponse[dict[str, bool]])
+async def logout(
+    authorization: str | None = Header(default=None),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[dict[str, bool]]:
+    token = _extract_bearer_token(authorization)
+    UserService(session).logout(token)
+    return ApiResponse(success=True, data={"logged_out": True})
+
+
+@router.get("/user/profile", response_model=ApiResponse[object])
+async def get_user_profile(
+    authorization: str | None = Header(default=None),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    token = _extract_bearer_token(authorization)
+    try:
+        profile = UserService(session).profile_for_token(token)
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=profile)
+
+
+@router.patch("/user/profile", response_model=ApiResponse[object])
+async def update_user_profile(
+    request: UserProfileUpdateRequest,
+    authorization: str | None = Header(default=None),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    token = _extract_bearer_token(authorization)
+    try:
+        profile = UserService(session).update_profile(token, display_name=request.display_name)
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=profile)
+
+
+@router.post("/user/avatar", response_model=ApiResponse[object])
+async def upload_user_avatar(
+    avatar: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    token = _extract_bearer_token(authorization)
+    try:
+        profile = await UserService(session).save_avatar(token, avatar)
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except AvatarUploadError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=profile)
+
+
+@router.get("/user/avatar/{filename}")
+async def get_user_avatar(filename: str):
+    try:
+        path = UserService.avatar_path(filename)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Avatar not found") from exc
+    return FileResponse(path)
 
 
 @router.get("/workspace/directories", response_model=ApiResponse[dict[str, object]])
@@ -903,6 +999,26 @@ async def list_memories(
 ) -> ApiResponse[object]:
     result = await MemoryService(session).list_memories(category)
     return ApiResponse(success=True, data=result)
+
+
+@router.get("/memory/long-term", response_model=ApiResponse[object])
+async def list_long_term_memories(
+    memory_type: MemoryType | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=100),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    result = await MemoryService(session).list_long_term_memories(memory_type, limit=limit)
+    return ApiResponse(success=True, data=result)
+
+
+@router.delete("/memory/long-term/{memory_id}", response_model=ApiResponse[dict[str, bool]])
+async def delete_long_term_memory(
+    memory_id: str, session: Session = Depends(get_db_session)
+) -> ApiResponse[dict[str, bool]]:
+    deleted = await MemoryService(session).delete_long_term_memory(memory_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return ApiResponse(success=True, data={"deleted": deleted})
 
 
 @router.delete("/memory/{memory_id}", response_model=ApiResponse[dict[str, bool]])

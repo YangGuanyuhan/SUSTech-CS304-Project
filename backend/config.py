@@ -58,7 +58,9 @@ class Settings(BaseSettings):
     rag_top_k: int = 5
     rag_index_timeout_seconds: int = 180
     rag_query_timeout_seconds: int = 20
-    allowed_origins: str = Field(default="http://localhost:5173,http://127.0.0.1:5173")
+    allowed_origins: str = Field(
+        default="http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174"
+    )
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
