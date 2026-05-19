@@ -168,5 +168,7 @@ a smaller folder or raise `RAG_INDEX_TIMEOUT_SECONDS`.
 The agent also has these tools:
 
 - `rag_index_folder`
-- `rag_search`
-- `rag_answer`
+- `rag_search` for indexed global knowledge-base snippets
+- `rag_answer` for indexed global knowledge-base answers with citations
+- `uploaded_file_search` for current-chat uploaded-file snippets
+- `uploaded_file_answer` for current-chat uploaded-file answers with citations
