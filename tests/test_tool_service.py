@@ -142,7 +142,7 @@ async def test_rag_index_folder_rejects_path_outside_authorized_roots(db_session
         )
 
 
-async def test_rag_search_prefers_current_chat_upload_scope(db_session, tmp_path):
+async def test_rag_search_uses_global_scope_when_chat_uploads_exist(db_session, tmp_path):
     local_root = tmp_path / "local"
     chat_root = tmp_path / "chat"
     local_root.mkdir()
@@ -169,10 +169,12 @@ async def test_rag_search_prefers_current_chat_upload_scope(db_session, tmp_path
     )
 
     result = json.loads(result_raw)
-    assert [hit["relative_path"] for hit in result] == ["upload.md"]
+    assert [hit["relative_path"] for hit in result] == ["global.md"]
 
 
-async def test_rag_search_returns_all_uploaded_chunks_before_keyword_search(db_session, tmp_path):
+async def test_uploaded_file_search_falls_back_to_uploaded_chunks_for_generic_query(
+    db_session, tmp_path
+):
     chat_root = tmp_path / "chat"
     chat_root.mkdir()
     (chat_root / "upload.md").write_text(
@@ -187,7 +189,7 @@ async def test_rag_search_returns_all_uploaded_chunks_before_keyword_search(db_s
     service = AgentToolService(db_session)
 
     result_raw = await service.execute(
-        "rag_search",
+        "uploaded_file_search",
         {"query": "something unrelated", "top_k": 1},
         chat_session_id="chat-1",
         workspace_root=None,
@@ -198,7 +200,9 @@ async def test_rag_search_returns_all_uploaded_chunks_before_keyword_search(db_s
     assert "scheduling" in result[0]["text"]
 
 
-async def test_rag_search_returns_uploaded_chunks_for_generic_file_question(db_session, tmp_path):
+async def test_uploaded_file_search_returns_uploaded_chunks_for_generic_file_question(
+    db_session, tmp_path
+):
     chat_root = tmp_path / "chat"
     chat_root.mkdir()
     (chat_root / "upload.md").write_text(
@@ -213,7 +217,7 @@ async def test_rag_search_returns_uploaded_chunks_for_generic_file_question(db_s
     service = AgentToolService(db_session)
 
     result_raw = await service.execute(
-        "rag_search",
+        "uploaded_file_search",
         {"query": "uploaded PDF", "top_k": 2},
         chat_session_id="chat-1",
         workspace_root=None,

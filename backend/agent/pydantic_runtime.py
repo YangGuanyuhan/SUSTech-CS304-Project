@@ -61,27 +61,33 @@ Tool usage rules:
 12. Blackboard calendar events are read-only. If the user wants to modify one, first copy it into a local event.
 13. When the user asks about indexed study materials, course notes, school information, PDFs,
     slides, documents, or the local knowledge base, prefer rag_search or rag_answer before
-    answering from general knowledge. If the knowledge base has no relevant hit, say that plainly.
+    answering from general knowledge. rag_search and rag_answer search only the indexed global
+    knowledge base. If the knowledge base has no relevant hit, say that plainly.
 14. Uploaded files in the current chat are NOT local workspace files. When the user says
     "uploaded file", "my PDF", "this PPT", "attached document", "课件", "上传的资料",
-    or similar, you must use rag_answer for analysis/summary/QA or rag_search for snippets.
+    or similar, you must use uploaded_file_answer for analysis/summary/QA or
+    uploaded_file_search for snippets.
     Do not call list_local_files, read_local_file, run_local_command, or rag_index_folder for
     current chat uploads unless the user explicitly asks about the local workspace.
-    The RAG tools search current chat uploads before the broader knowledge base.
+    If the user explicitly asks to compare or combine uploaded files with the broader knowledge
+    base, call both uploaded_file_* and rag_* tools, then synthesize the answer.
 15. RAG indexing is limited to directories configured in the Knowledge Base page. Use
     rag_index_folder with a relative path under the default RAG directory whenever possible.
     Do not ask to index arbitrary computer paths outside the configured RAG roots.
 16. web_search usage rules (IMPORTANT - follow these strictly):
    - ONLY use web_search when: the user explicitly asks to search/look up something online,
      the question requires REAL-TIME information (today's news, current prices, live scores),
-     after trying local tools (rag_search, rag_answer, memory_search) and they return no results,
+     after trying local tools (rag_search, rag_answer, uploaded_file_search,
+     uploaded_file_answer, memory_search) and they return no results,
      or the question is about recent events (within last few months) that you don't know.
    - Do NOT use web_search for: general knowledge questions you can answer from training data,
-     questions about uploaded files or local documents (use rag_search/rag_answer),
+     questions about uploaded files (use uploaded_file_search/uploaded_file_answer),
+     questions about indexed local documents (use rag_search/rag_answer),
      questions about previous conversations (use memory_search),
      academic concepts, definitions, well-established facts,
      or programming help, code examples, technical documentation.
-   - Search workflow: first check if local tools can answer (rag_search, memory_search).
+   - Search workflow: first check if local tools can answer (rag_search,
+     uploaded_file_search, memory_search).
      Only if local tools fail or user explicitly requests web search, use web_search.
 17. For Blackboard file download requests, use only this sequence:
     blackboard_get_all_courses if you need the course_id, then blackboard_download_files.
@@ -110,8 +116,9 @@ def build_chat_uploads_prompt(session: Session, session_id: str) -> str:
     if not files:
         return (
             "Current chat has no uploaded PDF/PPTX/DOCX files indexed. If the user asks "
-            "about an uploaded file, call rag_search or rag_answer to confirm before saying "
-            "there is no uploaded content. Do not inspect local workspace files for that request."
+            "about an uploaded file, call uploaded_file_search or uploaded_file_answer to "
+            "confirm before saying there is no uploaded content. Do not inspect local workspace "
+            "files for that request."
         )
 
     indexed = [item for item in files if item.status == "indexed"]
@@ -119,7 +126,10 @@ def build_chat_uploads_prompt(session: Session, session_id: str) -> str:
     failed = [item for item in files if item.status == "failed"]
     lines = [
         "Current chat uploaded-file context:",
-        "Use rag_answer for summaries, analysis, and questions about these uploads; use rag_search only when raw snippets are needed.",
+        (
+            "Use uploaded_file_answer for summaries, analysis, and questions about these "
+            "uploads; use uploaded_file_search only when raw snippets are needed."
+        ),
         "Do not use local file tools for these uploaded files.",
     ]
     if indexed:
@@ -181,8 +191,8 @@ async def build_tool_examples_prompt(session: Session, user_query: str) -> str:
     if any(word in query_lower for word in ["course", "material", "notes", "lecture"]):
         relevant_tools.append("rag_search")
     if any(word in query_lower for word in upload_terms):
-        relevant_tools.append("rag_search")
-        relevant_tools.append("rag_answer")
+        relevant_tools.append("uploaded_file_search")
+        relevant_tools.append("uploaded_file_answer")
     if any(word in query_lower for word in ["file", "code", "read", "show"]) and not any(
         word in query_lower for word in upload_terms
     ):
@@ -597,15 +607,35 @@ class PydanticAIRuntime:
 
         @agent.tool(name="rag_search")
         async def rag_search(ctx: RunContext[AgentDeps], query: str, top_k: int = 5) -> str:
-            """Search current-chat uploaded PDF/PPTX/DOCX content first, then global RAG."""
+            """Search indexed global knowledge base content only."""
 
             return await _execute_tool(ctx, "rag_search", {"query": query, "top_k": top_k})
 
         @agent.tool(name="rag_answer")
         async def rag_answer(ctx: RunContext[AgentDeps], query: str, top_k: int = 5) -> str:
-            """Answer using current-chat uploaded files first; best for uploaded PDF/PPT analysis."""
+            """Answer using indexed global knowledge base content only."""
 
             return await _execute_tool(ctx, "rag_answer", {"query": query, "top_k": top_k})
+
+        @agent.tool(name="uploaded_file_search")
+        async def uploaded_file_search(
+            ctx: RunContext[AgentDeps], query: str, top_k: int = 5
+        ) -> str:
+            """Search current-chat uploaded PDF/PPTX/DOCX/MD/TXT content only."""
+
+            return await _execute_tool(
+                ctx, "uploaded_file_search", {"query": query, "top_k": top_k}
+            )
+
+        @agent.tool(name="uploaded_file_answer")
+        async def uploaded_file_answer(
+            ctx: RunContext[AgentDeps], query: str, top_k: int = 5
+        ) -> str:
+            """Answer using current-chat uploaded files only; best for uploaded file analysis."""
+
+            return await _execute_tool(
+                ctx, "uploaded_file_answer", {"query": query, "top_k": top_k}
+            )
 
         @agent.tool(name="create_quiz")
         async def create_quiz(

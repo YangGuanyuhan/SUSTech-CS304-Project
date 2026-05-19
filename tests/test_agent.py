@@ -100,9 +100,9 @@ async def test_runtime_injects_current_chat_upload_context(db_session, tmp_path)
     assert "Do not use local file tools" in prompt
 
 
-async def test_uploaded_file_queries_get_rag_examples_not_local_file_examples(db_session):
+async def test_uploaded_file_queries_get_uploaded_file_examples_not_local_file_examples(db_session):
     prompt = await build_tool_examples_prompt(db_session, "分析一下我上传的 PDF")
 
-    assert "rag_search" in prompt
-    assert "rag_answer" in prompt
+    assert "uploaded_file_search" in prompt
+    assert "uploaded_file_answer" in prompt
     assert "read_local_file" not in prompt
