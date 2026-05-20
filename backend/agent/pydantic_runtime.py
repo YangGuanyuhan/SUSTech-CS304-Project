@@ -333,12 +333,14 @@ class PydanticAIRuntime:
         def chat_upload_instruction(ctx: RunContext[AgentDeps]) -> str:
             return build_chat_uploads_prompt(ctx.deps.session, ctx.deps.session_id)
 
-        async def _notify_tool_events(ctx: RunContext[AgentDeps]) -> None:
+        async def _notify_tool_events(
+            ctx: RunContext[AgentDeps], changed_events: list[ToolTrace]
+        ) -> None:
             callback = ctx.deps.on_tool_events
             if callback is None:
                 return
-            snapshot = [event.model_copy(deep=True) for event in ctx.deps.tool_events]
-            maybe_awaitable = callback(snapshot)
+            delta = [event.model_copy(deep=True) for event in changed_events]
+            maybe_awaitable = callback(delta)
             if inspect.isawaitable(maybe_awaitable):
                 _ = await maybe_awaitable
 
@@ -349,7 +351,7 @@ class PydanticAIRuntime:
         ) -> str:
             running_event = ToolTrace(tool_name=tool_name, arguments=arguments, status="running")
             ctx.deps.tool_events.append(running_event)
-            await _notify_tool_events(ctx)
+            await _notify_tool_events(ctx, [running_event])
             # Let the event loop flush the "running" SSE event before tool execution starts.
             await asyncio.sleep(0)
             try:
@@ -365,7 +367,7 @@ class PydanticAIRuntime:
                     {"ok": False, "tool_name": tool_name, "error": str(exc)},
                     ensure_ascii=False,
                 )
-                await _notify_tool_events(ctx)
+                await _notify_tool_events(ctx, [running_event])
                 return running_event.output
             except Exception as exc:
                 running_event.status = "failed"
@@ -377,13 +379,13 @@ class PydanticAIRuntime:
                     },
                     ensure_ascii=False,
                 )
-                await _notify_tool_events(ctx)
+                await _notify_tool_events(ctx, [running_event])
                 return running_event.output
 
             running_event.status = "failed" if '"ok": false' in output.lower() else "completed"
             running_event.output = output
             ctx.deps.tools_used.append(tool_name)
-            await _notify_tool_events(ctx)
+            await _notify_tool_events(ctx, [running_event])
             return output
 
         @agent.tool(name="memory_search")

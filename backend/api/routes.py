@@ -113,6 +113,10 @@ def _serialize_tool_events(tool_events: object) -> list[dict[str, object]]:
     return [_serialize_tool_event(event) for event in tool_events]
 
 
+def _approval_tool_events(tool_events: list[dict[str, object]]) -> list[dict[str, object]]:
+    return [event for event in tool_events if event.get("status") == "awaiting_approval"]
+
+
 async def _stream_agent_result(
     result: dict[str, object],
     *,
@@ -134,7 +138,7 @@ async def _stream_agent_result(
             "data": json.dumps(
                 {
                     **approval_request,
-                    "tool_events": tool_events,
+                    "tool_events": _approval_tool_events(tool_events),
                 }
             ),
         }

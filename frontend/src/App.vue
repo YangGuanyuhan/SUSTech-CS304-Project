@@ -698,6 +698,37 @@ function formatToolPayload(payload) {
   return JSON.stringify(payload, null, 2);
 }
 
+function findMatchingToolPart(parts, toolEvent) {
+  const nextArgs = JSON.stringify(toolEvent?.arguments || {});
+  return parts.find((part) => {
+    if (part.type !== "tool") return false;
+    const currentEvent = part.toolEvent || {};
+    if (toolEvent?.trace_id && currentEvent.trace_id) {
+      return currentEvent.trace_id === toolEvent.trace_id;
+    }
+    return (
+      !toolEvent?.trace_id &&
+      !currentEvent.trace_id &&
+      currentEvent.tool_name === toolEvent?.tool_name &&
+      JSON.stringify(currentEvent.arguments || {}) === nextArgs
+    );
+  });
+}
+
+function mergeToolParts(message, toolEvents, { allowInsert = true } = {}) {
+  if (!Array.isArray(toolEvents) || toolEvents.length === 0) return;
+  toolEvents.forEach((toolEvent) => {
+    const existingPart = findMatchingToolPart(message.parts, toolEvent);
+    if (existingPart) {
+      existingPart.toolEvent = toolEvent;
+      return;
+    }
+    if (allowInsert) {
+      message.parts.push({ type: "tool", toolEvent });
+    }
+  });
+}
+
 function tryParseToolOutput(output) {
   if (!output || typeof output !== "string") return null;
   try {
@@ -1058,14 +1089,7 @@ async function submitMessage() {
           if (firstPart?.type === "text" && firstPart.content === WAITING_TEXT) {
             assistantMessage.parts.shift();
           }
-          const existingToolParts = assistantMessage.parts.filter((p) => p.type === "tool");
-          toolEvents.forEach((newEvent, idx) => {
-            if (idx < existingToolParts.length) {
-              existingToolParts[idx].toolEvent = newEvent;
-            } else {
-              assistantMessage.parts.push({ type: "tool", toolEvent: newEvent });
-            }
-          });
+          mergeToolParts(assistantMessage, toolEvents);
           scrollToBottom();
         },
         onApprovalRequired(approval) {
@@ -1079,17 +1103,7 @@ async function submitMessage() {
           } else {
             assistantMessage.parts.push({ type: "text", content: "工具调用正在等待你的审批。" });
           }
-          (approval.tool_events || []).forEach((te) => {
-            const toolParts = assistantMessage.parts.filter((p) => p.type === "tool");
-            const existingIdx = toolParts.findIndex(
-              (tp) => tp.toolEvent.tool_name === te.tool_name
-            );
-            if (existingIdx >= 0) {
-              toolParts[existingIdx].toolEvent = te;
-            } else {
-              assistantMessage.parts.push({ type: "tool", toolEvent: te });
-            }
-          });
+          mergeToolParts(assistantMessage, approval.tool_events || []);
           conversation.pendingApproval = approval;
           scrollToBottom();
         },
@@ -1102,6 +1116,7 @@ async function submitMessage() {
           if (lastThinking) {
             lastThinking.content = lastThinking.content.trim();
           }
+          mergeToolParts(assistantMessage, payload.tool_events || [], { allowInsert: false });
           scrollToBottom();
         }
       },
@@ -1199,14 +1214,7 @@ async function resolveApproval(approved) {
           if (firstPart?.type === "text" && firstPart.content === INITIAL_TEXT) {
             assistantMessage.parts.shift();
           }
-          const existingToolParts = assistantMessage.parts.filter((p) => p.type === "tool");
-          toolEvents.forEach((newEvent, idx) => {
-            if (idx < existingToolParts.length) {
-              existingToolParts[idx].toolEvent = newEvent;
-            } else {
-              assistantMessage.parts.push({ type: "tool", toolEvent: newEvent });
-            }
-          });
+          mergeToolParts(assistantMessage, toolEvents);
           scrollToBottom();
         },
         onApprovalRequired(nextApproval) {
@@ -1220,17 +1228,7 @@ async function resolveApproval(approved) {
           } else {
             assistantMessage.parts.push({ type: "text", content: "另一个操作正在等待你的审批。" });
           }
-          (nextApproval.tool_events || []).forEach((te) => {
-            const toolParts = assistantMessage.parts.filter((p) => p.type === "tool");
-            const existingIdx = toolParts.findIndex(
-              (tp) => tp.toolEvent.tool_name === te.tool_name
-            );
-            if (existingIdx >= 0) {
-              toolParts[existingIdx].toolEvent = te;
-            } else {
-              assistantMessage.parts.push({ type: "tool", toolEvent: te });
-            }
-          });
+          mergeToolParts(assistantMessage, nextApproval.tool_events || []);
           conversation.pendingApproval = nextApproval;
           scrollToBottom();
         },
@@ -1243,6 +1241,7 @@ async function resolveApproval(approved) {
           if (lastThinking) {
             lastThinking.content = lastThinking.content.trim();
           }
+          mergeToolParts(assistantMessage, payload.tool_events || [], { allowInsert: false });
           scrollToBottom();
         }
       }
