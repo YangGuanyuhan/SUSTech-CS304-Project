@@ -122,11 +122,15 @@ jobs:
       - name: Run cloc & lizard
         run: |
           mkdir -p artifacts/code-metrics
-          cloc backend frontend/src \
+          cloc backend frontend \
+            --exclude-dir=node_modules,dist \
+            --not-match-f="(package\.json|package-lock\.json|nginx\.conf)" \
             --json --out=artifacts/code-metrics/cloc.json
-          cloc backend frontend/src \
+          cloc backend frontend \
+            --exclude-dir=node_modules,dist \
+            --not-match-f="(package\.json|package-lock\.json|nginx\.conf)" \
             --out=artifacts/code-metrics/cloc.txt
-          lizard backend frontend/src -l py,js,vue -x 0 \
+          lizard backend frontend -l py,js,vue -x "*/node_modules/*" -x "*/dist/*" -x "*/package.json" -x "*/package-lock.json" -x "*/nginx.conf" \
             --CCN 15 --warnings_only \
             > artifacts/code-metrics/lizard-warnings.txt 2>&1 || true
         continue-on-error: true
@@ -157,7 +161,7 @@ jobs:
           function_count = 0
           try:
               functions = []
-              results = list(lizard.analyze(["backend", "frontend/src"]))
+              results = list(lizard.analyze(["backend", "frontend"], exclude_pattern=["*/node_modules/*", "*/dist/*", "*/package.json", "*/package-lock.json", "*/nginx.conf"]))
               for file_info in results:
                   file_name = getattr(file_info, "filename", "")
                   for func in getattr(file_info, "function_list", []):
