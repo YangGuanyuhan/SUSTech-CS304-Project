@@ -126,9 +126,8 @@ jobs:
           mkdir -p artifacts/security
           uv run pip-audit \
             --progress-spinner off \
-            --no-fail \
             --format json \
-            --output artifacts/security/pip-audit.json
+            --output artifacts/security/pip-audit.json || true
 
       - name: Set up Node.js
         uses: actions/setup-node@v5
