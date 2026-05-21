@@ -6,7 +6,7 @@ Student Productivity Agent is a modular software engineering project for SUSTech
 
 - Backend-first architecture with stable domain models
 - Mock-first Blackboard integration with cache fallback path
-- Human-in-the-loop email draft and send flow
+- Human-in-the-loop email send flow with inbox reading and reusable profiles
 - Local file summary and batch rename workflow
 - Local knowledge-base RAG with RAG-Anything-backed indexing
 - **Intelligent memory system with semantic search and context management**
@@ -73,6 +73,7 @@ docs/          Documentation
 - [Project Proposal](docs/architecture/proposal-26s-8.md) - Original project proposal
 
 ### Features
+- [Email Feature](docs/features/EMAIL_FEATURE.md) - End-to-end email workflow with configuration, inbox reading, and approval-based sending
 - [Memory System](docs/features/MEMORY_SYSTEM_IMPLEMENTATION.md) - Intelligent memory with semantic search
 - [RAG System](docs/RAG_README.md) - Knowledge base and RAG setup
 
