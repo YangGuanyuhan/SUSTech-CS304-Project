@@ -102,6 +102,255 @@ jobs:
             artifacts/frontend-dist
           retention-days: 14
 
+  code-analysis:
+    name: Code metrics (cloc + lizard)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install analysis tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq cloc
+          pip install lizard
+
+      - name: Run cloc & lizard
+        run: |
+          mkdir -p artifacts/code-metrics
+          cloc backend frontend/src \
+            --json --out=artifacts/code-metrics/cloc.json
+          cloc backend frontend/src \
+            --out=artifacts/code-metrics/cloc.txt
+          lizard backend frontend/src -l py,js,vue -x 0 \
+            --CCN 15 \
+            --html > artifacts/code-metrics/lizard.html || true
+          lizard backend frontend/src -l py,js,vue -x 0 \
+            --CCN 15 --warnings_only \
+            > artifacts/code-metrics/lizard-warnings.txt 2>&1 || true
+        continue-on-error: true
+
+      - name: Generate summary dashboard
+        run: |
+          python - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from html import escape
+
+          import lizard
+
+          with open("artifacts/code-metrics/cloc.json") as f:
+              cloc = json.load(f)
+
+          cloc_rows = ""
+          total = cloc.get("SUM", {})
+          for lang, v in cloc.items():
+              if lang in ("header", "SUM"):
+                  continue
+              cloc_rows += f"<tr><td>{lang}</td><td>{v['nFiles']}</td><td>{v['code']}</td><td>{v['comment']}</td><td>{v['blank']}</td></tr>"
+
+          lizard_rows = ""
+          warnings = []
+          ccn_values = []
+          function_count = 0
+          try:
+              functions = []
+              results = list(lizard.analyze(["backend", "frontend/src"]))
+              for file_info in results:
+                  file_name = getattr(file_info, "filename", "")
+                  for func in getattr(file_info, "function_list", []):
+                      function_count += 1
+                      ccn_value = getattr(func, "cyclomatic_complexity", None)
+                      loc_value = getattr(func, "nloc", "") or getattr(func, "length", "")
+                      start_line = getattr(func, "start_line", "")
+                      name = getattr(func, "name", "")
+                      file_label = f"{file_name}:{start_line}" if start_line else file_name
+                      functions.append(
+                          {
+                              "name": escape(str(name)),
+                              "ccn": ccn_value if ccn_value is not None else "",
+                              "loc": loc_value,
+                              "file": escape(str(file_label)),
+                              "ccn_value": ccn_value if isinstance(ccn_value, int) else -1,
+                          }
+                      )
+              functions.sort(key=lambda row: (-row["ccn_value"], row["file"], row["name"]))
+              for row in functions:
+                  ccn_value = row["ccn_value"] if row["ccn_value"] >= 0 else None
+                  is_warning = ccn_value is not None and ccn_value > 15
+                  if ccn_value is not None:
+                      ccn_values.append(ccn_value)
+                  if is_warning:
+                      warnings.append((row["name"], row["ccn"], row["file"]))
+                  row_class = ' class="warn-row"' if is_warning else ""
+                  lizard_rows += f"<tr{row_class}><td>{row['name']}</td><td>{row['ccn']}</td><td>{row['loc']}</td><td class='file-col'>{row['file']}</td></tr>"
+              if not lizard_rows:
+                  lizard_rows = "<tr><td colspan='4'>No functions found by lizard.</td></tr>"
+          except Exception as e:
+              lizard_rows = f"<tr><td colspan='4'>Parse error: {e}</td></tr>"
+
+          max_ccn = max(ccn_values) if ccn_values else 0
+          avg_ccn = (sum(ccn_values) / len(ccn_values)) if ccn_values else 0
+          warning_count = len(warnings)
+          if function_count == 0:
+              complexity_note = "No functions were analyzed by lizard in this run."
+              complexity_tone = "neutral"
+          elif warning_count > 0:
+              complexity_note = f"{warning_count} functions exceed the CCN threshold of 15 and should be reviewed first."
+              complexity_tone = "warn"
+          elif avg_ccn <= 5:
+              complexity_note = "Average complexity is low across the analyzed functions."
+              complexity_tone = "good"
+          else:
+              complexity_note = "No threshold violations were found, but a few functions may still be worth watching."
+              complexity_tone = "neutral"
+          warning_summary = f"{warning_count} warnings" if warning_count else "No warnings"
+
+          html = f"""<!DOCTYPE html>
+          <html lang="en"><head><meta charset="utf-8">
+          <title>Code Metrics Report</title>
+          <style>
+            :root{{--bg:#f3f6fb;--panel:#ffffff;--ink:#102033;--muted:#667085;--line:#d7deea;--accent:#1d4ed8;--accent-soft:#dbeafe;--good:#166534;--good-soft:#dcfce7;--warn:#fff3c4;--warn-ink:#92400e;--neutral:#475467;}}
+            *{{box-sizing:border-box;}}
+            body{{margin:0;background:linear-gradient(180deg,#eef4ff 0%,#f8fafc 42%,#f3f6fb 100%);color:var(--ink);font-family:Arial,sans-serif;padding:32px 20px;}}
+            .page{{max-width:1180px;margin:0 auto;}}
+            .hero{{background:linear-gradient(135deg,#102a43 0%,#1d4ed8 58%,#5b8def 100%);color:#fff;border-radius:24px;padding:28px 30px;box-shadow:0 18px 48px rgba(16,42,67,.18);margin-bottom:22px;}}
+            .eyebrow{{font-size:12px;letter-spacing:.12em;text-transform:uppercase;opacity:.74;margin-bottom:10px;}}
+            h1{{font-size:34px;line-height:1.05;margin:0 0 8px;}}
+            .hero-copy{{max-width:760px;font-size:15px;line-height:1.6;opacity:.92;margin:0 0 18px;}}
+            .meta{{font-size:12px;opacity:.82;display:flex;gap:14px;flex-wrap:wrap;}}
+            .hero-grid{{display:grid;grid-template-columns:minmax(280px,1.6fr) minmax(260px,1fr);gap:18px;margin-top:22px;}}
+            .hero-main{{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);border-radius:20px;padding:22px;backdrop-filter:blur(4px);}}
+            .hero-label{{font-size:12px;letter-spacing:.08em;text-transform:uppercase;opacity:.78;margin-bottom:10px;}}
+            .hero-value{{font-size:64px;line-height:1;font-weight:700;margin:0 0 6px;}}
+            .hero-sub{{font-size:18px;font-weight:600;margin:0 0 12px;}}
+            .hero-note{{font-size:14px;line-height:1.6;margin:0;opacity:.95;}}
+            .hero-side{{display:grid;gap:12px;}}
+            .stat-chip{{background:#fff;color:var(--ink);border-radius:18px;padding:16px 18px;border:1px solid rgba(255,255,255,.2);}}
+            .stat-chip .k{{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px;}}
+            .stat-chip .v{{font-size:30px;font-weight:700;line-height:1.1;margin-bottom:4px;}}
+            .stat-chip .s{{font-size:13px;color:var(--muted);}}
+            .metrics{{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:22px;}}
+            .metric-card{{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px 18px 16px;box-shadow:0 10px 24px rgba(15,23,42,.05);}}
+            .metric-card .val{{font-size:32px;font-weight:700;color:var(--accent);line-height:1.1;}}
+            .metric-card .lbl{{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-top:8px;}}
+            .panel{{background:var(--panel);border:1px solid var(--line);border-radius:22px;padding:20px 20px 14px;box-shadow:0 12px 30px rgba(15,23,42,.05);margin-bottom:20px;}}
+            .panel-head{{display:flex;justify-content:space-between;gap:12px;align-items:end;flex-wrap:wrap;margin-bottom:14px;}}
+            .panel h2{{font-size:20px;margin:0 0 4px;}}
+            .panel p{{margin:0;color:var(--muted);font-size:14px;line-height:1.5;}}
+            .badge{{display:inline-flex;align-items:center;padding:8px 12px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;}}
+            .badge.good{{background:var(--good-soft);color:var(--good);}}
+            .badge.warn{{background:var(--warn);color:var(--warn-ink);}}
+            .badge.neutral{{background:#eef2f6;color:var(--neutral);}}
+            table{{width:100%;border-collapse:collapse;overflow:hidden;}}
+            th{{font-size:12px;text-transform:uppercase;letter-spacing:.08em;text-align:left;padding:12px 14px;color:var(--muted);border-bottom:1px solid var(--line);}}
+            td{{font-size:14px;padding:12px 14px;border-top:1px solid #edf1f7;vertical-align:top;}}
+            tbody tr:nth-child(even){{background:#fafcff;}}
+            .warn-row{{background:var(--warn) !important;}}
+            .file-col{{font-size:12px;color:#637085;}}
+            .footnote{{font-size:12px;color:#7b8794;margin-top:12px;}}
+            @media (max-width: 820px) {{
+              body{{padding:18px 12px;}}
+              .hero{{padding:22px 18px;}}
+              h1{{font-size:28px;}}
+              .hero-grid{{grid-template-columns:1fr;}}
+              .hero-value{{font-size:52px;}}
+            }}
+          </style></head><body>
+          <div class="page">
+            <section class="hero">
+              <div class="eyebrow">Automated Repository Summary</div>
+              <h1>Code Metrics Report</h1>
+              <p class="hero-copy">A quick view of project size and complexity, with average cyclomatic complexity highlighted first so the overall maintainability signal is easy to scan.</p>
+              <div class="meta">
+                <span>Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}</span>
+                <span>Repo: {os.environ.get('GITHUB_REPOSITORY','N/A')}</span>
+                <span>SHA: {os.environ.get('GITHUB_SHA','N/A')[:8]}</span>
+              </div>
+              <div class="hero-grid">
+                <div class="hero-main">
+                  <div class="hero-label">Average cyclomatic complexity</div>
+                  <div class="hero-value">{avg_ccn:.2f}</div>
+                  <div class="hero-sub">Across {function_count} analyzed functions</div>
+                  <p class="hero-note">{complexity_note}</p>
+                </div>
+                <div class="hero-side">
+                  <div class="stat-chip">
+                    <div class="k">Max CCN</div>
+                    <div class="v">{max_ccn}</div>
+                    <div class="s">Highest single-function complexity in this run</div>
+                  </div>
+                  <div class="stat-chip">
+                    <div class="k">Warnings</div>
+                    <div class="v">{warning_summary}</div>
+                    <div class="s">Functions above the CCN &gt; 15 threshold</div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="metrics">
+              <div class="metric-card"><div class="val">{total.get('code',0):,}</div><div class="lbl">Lines of code</div></div>
+              <div class="metric-card"><div class="val">{total.get('nFiles',0)}</div><div class="lbl">Source files</div></div>
+              <div class="metric-card"><div class="val">{function_count}</div><div class="lbl">Functions analyzed</div></div>
+              <div class="metric-card"><div class="val">{total.get('comment',0):,}</div><div class="lbl">Comment lines</div></div>
+              <div class="metric-card"><div class="val">{total.get('blank',0):,}</div><div class="lbl">Blank lines</div></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2>Complexity Overview</h2>
+                  <p>Lizard results sorted by highest CCN first. Rows highlighted in yellow exceed the warning threshold.</p>
+                </div>
+                <span class="badge {complexity_tone}">{warning_summary}</span>
+              </div>
+              <table><thead><tr><th>Function</th><th>CCN</th><th>LOC</th><th>File</th></tr></thead>
+              <tbody>{lizard_rows}</tbody></table>
+              <p class="footnote">Full lizard detail: <a href="lizard.html">lizard.html</a></p>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2>Lines by Language</h2>
+                  <p>Source file and line-count breakdown produced by cloc.</p>
+                </div>
+              </div>
+              <table><thead><tr><th>Language</th><th>Files</th><th>Code</th><th>Comment</th><th>Blank</th></tr></thead>
+              <tbody>{cloc_rows}</tbody></table>
+            </section>
+          </div>
+          </body></html>"""
+
+          with open("artifacts/code-metrics/lizard-summary.json", "w", encoding="utf-8") as f:
+              json.dump(
+                  {
+                      "function_count": function_count,
+                      "max_ccn": max_ccn,
+                      "avg_ccn": round(avg_ccn, 2),
+                      "warning_count": warning_count,
+                  },
+                  f,
+                  indent=2,
+              )
+          with open("artifacts/code-metrics/report.html", "w") as f:
+              f.write(html)
+          print("Report written.")
+          PY
+
+      - name: Upload code metrics
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: code-metrics
+          path: artifacts/code-metrics
+          retention-days: 14
+
   security:
     name: Dependency security scan
     runs-on: ubuntu-latest
@@ -210,6 +459,7 @@ jobs:
     needs:
       - quality
       - security
+      - code-analysis
       - docs
     steps:
       - name: Download build outputs
@@ -224,6 +474,12 @@ jobs:
           name: docs-site
           path: release/docs
 
+      - name: Download code metrics
+        uses: actions/download-artifact@v5
+        with:
+          name: code-metrics
+          path: release/code-metrics
+
       - name: Create release manifest
         run: |
           python - <<'PY'
@@ -235,7 +491,7 @@ jobs:
               "ref": os.environ["GITHUB_REF"],
               "sha": os.environ["GITHUB_SHA"],
               "generated_at": datetime.now(timezone.utc).isoformat(),
-              "contents": ["backend wheel", "frontend dist", "documentation site"],
+              "contents": ["backend wheel", "frontend dist", "documentation site", "code metrics report"],
           }
           os.makedirs("release", exist_ok=True)
           with open("release/deployment-manifest.json", "w", encoding="utf-8") as handle:
