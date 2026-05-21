@@ -103,7 +103,7 @@ jobs:
           retention-days: 14
 
   code-analysis:
-    name: Code metrics (cloc + lizard)
+    name: Code metrics
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -135,6 +135,7 @@ jobs:
         run: |
           python - <<'PY'
           import json, os
+          import tomllib
           from datetime import datetime, timezone
           from html import escape
 
@@ -195,6 +196,42 @@ jobs:
           warning_summary = f"{warning_count} warnings" if warning_count else "No warnings"
           complexity_note = f"Current run analyzed {function_count} functions. Highlighted rows exceed the CCN threshold of 15."
 
+          backend_deps_list = []
+          try:
+              with open("pyproject.toml", "rb") as f:
+                  pyproject = tomllib.load(f)
+                  proj_deps = pyproject.get("project", {}).get("dependencies", [])
+                  dev_deps = pyproject.get("dependency-groups", {}).get("dev", [])
+                  for dep in proj_deps:
+                      backend_deps_list.append({"type": "Runtime", "name": str(dep)})
+                  for dep in dev_deps:
+                      backend_deps_list.append({"type": "Development", "name": str(dep)})
+          except Exception as e:
+              print(f"Failed to read pyproject.toml: {e}")
+
+          frontend_deps_list = []
+          try:
+              with open("frontend/package.json", "r", encoding="utf-8") as f:
+                  pkg = json.load(f)
+                  for k, v in pkg.get("dependencies", {}).items():
+                      frontend_deps_list.append({"type": "Runtime", "name": f"{k} ({v})"})
+                  for k, v in pkg.get("devDependencies", {}).items():
+                      frontend_deps_list.append({"type": "Development", "name": f"{k} ({v})"})
+          except Exception as e:
+              print(f"Failed to read package.json: {e}")
+
+          deps_rows = ""
+          for dep in backend_deps_list:
+              deps_rows += f"<tr><td>Backend (pip/uv)</td><td>{escape(dep['type'])}</td><td>{escape(dep['name'])}</td></tr>"
+          for dep in frontend_deps_list:
+              deps_rows += f"<tr><td>Frontend (npm)</td><td>{escape(dep['type'])}</td><td>{escape(dep['name'])}</td></tr>"
+          if not deps_rows:
+              deps_rows = "<tr><td colspan='3'>No dependencies found.</td></tr>"
+
+          total_deps = len(backend_deps_list) + len(frontend_deps_list)
+          total_runtime = sum(1 for d in backend_deps_list + frontend_deps_list if d["type"] == "Runtime")
+          total_dev = sum(1 for d in backend_deps_list + frontend_deps_list if d["type"] == "Development")
+
           html = f"""<!DOCTYPE html>
           <html lang="en"><head><meta charset="utf-8">
           <title>Code Metrics Report</title>
@@ -231,7 +268,7 @@ jobs:
             <section class="hero">
               <div class="eyebrow">Automated Repository Summary</div>
               <h1>Code Metrics Report</h1>
-              <p class="hero-copy">A quick view of project size and cyclomatic complexity.</p>
+              <p class="hero-copy">A quick view of project size, complexity, and dependencies.</p>
               <div class="meta">
                 <span>Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}</span>
                 <span>Repo: {os.environ.get('GITHUB_REPOSITORY','N/A')}</span>
@@ -242,6 +279,7 @@ jobs:
             <div class="tabs">
               <button class="tab-btn active" onclick="openTab('cloc', event)">Lines of Code (cloc)</button>
               <button class="tab-btn" onclick="openTab('lizard', event)">Cyclomatic Complexity (lizard)</button>
+              <button class="tab-btn" onclick="openTab('deps', event)">Dependencies</button>
             </div>
 
             <div id="cloc" class="tab-content active">
@@ -268,6 +306,19 @@ jobs:
               </div>
               <table><thead><tr><th>Function</th><th>CCN</th><th>LOC</th><th>File</th></tr></thead>
               <tbody>{lizard_rows}</tbody></table>
+            </div>
+
+            <div id="deps" class="tab-content">
+              <h2>Dependencies Overview</h2>
+              <p class="section-note">Tracking pip (backend) and npm (frontend) packages.</p>
+              <div class="summary-grid">
+                <div class="summary-card"><div class="label">Total Dependencies</div><div class="value">{total_deps}</div></div>
+                <div class="summary-card"><div class="label">Backend (pip/uv)</div><div class="value">{len(backend_deps_list)}</div></div>
+                <div class="summary-card"><div class="label">Frontend (npm)</div><div class="value">{len(frontend_deps_list)}</div></div>
+                <div class="summary-card"><div class="label">Runtime / Dev</div><div class="value">{total_runtime} / {total_dev}</div></div>
+              </div>
+              <table><thead><tr><th>Ecosystem</th><th>Type</th><th>Package Details</th></tr></thead>
+              <tbody>{deps_rows}</tbody></table>
             </div>
           </div>
           <script>
