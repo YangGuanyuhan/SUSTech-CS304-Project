@@ -240,6 +240,7 @@ class QuizAttemptAnswerResult(QuizModel):
     question_id: str
     prompt: str
     question_type: QuizQuestionType
+    options: list[str] = Field(default_factory=list)
     submitted_answer: str
     correct_answer: str
     is_correct: bool | None = None

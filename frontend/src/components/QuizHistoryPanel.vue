@@ -165,14 +165,37 @@
                   </span>
                 </div>
                 <div class="detail-answer-body">
-                  <div class="detail-row">
-                    <span class="detail-label">你的回答</span>
-                    <span class="detail-value">{{ answer.submitted_answer || '(未作答)' }}</span>
+                  <!-- Options list for single_choice / true_false -->
+                  <div v-if="answer.options?.length" class="options-list">
+                    <div
+                      v-for="(option, oIndex) in answer.options"
+                      :key="`${answer.question_id}-${oIndex}`"
+                      :class="optionItemClass(option, oIndex, answer)"
+                    >
+                      <span class="option-marker">{{ optionLetter(oIndex) }}</span>
+                      <span class="option-text">{{ option }}</span>
+                      <svg v-if="isCorrectOption(option, answer)" class="option-icon correct" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <polyline points="20 6 9 17 4 12"/>
+                      </svg>
+                      <svg v-else-if="isSelectedWrongOption(option, oIndex, answer)" class="option-icon wrong" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </div>
                   </div>
-                  <div class="detail-row">
-                    <span class="detail-label">参考答案</span>
-                    <span class="detail-value correct">{{ answer.correct_answer }}</span>
-                  </div>
+
+                  <!-- Short answer: show your answer + correct answer rows -->
+                  <template v-else>
+                    <div class="detail-row">
+                      <span class="detail-label">你的回答</span>
+                      <span class="detail-value">{{ answer.submitted_answer || '(未作答)' }}</span>
+                    </div>
+                    <div class="detail-row">
+                      <span class="detail-label">参考答案</span>
+                      <span class="detail-value correct">{{ answer.correct_answer }}</span>
+                    </div>
+                  </template>
+
                   <div v-if="answer.feedback" class="detail-feedback markdown-body" v-html="renderMarkdown(answer.feedback)" />
                 </div>
               </article>
@@ -220,6 +243,36 @@ function isResultCorrect(result) {
   const score = Number(result.score ?? 0);
   const maxScore = Number(result.max_score ?? 0);
   return Math.abs(score - maxScore) < 1e-6;
+}
+
+function normalizeText(value) {
+  return (value || "").trim().toLowerCase();
+}
+
+function optionLetter(index) {
+  return String.fromCharCode(65 + index);
+}
+
+function isCorrectOption(option, answer) {
+  return normalizeText(option) === normalizeText(answer.correct_answer);
+}
+
+function isSelectedWrongOption(option, index, answer) {
+  if (isCorrectOption(option, answer)) return false;
+  const submitted = (answer.submitted_answer || "").trim();
+  return (
+    normalizeText(option) === normalizeText(submitted) ||
+    optionLetter(index) === submitted.toUpperCase()
+  );
+}
+
+function optionItemClass(option, index, answer) {
+  const correct = isCorrectOption(option, answer);
+  const selectedWrong = isSelectedWrongOption(option, index, answer);
+  if (correct && !selectedWrong) return "option-correct";
+  if (selectedWrong) return "option-wrong";
+  if (correct) return "option-correct";
+  return "option-neutral";
 }
 
 async function refreshHistory() {
@@ -692,6 +745,87 @@ onMounted(() => {
   background: rgba(28, 36, 48, 0.04);
   font-size: 13px;
   color: var(--text-secondary);
+}
+
+/* Options List */
+.options-list {
+  display: grid;
+  gap: 6px;
+}
+
+.options-list > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-light);
+  font-size: 13px;
+  transition: background 0.15s ease;
+}
+
+.option-marker {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+  background: rgba(28, 36, 48, 0.06);
+  color: var(--text-muted);
+}
+
+.option-text {
+  flex: 1;
+  color: var(--text-primary);
+}
+
+.option-icon {
+  flex-shrink: 0;
+}
+
+.option-icon.correct {
+  color: #16a34a;
+}
+
+.option-icon.wrong {
+  color: #dc2626;
+}
+
+.option-correct {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.25);
+}
+
+.option-correct .option-marker {
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+}
+
+.option-correct .option-text {
+  color: #16a34a;
+  font-weight: 500;
+}
+
+.option-wrong {
+  background: rgba(239, 68, 68, 0.06);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.option-wrong .option-marker {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+}
+
+.option-wrong .option-text {
+  color: #dc2626;
+}
+
+.option-neutral {
+  background: transparent;
 }
 
 @media (max-width: 820px) {
