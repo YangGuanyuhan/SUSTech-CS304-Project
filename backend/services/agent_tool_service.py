@@ -13,9 +13,11 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from backend.models.calendar import CalendarEventCreate, CalendarEventMove, CalendarEventUpdate
+from backend.models.quiz import QuizCreateToolArguments
 from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
 from backend.services.calendar_service import CalendarService
 from backend.services.chat_file_service import CHAT_FILE_CONTEXT_CHUNK_LIMIT, ChatFileService
@@ -432,22 +434,16 @@ def get_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "create_quiz",
-                "description": "Create a quiz session for the user and return structured quiz questions.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "topic": {"type": "string"},
-                        "question_count": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "maximum": 10,
-                            "default": 5,
-                        },
-                        "source_material": {"type": "string"},
-                        "title": {"type": "string"},
-                    },
-                    "required": ["topic"],
-                },
+                "description": (
+                    "Persist a fully-authored quiz session. "
+                    "This tool does not generate questions for you. "
+                    "Pass the complete structured quiz payload, including question_count, "
+                    "questions, correct answers, explanations, rubrics, and points. "
+                    "Formatting rules: true_false questions must include options exactly "
+                    "['True', 'False']; single_choice correct_answer must exactly match one option; "
+                    "short_answer questions must use options=[] and include a rubric."
+                ),
+                "parameters": QuizCreateToolArguments.model_json_schema(),
             },
         },
         {
@@ -1188,15 +1184,13 @@ class AgentToolService:
         return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
 
     async def _create_quiz(self, arguments: dict[str, Any], *, chat_session_id: str) -> str:
-        topic = str(arguments.get("topic", "")).strip()
-        if not topic:
-            raise ToolExecutionError("`topic` is required for create_quiz.")
+        try:
+            payload = QuizCreateToolArguments.model_validate(arguments)
+        except ValidationError as exc:
+            raise ToolExecutionError(f"Invalid create_quiz payload: {exc}") from exc
         quiz = await self.quiz_service.create_quiz(
             chat_session_id=chat_session_id,
-            topic=topic,
-            question_count=int(arguments.get("question_count", 5)),
-            source_material=arguments.get("source_material"),
-            title=arguments.get("title"),
+            quiz=payload.quiz,
         )
         return json.dumps({"quiz_session": quiz.model_dump(mode="json")}, ensure_ascii=False)
 

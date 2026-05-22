@@ -244,8 +244,32 @@ STATIC_TOOL_EXAMPLES = {
         {
             "scenario": "When user wants to practice a topic",
             "example_query": "Create a quiz about Python functions",
-            "tool_call": {"topic": "Python functions", "question_count": 5},
-            "expected_outcome": "Generates 5 quiz questions about Python functions",
+            "tool_call": {
+                "quiz": {
+                    "topic": "Python functions",
+                    "question_count": 2,
+                    "questions": [
+                        {
+                            "question_type": "single_choice",
+                            "prompt": "Which keyword defines a function in Python?",
+                            "options": ["def", "func", "lambda", "class"],
+                            "correct_answer": "def",
+                            "explanation": "Python uses the def keyword to define a function.",
+                            "points": 1,
+                        },
+                        {
+                            "question_type": "short_answer",
+                            "prompt": "What is the purpose of a return statement in a function?",
+                            "options": [],
+                            "correct_answer": "It sends a value back to the caller.",
+                            "explanation": "The return statement ends the function and provides its result.",
+                            "rubric": "Mention that return sends a result or value back to the caller.",
+                            "points": 2,
+                        },
+                    ],
+                }
+            },
+            "expected_outcome": "Persists a fully-authored quiz about Python functions",
         },
     ],
     "list_local_files": [

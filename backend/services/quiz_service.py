@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import re
 from statistics import mean
 from uuid import uuid4
@@ -17,19 +16,21 @@ from backend.models.quiz import (
     QuizAnswerSubmission,
     QuizAttemptAnswerResult,
     QuizAttemptResult,
+    QuizDraft,
     QuizHistoryEntry,
     QuizHistorySummary,
     QuizQuestion,
     QuizSession,
+    normalize_true_false_token,
 )
 from backend.services.llm_service import LLMConfigurationError, LLMConnectionError, LLMService
 
 _WORD_RE = re.compile(r"[A-Za-z0-9\u4e00-\u9fff]+")
-logger = logging.getLogger(__name__)
+_CHOICE_PREFIX_RE = re.compile(r"^\(?([A-Da-d])[\).:\-]\s*")
 
 
 class QuizService:
-    """Create quizzes, grade attempts, and summarize practice history."""
+    """Persist quizzes, grade attempts, and summarize practice history."""
 
     def __init__(self, session: Session):
         self.session = session
@@ -43,42 +44,51 @@ class QuizService:
         self,
         *,
         chat_session_id: str,
-        topic: str,
-        question_count: int = 5,
-        source_material: str | None = None,
-        title: str | None = None,
+        quiz: QuizDraft,
     ) -> QuizSession:
-        questions = await self._generate_questions(topic, question_count, source_material)
+        quiz = QuizDraft.model_validate(quiz)
+        materialized_questions = [
+            QuizQuestion(
+                id=str(uuid4()),
+                question_type=question.question_type,
+                prompt=question.prompt,
+                options=list(question.options),
+                correct_answer=question.correct_answer,
+                explanation=question.explanation,
+                rubric=question.rubric,
+                points=question.points,
+            )
+            for question in quiz.questions
+        ]
         session_record = self.repository.create_session(
             chat_session_id=chat_session_id,
-            title=title or f"{topic[:48]} Quiz",
-            topic=topic,
-            source_material=source_material,
+            title=quiz.title or f"{quiz.topic[:48]} Quiz",
+            topic=quiz.topic,
+            source_material=quiz.source_material,
         )
         question_records = self.repository.create_questions(
             quiz_session_id=session_record.id,
-            questions=[question.model_dump(mode="json") for question in questions],
+            questions=[question.model_dump(mode="json") for question in materialized_questions],
         )
-        persisted_questions = [
-            QuizQuestion(
-                id=record.id,
-                question_type=record.question_type,
-                prompt=record.prompt,
-                options=record.options,
-                correct_answer=record.correct_answer,
-                explanation=record.explanation,
-                rubric=record.rubric,
-                points=record.points,
-            )
-            for record in question_records
-        ]
         return QuizSession(
             id=session_record.id,
             chat_session_id=session_record.chat_session_id,
             title=session_record.title,
             topic=session_record.topic,
             source_material=session_record.source_material,
-            questions=persisted_questions,
+            questions=[
+                QuizQuestion(
+                    id=record.id,
+                    question_type=record.question_type,
+                    prompt=record.prompt,
+                    options=record.options,
+                    correct_answer=record.correct_answer,
+                    explanation=record.explanation,
+                    rubric=record.rubric,
+                    points=record.points,
+                )
+                for record in question_records
+            ],
             created_at=session_record.created_at,
         )
 
@@ -201,221 +211,45 @@ class QuizService:
             personalized_analysis=analysis,
         )
 
-    async def _generate_questions(
-        self,
-        topic: str,
-        question_count: int,
-        source_material: str | None,
-    ) -> list[QuizQuestion]:
-        try:
-            return await self._generate_questions_with_llm(topic, question_count, source_material)
-        except Exception as e:
-            logger.warning("Quiz generation failed, using fallback: %s", e)
-            return self._build_fallback_quiz(topic, question_count, source_material)
+    @staticmethod
+    def _normalize_choice_text(value: str) -> str:
+        return " ".join(value.strip().casefold().split())
 
-    async def _generate_questions_with_llm(
-        self,
-        topic: str,
-        question_count: int,
-        source_material: str | None,
-    ) -> list[QuizQuestion]:
-        prompt = f"""Generate a quiz about {topic}."""
+    def _resolve_single_choice_submission(
+        self, question: QuizQuestion, submitted_answer: str
+    ) -> str:
+        cleaned = submitted_answer.strip()
+        if not cleaned:
+            return ""
 
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "generate_quiz",
-                    "description": "Generates a list of quiz questions.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "questions": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "question_type": {
-                                            "type": "string",
-                                            "enum": ["single_choice", "true_false", "short_answer"],
-                                        },
-                                        "prompt": {"type": "string"},
-                                        "options": {"type": "array", "items": {"type": "string"}},
-                                        "correct_answer": {"type": "string"},
-                                        "explanation": {"type": "string"},
-                                        "rubric": {"type": ["string", "null"]},
-                                        "points": {"type": "number"},
-                                    },
-                                    "required": [
-                                        "question_type",
-                                        "prompt",
-                                        "options",
-                                        "correct_answer",
-                                        "explanation",
-                                        "points",
-                                    ],
-                                },
-                            }
-                        },
-                        "required": ["questions"],
-                    },
-                },
-            }
-        ]
-
-        response = await self.llm_service.create_chat_completion(
-            [
-                {"role": "system", "content": "You are a specialized quiz generation assistant."},
-                {"role": "user", "content": prompt},
-            ],
-            tools=tools,
-        )
-
-        tool_calls = response.choices[0].message.tool_calls
-        if not tool_calls:
-            raise ValueError("No tool calls returned from LLM for quiz generation.")
-
-        payload = json.loads(tool_calls[0].function.arguments)
-
-        questions = []
-        for item in payload.get("questions", [])[:question_count]:
-            questions.append(
-                QuizQuestion(
-                    id=str(uuid4()),
-                    question_type=item["question_type"],
-                    prompt=item["prompt"],
-                    options=item.get("options", []),
-                    correct_answer=item["correct_answer"],
-                    explanation=item["explanation"],
-                    rubric=item.get("rubric"),
-                    points=float(item.get("points", 1.0)),
-                )
-            )
-        if not questions:
-            raise ValueError("Quiz generation returned no questions")
-        return questions
-
-    def _build_fallback_quiz(
-        self,
-        topic: str,
-        question_count: int,
-        source_material: str | None,
-    ) -> list[QuizQuestion]:
-        """Build a simple fallback quiz when LLM is unavailable.
-
-        Note: This produces basic questions as a last resort.
-        The quality is limited - ideally LLM should generate these.
-        """
-        base = (source_material or topic).strip()
-        snippet = base[:120] or topic
-        questions: list[QuizQuestion] = []
-
-        # Generate varied questions based on topic
-        templates = [
-            # Single choice - basic concept
-            QuizQuestion(
-                id=str(uuid4()),
-                question_type="single_choice",
-                prompt=f"What is a key concept related to {topic}?",
-                options=[
-                    f"Understanding {topic}",
-                    "Unrelated topic",
-                    "Completely wrong answer",
-                    "Another incorrect option",
-                ],
-                correct_answer=f"Understanding {topic}",
-                explanation=f"The quiz was generated from the topic: {topic}",
-                points=1.0,
-            ),
-            # True/False - basic fact
-            QuizQuestion(
-                id=str(uuid4()),
-                question_type="true_false",
-                prompt=f"True or False: {topic} is an important concept in the subject area.",
-                options=["True", "False"],
-                correct_answer="True",
-                explanation="The quiz topic was requested by the user.",
-                points=1.0,
-            ),
-            # Short answer
-            QuizQuestion(
-                id=str(uuid4()),
-                question_type="short_answer",
-                prompt=f"Explain one key point about {topic}:",
-                options=[],
-                correct_answer=snippet,
-                explanation="A good answer should mention key aspects of the topic.",
-                rubric=f"Discuss {topic} with relevant details.",
-                points=2.0,
-            ),
-            # Multiple choice variant
-            QuizQuestion(
-                id=str(uuid4()),
-                question_type="single_choice",
-                prompt=f"Which best describes {topic}?",
-                options=[
-                    f"Core concept: {topic}",
-                    "Something completely different",
-                    "An unrelated idea",
-                    "Nonsense answer",
-                ],
-                correct_answer=f"Core concept: {topic}",
-                explanation=f"This question relates to the topic: {topic}",
-                points=1.0,
-            ),
-            # Another True/False
-            QuizQuestion(
-                id=str(uuid4()),
-                question_type="true_false",
-                prompt=f"True or False: The study of {topic} is useful for learning.",
-                options=["True", "False"],
-                correct_answer="True",
-                explanation="User-requested topics are valuable for learning.",
-                points=1.0,
-            ),
-        ]
-
-        # Cycle through templates
-        while len(questions) < question_count:
-            questions.append(
-                templates[len(questions) % len(templates)].model_copy(update={"id": str(uuid4())})
-            )
-
-        return questions[:question_count]
-
-    def _normalize_true_false(self, value: str) -> str | None:
-        token = value.strip().lower().replace("。", "").replace(".", "")
-        true_set = {"true", "正确", "对", "是", "yes", "y", "1"}
-        false_set = {"false", "错误", "错", "否", "不对", "no", "n", "0"}
-        if token in true_set:
-            return "true"
-        if token in false_set:
-            return "false"
-        first = token.split()[0] if token else ""
-        if first in true_set:
-            return "true"
-        if first in false_set:
-            return "false"
-        return None
+        label = cleaned[0].upper() if len(cleaned) == 1 and cleaned[0].isalpha() else None
+        if label is None:
+            match = _CHOICE_PREFIX_RE.match(cleaned)
+            label = match.group(1).upper() if match else None
+        if label is not None:
+            index = ord(label) - ord("A")
+            if 0 <= index < len(question.options):
+                return question.options[index]
+        return cleaned
 
     async def _grade_question(
         self, question: QuizQuestion, submitted_answer: str
     ) -> QuizAttemptAnswerResult:
         if question.question_type in {"single_choice", "true_false"}:
-            normalized_submitted = submitted_answer.strip().lower()
-            normalized_correct = question.correct_answer.strip().lower()
+            resolved_submission = submitted_answer
+            if question.question_type == "single_choice":
+                resolved_submission = self._resolve_single_choice_submission(
+                    question, submitted_answer
+                )
+            normalized_submitted = self._normalize_choice_text(resolved_submission)
+            normalized_correct = self._normalize_choice_text(question.correct_answer)
 
-            # For true_false, also consider the first word (user might type "true" or "true.")
             is_correct = normalized_submitted == normalized_correct
             if question.question_type == "true_false":
-                normalized_bool_submitted = self._normalize_true_false(submitted_answer)
-                normalized_bool_correct = self._normalize_true_false(question.correct_answer)
+                normalized_bool_submitted = normalize_true_false_token(submitted_answer)
+                normalized_bool_correct = normalize_true_false_token(question.correct_answer)
                 if normalized_bool_submitted is not None and normalized_bool_correct is not None:
                     is_correct = normalized_bool_submitted == normalized_bool_correct
-                elif not is_correct:
-                    first_word = normalized_submitted.split()[0] if normalized_submitted else ""
-                    correct_first = normalized_correct.split()[0] if normalized_correct else ""
-                    is_correct = first_word == correct_first
 
             return QuizAttemptAnswerResult(
                 question_id=question.id,
@@ -529,11 +363,18 @@ Remember: Your goal is to verify if the student understands the basic concept, n
     ) -> tuple[float, str]:
         answer_terms = set(_WORD_RE.findall(submitted_answer.lower()))
         reference_terms = set(_WORD_RE.findall((question.correct_answer or "").lower()))
-        if not answer_terms or not reference_terms:
+        rubric_terms = set(
+            _WORD_RE.findall((question.rubric or question.explanation or "").lower())
+        )
+        target_terms = reference_terms | rubric_terms
+        if not answer_terms or not target_terms:
             return 0.0, "Answer was too brief to match the expected key ideas."
-        overlap = len(answer_terms & reference_terms)
-        ratio = overlap / max(1, len(reference_terms))
-        score = round(min(question.points, question.points * min(1.0, ratio * 1.4)), 2)
+        overlap = len(answer_terms & target_terms)
+        coverage = overlap / max(1, len(target_terms))
+        core_overlap = len(answer_terms & reference_terms)
+        core_coverage = core_overlap / max(1, len(reference_terms)) if reference_terms else coverage
+        ratio = max(coverage, core_coverage)
+        score = round(min(question.points, question.points * min(1.0, ratio * 1.5)), 2)
         feedback = (
             "Good coverage of the reference idea."
             if score >= question.points * 0.8

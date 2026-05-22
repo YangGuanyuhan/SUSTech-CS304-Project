@@ -4,8 +4,8 @@
 基于你上传的 Wikipedia 文章内容
 """
 
-import sympy as sp
 import numpy as np
+import sympy as sp
 
 # ============================================================
 # Part 1: 符号计算 (SymPy) — 精确验证公式
