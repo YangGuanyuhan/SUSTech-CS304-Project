@@ -25,6 +25,7 @@ docs/
 ### Features
 
 - [Email Feature](features/EMAIL_FEATURE.md) - Email workflow, configuration, inbox reading, and approval-based sending
+- [Quiz Feature](features/QUIZ_FEATURE.md) - Interactive quiz generation, grading, and practice history with expandable attempt detail
 - [Memory System Implementation](features/MEMORY_SYSTEM_IMPLEMENTATION.md) - Intelligent memory, semantic search, context management, and tool learning
 - [Web Search](features/WEB_SEARCH.md) - Search feature design and integration notes
 - [RAG System](RAG_README.md) - Local knowledge base setup and usage
@@ -46,6 +47,7 @@ docs/
 ### Feature-Focused Reading
 
 - [Email Feature](features/EMAIL_FEATURE.md)
+- [Quiz Feature](features/QUIZ_FEATURE.md)
 - [Memory System Implementation](features/MEMORY_SYSTEM_IMPLEMENTATION.md)
 - [Web Search](features/WEB_SEARCH.md)
 - [RAG System](RAG_README.md)
