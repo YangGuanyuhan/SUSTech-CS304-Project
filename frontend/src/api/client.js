@@ -406,6 +406,11 @@ export async function getQuizHistory(limit = 5) {
   return parseJson(response);
 }
 
+export async function getQuizAttemptDetail(attemptId) {
+  const response = await fetch(`${API_BASE}/quiz/attempts/${encodeURIComponent(attemptId)}`);
+  return parseJson(response);
+}
+
 async function consumeSSE(response, handlers) {
   if (!response.ok || !response.body) {
     let detail = `Chat request failed with status ${response.status}`;

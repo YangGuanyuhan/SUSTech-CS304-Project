@@ -479,6 +479,21 @@ class QuizRepository(Repository):
         stmt = select(QuizAnswerRecord).where(QuizAnswerRecord.attempt_id == attempt_id)
         return list(self.session.execute(stmt).scalars())
 
+    def get_attempt(
+        self, attempt_id: str, *, owner_id: str = "local-user"
+    ) -> QuizAttemptRecord | None:
+        stmt = (
+            select(QuizAttemptRecord)
+            .options(
+                selectinload(QuizAttemptRecord.answers).selectinload(QuizAnswerRecord.quiz_question)
+            )
+            .where(
+                QuizAttemptRecord.id == attempt_id,
+                QuizAttemptRecord.owner_id == owner_id,
+            )
+        )
+        return self.session.execute(stmt).scalar_one_or_none()
+
 
 class DatabaseAnalyticsRepository(Repository):
     """Read-only aggregate queries for operational visibility."""

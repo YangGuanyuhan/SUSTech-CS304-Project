@@ -96,7 +96,12 @@
       <!-- Attempt List -->
       <section class="attempt-list">
         <h3 class="list-title">最近尝试</h3>
-        <article v-for="attempt in history.attempts" :key="attempt.attempt_id" class="attempt-card">
+        <article
+          v-for="attempt in history.attempts"
+          :key="attempt.attempt_id"
+          :class="['attempt-card', { expanded: expandedAttempt === attempt.attempt_id }]"
+          @click="toggleAttempt(attempt)"
+        >
           <div class="attempt-head">
             <div class="attempt-info">
               <strong>{{ attempt.title }}</strong>
@@ -107,6 +112,11 @@
               <span class="score-divider">/</span>
               <span class="score-total">{{ attempt.total_points }}</span>
               <small>{{ formatTime(attempt.submitted_at) }}</small>
+            </div>
+            <div class="expand-chevron">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
             </div>
           </div>
 
@@ -125,6 +135,49 @@
               </li>
             </ul>
           </div>
+
+          <!-- Expanded Detail -->
+          <div v-if="expandedAttempt === attempt.attempt_id" class="attempt-detail" @click.stop>
+            <div v-if="detailLoading" class="detail-loading">
+              <span class="spinner"></span>
+              加载答题详情...
+            </div>
+            <div v-else-if="attemptDetail?.error" class="detail-error">
+              {{ attemptDetail.error }}
+            </div>
+            <div v-else-if="attemptDetail" class="detail-answers">
+              <article
+                v-for="answer in attemptDetail.answers"
+                :key="answer.question_id"
+                class="detail-answer-card"
+              >
+                <div class="detail-answer-head">
+                  <strong class="detail-prompt">{{ answer.prompt }}</strong>
+                  <span :class="['quiz-badge', isResultCorrect(answer) ? 'right' : 'wrong']">
+                    <svg v-if="isResultCorrect(answer)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                      <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                    <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                      <line x1="18" y1="6" x2="6" y2="18"/>
+                      <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                    {{ scoreLabel(answer) }}
+                  </span>
+                </div>
+                <div class="detail-answer-body">
+                  <div class="detail-row">
+                    <span class="detail-label">你的回答</span>
+                    <span class="detail-value">{{ answer.submitted_answer || '(未作答)' }}</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">参考答案</span>
+                    <span class="detail-value correct">{{ answer.correct_answer }}</span>
+                  </div>
+                  <div v-if="answer.feedback" class="detail-feedback markdown-body" v-html="renderMarkdown(answer.feedback)" />
+                </div>
+              </article>
+            </div>
+          </div>
         </article>
       </section>
     </template>
@@ -133,13 +186,17 @@
 
 <script setup>
 import { onMounted, ref } from "vue";
-import { getQuizHistory } from "../api/client";
+import { getQuizHistory, getQuizAttemptDetail } from "../api/client";
+import { renderMarkdown } from "../utils/markdown.js";
 
 defineEmits(["close"]);
 
 const history = ref(null);
 const loading = ref(false);
 const error = ref("");
+const expandedAttempt = ref(null);
+const attemptDetail = ref(null);
+const detailLoading = ref(false);
 
 function formatTime(timestamp) {
   return new Date(timestamp).toLocaleString([], {
@@ -148,6 +205,21 @@ function formatTime(timestamp) {
     hour: "2-digit",
     minute: "2-digit"
   });
+}
+
+function scoreLabel(result) {
+  if (result.is_correct === true) return "正确";
+  if (result.is_correct === false) return "错误";
+  return `${result.score} / ${result.max_score}`;
+}
+
+function isResultCorrect(result) {
+  if (!result) return false;
+  if (result.is_correct === true) return true;
+  if (result.is_correct === false) return false;
+  const score = Number(result.score ?? 0);
+  const maxScore = Number(result.max_score ?? 0);
+  return Math.abs(score - maxScore) < 1e-6;
 }
 
 async function refreshHistory() {
@@ -160,6 +232,25 @@ async function refreshHistory() {
     error.value = err.message;
   } finally {
     loading.value = false;
+  }
+}
+
+async function toggleAttempt(attempt) {
+  if (expandedAttempt.value === attempt.attempt_id) {
+    expandedAttempt.value = null;
+    attemptDetail.value = null;
+    return;
+  }
+  expandedAttempt.value = attempt.attempt_id;
+  detailLoading.value = true;
+  attemptDetail.value = null;
+  try {
+    const response = await getQuizAttemptDetail(attempt.attempt_id);
+    attemptDetail.value = response.data;
+  } catch (err) {
+    attemptDetail.value = { error: err.message };
+  } finally {
+    detailLoading.value = false;
   }
 }
 
@@ -455,6 +546,152 @@ onMounted(() => {
 
 .history-empty.error strong {
   color: #dc2626;
+}
+
+/* Expandable */
+.attempt-card {
+  cursor: pointer;
+  transition: box-shadow 0.2s ease;
+}
+
+.attempt-card:hover {
+  box-shadow: 0 2px 12px rgba(28, 36, 48, 0.08);
+}
+
+.expand-chevron {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  transition: transform 0.25s ease;
+  flex-shrink: 0;
+}
+
+.attempt-card.expanded .expand-chevron {
+  transform: rotate(180deg);
+}
+
+/* Detail Section */
+.attempt-detail {
+  border-top: 1px solid var(--border-light);
+  padding-top: 14px;
+}
+
+.detail-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border-light);
+  border-top-color: var(--accent-orange);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.detail-error {
+  padding: 14px;
+  border-radius: 12px;
+  background: rgba(239, 68, 68, 0.08);
+  color: #dc2626;
+  font-size: 13px;
+}
+
+.detail-answers {
+  display: grid;
+  gap: 12px;
+}
+
+.detail-answer-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--bg-main);
+}
+
+.detail-answer-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.detail-prompt {
+  font-size: 14px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  flex: 1;
+}
+
+.quiz-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.quiz-badge.right {
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+}
+
+.quiz-badge.wrong {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+}
+
+.detail-answer-body {
+  display: grid;
+  gap: 8px;
+}
+
+.detail-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.detail-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.detail-value {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.detail-value.correct {
+  color: #16a34a;
+  font-weight: 500;
+}
+
+.detail-feedback {
+  margin-top: 4px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(28, 36, 48, 0.04);
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 @media (max-width: 820px) {

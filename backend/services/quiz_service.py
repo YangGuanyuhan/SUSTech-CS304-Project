@@ -211,6 +211,39 @@ class QuizService:
             personalized_analysis=analysis,
         )
 
+    async def get_attempt_detail(self, attempt_id: str) -> QuizAttemptResult | None:
+        attempt = self.repository.get_attempt(attempt_id)
+        if attempt is None:
+            return None
+
+        answer_results: list[QuizAttemptAnswerResult] = []
+        for answer in attempt.answers:
+            question = answer.quiz_question
+            answer_results.append(
+                QuizAttemptAnswerResult(
+                    question_id=question.id,
+                    prompt=question.prompt,
+                    question_type=question.question_type,
+                    submitted_answer=answer.submitted_answer,
+                    correct_answer=question.correct_answer,
+                    is_correct=answer.is_correct,
+                    score=answer.score,
+                    max_score=question.points,
+                    feedback=answer.feedback,
+                    explanation=question.explanation,
+                )
+            )
+
+        return QuizAttemptResult(
+            attempt_id=attempt.id,
+            quiz_id=attempt.quiz_session_id,
+            score=attempt.score,
+            total_points=attempt.total_points,
+            submitted_at=attempt.submitted_at,
+            answers=answer_results,
+            summary=attempt.summary,
+        )
+
     @staticmethod
     def _normalize_choice_text(value: str) -> str:
         return " ".join(value.strip().casefold().split())
