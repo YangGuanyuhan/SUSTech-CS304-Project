@@ -1,3 +1,4 @@
+from backend.models.quiz import QuizDraft, QuizQuestionCreate
 from backend.models.settings import LLMProfile
 from backend.services.database_insights_service import DatabaseInsightsService
 from backend.services.memory_service import MemoryService
@@ -20,9 +21,29 @@ async def test_database_overview_reports_current_counts(db_session):
     quiz_service = QuizService(db_session)
     quiz = await quiz_service.create_quiz(
         chat_session_id="chat-a",
-        topic="Databases",
-        question_count=2,
-        source_material="Transactions and isolation levels.",
+        quiz=QuizDraft(
+            topic="Databases",
+            question_count=2,
+            source_material="Transactions and isolation levels.",
+            questions=[
+                QuizQuestionCreate(
+                    question_type="single_choice",
+                    prompt="Which property is part of ACID?",
+                    options=["Atomicity", "Bandwidth", "Caching", "Rendering"],
+                    correct_answer="Atomicity",
+                    explanation="Atomicity is one of the ACID properties.",
+                    points=1.0,
+                ),
+                QuizQuestionCreate(
+                    question_type="true_false",
+                    prompt="True or False: Isolation levels affect concurrent transactions.",
+                    options=["True", "False"],
+                    correct_answer="True",
+                    explanation="Isolation levels control concurrency behavior.",
+                    points=1.0,
+                ),
+            ],
+        ),
     )
     await quiz_service.submit_attempt(
         quiz.id,

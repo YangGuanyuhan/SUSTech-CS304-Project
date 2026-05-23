@@ -54,6 +54,74 @@ async def test_memory_tool_round_trip(db_session):
     assert results["long_term"][0]["metadata"]["key"] == "favorite_editor"
 
 
+async def test_create_quiz_tool_persists_structured_payload(db_session):
+    service = AgentToolService(db_session)
+
+    result_raw = await service.execute(
+        "create_quiz",
+        {
+            "quiz": {
+                "topic": "Operating Systems",
+                "question_count": 2,
+                "source_material": "Threads and scheduling.",
+                "questions": [
+                    {
+                        "question_type": "single_choice",
+                        "prompt": "Which unit is scheduled by the OS scheduler?",
+                        "options": ["Thread", "Color", "Image", "Browser tab"],
+                        "correct_answer": "Thread",
+                        "explanation": "Schedulers select runnable threads for execution.",
+                        "points": 1,
+                    },
+                    {
+                        "question_type": "short_answer",
+                        "prompt": "Why is scheduling important?",
+                        "options": [],
+                        "correct_answer": "It allocates CPU time to runnable work efficiently.",
+                        "explanation": "Scheduling decides which runnable work gets CPU time.",
+                        "rubric": "Mention CPU time allocation or fair/efficient execution.",
+                        "points": 2,
+                    },
+                ],
+            }
+        },
+        chat_session_id="chat-1",
+        workspace_root=None,
+    )
+
+    result = json.loads(result_raw)
+    assert result["quiz_session"]["topic"] == "Operating Systems"
+    assert len(result["quiz_session"]["questions"]) == 2
+    assert result["quiz_session"]["questions"][0]["correct_answer"] == "Thread"
+
+
+async def test_create_quiz_tool_rejects_invalid_payload(db_session):
+    service = AgentToolService(db_session)
+
+    with pytest.raises(ToolExecutionError):
+        await service.execute(
+            "create_quiz",
+            {
+                "quiz": {
+                    "topic": "Databases",
+                    "question_count": 1,
+                    "questions": [
+                        {
+                            "question_type": "single_choice",
+                            "prompt": "Which isolation level prevents dirty reads?",
+                            "options": ["Read Committed", "Repeatable Read"],
+                            "correct_answer": "Serializable",
+                            "explanation": "This answer is intentionally invalid for validation.",
+                            "points": 1,
+                        }
+                    ],
+                }
+            },
+            chat_session_id="chat-1",
+            workspace_root=None,
+        )
+
+
 async def test_file_tool_rejects_path_escape(db_session, tmp_path):
     service = AgentToolService(db_session)
     outside_file = tmp_path.parent / "outside.txt"

@@ -28,6 +28,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.tools import DeferredToolRequests, ToolApproved, ToolDenied
 from sqlalchemy.orm import Session
 
+from backend.models.quiz import QuizDraft
 from backend.models.tooling import ToolTrace
 from backend.services.agent_tool_service import AgentToolService, ToolExecutionError
 from backend.services.chat_file_service import ChatFileService
@@ -54,7 +55,15 @@ Tool usage rules:
 8. Do NOT guess or hallucinate timestamps or dates. If the user does not explicitly mention a specific time, do not include unverified times when saving memories.
 9. When saving memories, only record what actually happened in this conversation.
    Do not infer or assume actions that were not explicitly performed or confirmed by a tool result.
-10. After successfully creating a quiz, do NOT present questions in chat.
+10. The create_quiz tool only persists a fully-authored quiz payload. It does NOT generate
+    quiz content for you. Before calling it, construct the complete quiz structure in the
+    tool arguments, including question_count, every question, answer options, correct_answer,
+    explanation, and rubric for short-answer questions.
+    For question formatting, follow these rules exactly:
+    - true_false: options must be exactly ["True", "False"], and correct_answer must be "True" or "False"
+    - single_choice: provide at least two options, and correct_answer must exactly match one option
+    - short_answer: options must be [], and rubric is required
+    After successfully creating a quiz, do NOT present questions in chat.
     Instead, inform the user that the quiz is ready and direct them to the quiz
     interface to begin.
 11. Use calendar tools for scheduling requests, event lookup, reminders, or timetable management.
@@ -642,20 +651,14 @@ class PydanticAIRuntime:
         @agent.tool(name="create_quiz")
         async def create_quiz(
             ctx: RunContext[AgentDeps],
-            topic: str,
-            question_count: int = 5,
-            source_material: str | None = None,
-            title: str | None = None,
+            quiz: QuizDraft,
         ) -> str:
+            """Persist a complete quiz payload after you have authored every question."""
+
             return await _execute_tool(
                 ctx,
                 "create_quiz",
-                {
-                    "topic": topic,
-                    "question_count": question_count,
-                    "source_material": source_material,
-                    "title": title,
-                },
+                {"quiz": quiz.model_dump(mode="json")},
             )
 
         @agent.tool(name="quiz_history_summary")

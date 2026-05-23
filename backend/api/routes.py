@@ -1084,6 +1084,17 @@ async def submit_quiz_attempt(
     return ApiResponse(success=True, data=result)
 
 
+@router.get("/quiz/attempts/{attempt_id}", response_model=ApiResponse[object])
+async def get_quiz_attempt_detail(
+    attempt_id: str,
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[object]:
+    detail = await QuizService(session).get_attempt_detail(attempt_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Attempt not found")
+    return ApiResponse(success=True, data=detail)
+
+
 @router.post("/email/draft", response_model=ApiResponse[object])
 async def create_email_draft(
     request: EmailDraftRequest,
