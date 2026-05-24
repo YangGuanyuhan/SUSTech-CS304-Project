@@ -20,6 +20,7 @@ nav:
       - Email Feature: features/EMAIL_FEATURE.md
       - Quiz Feature: features/QUIZ_FEATURE.md
       - Memory System: features/MEMORY_SYSTEM_IMPLEMENTATION.md
+      - Blackboard Feature: features/BLACKBOARD_FEATURE.md
   - Development:
       - Database Refactor: development/DATABASE_REFACTOR_SUMMARY.md
       - Database Refactor Chinese: development/DATABASE_REFACTOR_SUMMARY_ZH.md

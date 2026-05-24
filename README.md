@@ -76,6 +76,7 @@ docs/          Documentation
 - [Email Feature](docs/features/EMAIL_FEATURE.md) - End-to-end email workflow with configuration, inbox reading, and approval-based sending
 - [Quiz Feature](docs/features/QUIZ_FEATURE.md) - Interactive quiz generation, grading, and practice history with expandable attempt detail
 - [Memory System](docs/features/MEMORY_SYSTEM_IMPLEMENTATION.md) - Intelligent memory with semantic search
+- [Blackboard Feature](docs/features/BLACKBOARD_FEATURE.md) - Blackboard login, course data, calendar sync, and file downloads
 - [RAG System](docs/RAG_README.md) - Knowledge base and RAG setup
 
 ### Development
