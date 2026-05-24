@@ -192,6 +192,16 @@ Pipeline execution can be verified via GitHub Actions:
 
 [https://github.com/sustech-cs304/team-project-26spring-26s-8/actions](https://github.com/sustech-cs304/team-project-26spring-26s-8/actions)
 
+The screenshot below shows a successful pipeline run with all jobs passing:
+
+**CI Pipeline:**
+
+![CI/CD Pipeline Successful Run](final-report-26s-8.images/ci.png)
+
+**Docker Release Pipeline:**
+
+![Docker Release Pipeline Successful Run](final-report-26s-8.images/docker-release.png)
+
 Successful runs produce:
 
 * Test reports and coverage results
