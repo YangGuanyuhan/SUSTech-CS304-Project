@@ -111,6 +111,21 @@ class UserPreferenceRecord(Base):
     )
 
 
+class UserProfileRecord(Base):
+    __tablename__ = "user_profiles"
+    __table_args__ = (UniqueConstraint("username", name="uq_user_profiles_username"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    username: Mapped[str] = mapped_column(String(64), index=True)
+    display_name: Mapped[str] = mapped_column(String(100), default="用户")
+    password_hash: Mapped[str] = mapped_column(Text)
+    avatar_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
 class CalendarEventRecord(Base):
     __tablename__ = "calendar_events"
     __table_args__ = (

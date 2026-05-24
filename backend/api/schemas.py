@@ -35,6 +35,15 @@ class MemoryDeleteByQueryRequest(BaseModel):
     query: str
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class UserProfileUpdateRequest(BaseModel):
+    display_name: str
+
+
 class LLMSettingsRequest(BaseModel):
     provider: str
     model: str

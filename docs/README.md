@@ -1,82 +1,70 @@
 # Documentation Index
 
-This directory contains all project documentation organized by category.
+This directory contains the project documentation, organized by category.
 
-## 📁 Directory Structure
+## Directory Structure
 
-```
+```text
 docs/
-├── architecture/     # System design and architecture
-├── development/      # Development guides and processes
-├── features/         # Feature-specific documentation
-└── RAG_README.md    # RAG system documentation
+├─ architecture/   System design and architecture
+├─ development/    Development guides and refactoring notes
+├─ features/       Feature-specific documentation
+├─ RAG_README.md   RAG system documentation
+└─ README.md       This index
 ```
 
-## 📚 Documentation by Category
+## Documentation By Category
 
-### Architecture & Design
+### Architecture And Design
 
-**System Architecture**
 - [Technical Design](architecture/TECHNICAL_DESIGN.md) - Complete technical architecture overview
 - [Design Document](architecture/design-26s-8.md) - Detailed design with UI mockups and visual specifications
 - [Database Overview](architecture/DATABASE_CURRENT_OVERVIEW.md) - Current database schema and relationships
-
-**Project Planning**
 - [Project Proposal](architecture/proposal-26s-8.md) - Original project proposal and requirements
 
 ### Features
 
-**Memory System** ⭐ NEW
-- [Memory System Implementation](features/MEMORY_SYSTEM_IMPLEMENTATION.md)
-  - Comprehensive memory system with semantic search
-  - Token-aware context management
-  - Tool learning and pattern recognition
-  - Memory lifecycle management
-  - 24 tests, all passing
-
-**RAG & Knowledge Base**
+- [Email Feature](features/EMAIL_FEATURE.md) - Email workflow, configuration, inbox reading, and approval-based sending
+- [Quiz Feature](features/QUIZ_FEATURE.md) - Interactive quiz generation, grading, and practice history with expandable attempt detail
+- [Memory System Implementation](features/MEMORY_SYSTEM_IMPLEMENTATION.md) - Intelligent memory, semantic search, context management, and tool learning
+- [Web Search](features/WEB_SEARCH.md) - Search feature design and integration notes
 - [RAG System](RAG_README.md) - Local knowledge base setup and usage
 
 ### Development
 
-**Database**
-- [Database Refactoring Summary](development/DATABASE_REFACTOR_SUMMARY.md) - Migration history and changes
-- [Database Refactoring Summary (中文)](development/DATABASE_REFACTOR_SUMMARY_ZH.md) - 中文版本
-
-**Contributing**
+- [Database Refactoring Summary](development/DATABASE_REFACTOR_SUMMARY.md) - Migration history and schema changes
+- [Database Refactoring Summary (Chinese)](development/DATABASE_REFACTOR_SUMMARY_ZH.md) - Chinese version of the refactoring summary
 - [Contributing Guide](../CONTRIBUTING.md) - How to contribute to the project
 
-## 🔍 Quick Links by Topic
+## Quick Links
 
 ### Getting Started
-- Start here: [README](../README.md)
-- Architecture overview: [Technical Design](architecture/TECHNICAL_DESIGN.md)
-- UI/UX design: [Design Document](architecture/design-26s-8.md)
 
-### Implementation Details
-- Memory system: [Memory Implementation](features/MEMORY_SYSTEM_IMPLEMENTATION.md)
-- Database schema: [Database Overview](architecture/DATABASE_CURRENT_OVERVIEW.md)
-- RAG setup: [RAG README](RAG_README.md)
+- [Project README](../README.md)
+- [Technical Design](architecture/TECHNICAL_DESIGN.md)
+- [Design Document](architecture/design-26s-8.md)
 
-### Development
-- Contributing: [Contributing Guide](../CONTRIBUTING.md)
-- Database changes: [Refactoring Summary](development/DATABASE_REFACTOR_SUMMARY.md)
+### Feature-Focused Reading
 
-## 📝 Document Conventions
+- [Email Feature](features/EMAIL_FEATURE.md)
+- [Quiz Feature](features/QUIZ_FEATURE.md)
+- [Memory System Implementation](features/MEMORY_SYSTEM_IMPLEMENTATION.md)
+- [Web Search](features/WEB_SEARCH.md)
+- [RAG System](RAG_README.md)
 
-- **Architecture docs**: High-level system design, component interactions, architectural decisions
-- **Feature docs**: Detailed implementation of specific features, including code examples and usage
-- **Development docs**: Process documentation, migration guides, refactoring notes
+### Development-Focused Reading
 
-## 🆕 Recent Updates
+- [Database Refactoring Summary](development/DATABASE_REFACTOR_SUMMARY.md)
+- [Contributing Guide](../CONTRIBUTING.md)
 
-- **2024-05**: Memory System Enhancement - Added comprehensive memory system with semantic search, context management, and tool learning
-- **2024-04**: Database Refactoring - Migrated to improved schema with better relationships
-- **2024-03**: Initial Architecture - Established core system design
+## Document Conventions
 
-## 💡 Tips
+- Architecture documents explain system structure, components, and design decisions.
+- Feature documents focus on what a feature does, how it behaves, and how it is used.
+- Development documents cover engineering process, migration history, and implementation notes.
 
-- Use the search function in your editor to find specific topics across all docs
-- Check the [Technical Design](architecture/TECHNICAL_DESIGN.md) first for understanding the overall system
-- Feature-specific questions? Look in the `features/` directory
-- Implementation details are in the actual code with inline comments
+## Notes
+
+- Start with [Technical Design](architecture/TECHNICAL_DESIGN.md) if you want the broadest system overview.
+- Use the `features/` directory when you want to understand a capability end to end.
+- Use your editor search across `docs/` when looking for a specific subsystem or workflow.

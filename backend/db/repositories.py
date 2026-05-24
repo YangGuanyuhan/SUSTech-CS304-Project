@@ -22,6 +22,7 @@ from backend.db.models import (
     TaskHistoryRecord,
     ToolUsagePatternRecord,
     UserPreferenceRecord,
+    UserProfileRecord,
 )
 
 
@@ -220,6 +221,52 @@ class UserPreferenceRepository(Repository):
         result = self.session.execute(stmt)
         self.session.commit()
         return result.rowcount > 0
+
+
+class UserProfileRepository(Repository):
+    def get_by_username(self, username: str) -> UserProfileRecord | None:
+        stmt = select(UserProfileRecord).where(UserProfileRecord.username == username)
+        return self.session.execute(stmt).scalar_one_or_none()
+
+    def get(self, user_id: str) -> UserProfileRecord | None:
+        stmt = select(UserProfileRecord).where(UserProfileRecord.id == user_id)
+        return self.session.execute(stmt).scalar_one_or_none()
+
+    def create(
+        self,
+        *,
+        username: str,
+        display_name: str,
+        password_hash: str,
+        avatar_path: str | None = None,
+    ) -> UserProfileRecord:
+        return self._persist(
+            UserProfileRecord(
+                username=username,
+                display_name=display_name,
+                password_hash=password_hash,
+                avatar_path=avatar_path,
+            )
+        )
+
+    def update_profile(
+        self,
+        user_id: str,
+        *,
+        display_name: str | None = None,
+        avatar_path: str | None = None,
+    ) -> UserProfileRecord | None:
+        record = self.get(user_id)
+        if record is None:
+            return None
+        if display_name is not None:
+            record.display_name = display_name
+        if avatar_path is not None:
+            record.avatar_path = avatar_path
+        record.updated_at = datetime.now(UTC)
+        self.session.commit()
+        self.session.refresh(record)
+        return record
 
 
 class CalendarRepository(Repository):
@@ -431,6 +478,21 @@ class QuizRepository(Repository):
     def list_answers_for_attempt(self, attempt_id: str) -> list[QuizAnswerRecord]:
         stmt = select(QuizAnswerRecord).where(QuizAnswerRecord.attempt_id == attempt_id)
         return list(self.session.execute(stmt).scalars())
+
+    def get_attempt(
+        self, attempt_id: str, *, owner_id: str = "local-user"
+    ) -> QuizAttemptRecord | None:
+        stmt = (
+            select(QuizAttemptRecord)
+            .options(
+                selectinload(QuizAttemptRecord.answers).selectinload(QuizAnswerRecord.quiz_question)
+            )
+            .where(
+                QuizAttemptRecord.id == attempt_id,
+                QuizAttemptRecord.owner_id == owner_id,
+            )
+        )
+        return self.session.execute(stmt).scalar_one_or_none()
 
 
 class DatabaseAnalyticsRepository(Repository):

@@ -134,6 +134,8 @@ def test_static_examples_coverage():
         "memory_save",
         "calendar_list_events",
         "rag_search",
+        "uploaded_file_search",
+        "uploaded_file_answer",
         "read_local_file",
         "blackboard_get_all_courses",
     ]

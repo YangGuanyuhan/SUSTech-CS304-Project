@@ -174,30 +174,42 @@ STATIC_TOOL_EXAMPLES = {
     ],
     "rag_search": [
         {
-            "scenario": "When user asks about an uploaded file in the current chat",
-            "example_query": "分析一下我上传的 PDF",
-            "tool_call": {"query": "uploaded PDF summary main points", "top_k": 10},
-            "expected_outcome": "Retrieves content from current-chat uploaded files before any local workspace search",
-        },
-        {
             "scenario": "When user asks about course materials",
             "example_query": "What does the lecture say about algorithms?",
             "tool_call": {"query": "algorithms", "top_k": 5},
-            "expected_outcome": "Searches indexed course materials for algorithm content",
+            "expected_outcome": "Searches indexed global course materials for algorithm content",
         },
         {
             "scenario": "When user needs information from notes",
             "example_query": "Find information about data structures in my notes",
             "tool_call": {"query": "data structures", "top_k": 5},
-            "expected_outcome": "Retrieves relevant sections from indexed notes",
+            "expected_outcome": "Retrieves relevant sections from indexed global notes",
         },
     ],
     "rag_answer": [
         {
+            "scenario": "When user wants an answer from the indexed knowledge base",
+            "example_query": "What does the SUSTech handbook say about add/drop?",
+            "tool_call": {"query": "add drop policy", "top_k": 5},
+            "expected_outcome": "Answers from indexed global knowledge base content with citations",
+        },
+    ],
+    "uploaded_file_search": [
+        {
+            "scenario": "When user asks for snippets from an uploaded file in the current chat",
+            "example_query": "在我上传的 PDF 里找 deadline",
+            "tool_call": {"query": "deadline", "top_k": 10},
+            "expected_outcome": "Retrieves content only from current-chat uploaded files",
+        },
+    ],
+    "uploaded_file_answer": [
+        {
             "scenario": "When user wants a summary or analysis of an uploaded PDF/PPT",
             "example_query": "总结一下我上传的课件",
             "tool_call": {"query": "summarize uploaded course material", "top_k": 10},
-            "expected_outcome": "Answers from current-chat uploaded file content with citations",
+            "expected_outcome": (
+                "Answers only from current-chat uploaded file content with citations"
+            ),
         },
     ],
     "read_local_file": [
@@ -232,8 +244,32 @@ STATIC_TOOL_EXAMPLES = {
         {
             "scenario": "When user wants to practice a topic",
             "example_query": "Create a quiz about Python functions",
-            "tool_call": {"topic": "Python functions", "question_count": 5},
-            "expected_outcome": "Generates 5 quiz questions about Python functions",
+            "tool_call": {
+                "quiz": {
+                    "topic": "Python functions",
+                    "question_count": 2,
+                    "questions": [
+                        {
+                            "question_type": "single_choice",
+                            "prompt": "Which keyword defines a function in Python?",
+                            "options": ["def", "func", "lambda", "class"],
+                            "correct_answer": "def",
+                            "explanation": "Python uses the def keyword to define a function.",
+                            "points": 1,
+                        },
+                        {
+                            "question_type": "short_answer",
+                            "prompt": "What is the purpose of a return statement in a function?",
+                            "options": [],
+                            "correct_answer": "It sends a value back to the caller.",
+                            "explanation": "The return statement ends the function and provides its result.",
+                            "rubric": "Mention that return sends a result or value back to the caller.",
+                            "points": 2,
+                        },
+                    ],
+                }
+            },
+            "expected_outcome": "Persists a fully-authored quiz about Python functions",
         },
     ],
     "list_local_files": [

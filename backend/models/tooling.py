@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -30,6 +31,7 @@ class BatchApprovalRequest(BaseModel):
 
 
 class ToolTrace(BaseModel):
+    trace_id: str = Field(default_factory=lambda: str(uuid4()))
     tool_name: str
     arguments: dict[str, Any]
     status: str

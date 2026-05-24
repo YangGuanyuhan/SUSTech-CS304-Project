@@ -9,7 +9,7 @@ from pydantic_ai.tools import DeferredToolRequests
 from backend.agent.core import StudentProductivityAgent
 from backend.config import get_settings
 from backend.models.rag import RAGDirectorySettings
-from backend.models.tooling import AgentTurnResult
+from backend.models.tooling import AgentTurnResult, ToolTrace
 from backend.services.agent_tool_service import AgentToolService, ToolExecutionError
 from backend.services.approval_service import approval_service
 from backend.services.chat_file_service import ChatFileService
@@ -52,6 +52,74 @@ async def test_memory_tool_round_trip(db_session):
     )
     results = json.loads(search_raw)
     assert results["long_term"][0]["metadata"]["key"] == "favorite_editor"
+
+
+async def test_create_quiz_tool_persists_structured_payload(db_session):
+    service = AgentToolService(db_session)
+
+    result_raw = await service.execute(
+        "create_quiz",
+        {
+            "quiz": {
+                "topic": "Operating Systems",
+                "question_count": 2,
+                "source_material": "Threads and scheduling.",
+                "questions": [
+                    {
+                        "question_type": "single_choice",
+                        "prompt": "Which unit is scheduled by the OS scheduler?",
+                        "options": ["Thread", "Color", "Image", "Browser tab"],
+                        "correct_answer": "Thread",
+                        "explanation": "Schedulers select runnable threads for execution.",
+                        "points": 1,
+                    },
+                    {
+                        "question_type": "short_answer",
+                        "prompt": "Why is scheduling important?",
+                        "options": [],
+                        "correct_answer": "It allocates CPU time to runnable work efficiently.",
+                        "explanation": "Scheduling decides which runnable work gets CPU time.",
+                        "rubric": "Mention CPU time allocation or fair/efficient execution.",
+                        "points": 2,
+                    },
+                ],
+            }
+        },
+        chat_session_id="chat-1",
+        workspace_root=None,
+    )
+
+    result = json.loads(result_raw)
+    assert result["quiz_session"]["topic"] == "Operating Systems"
+    assert len(result["quiz_session"]["questions"]) == 2
+    assert result["quiz_session"]["questions"][0]["correct_answer"] == "Thread"
+
+
+async def test_create_quiz_tool_rejects_invalid_payload(db_session):
+    service = AgentToolService(db_session)
+
+    with pytest.raises(ToolExecutionError):
+        await service.execute(
+            "create_quiz",
+            {
+                "quiz": {
+                    "topic": "Databases",
+                    "question_count": 1,
+                    "questions": [
+                        {
+                            "question_type": "single_choice",
+                            "prompt": "Which isolation level prevents dirty reads?",
+                            "options": ["Read Committed", "Repeatable Read"],
+                            "correct_answer": "Serializable",
+                            "explanation": "This answer is intentionally invalid for validation.",
+                            "points": 1,
+                        }
+                    ],
+                }
+            },
+            chat_session_id="chat-1",
+            workspace_root=None,
+        )
 
 
 async def test_file_tool_rejects_path_escape(db_session, tmp_path):
@@ -142,7 +210,7 @@ async def test_rag_index_folder_rejects_path_outside_authorized_roots(db_session
         )
 
 
-async def test_rag_search_prefers_current_chat_upload_scope(db_session, tmp_path):
+async def test_rag_search_uses_global_scope_when_chat_uploads_exist(db_session, tmp_path):
     local_root = tmp_path / "local"
     chat_root = tmp_path / "chat"
     local_root.mkdir()
@@ -169,10 +237,12 @@ async def test_rag_search_prefers_current_chat_upload_scope(db_session, tmp_path
     )
 
     result = json.loads(result_raw)
-    assert [hit["relative_path"] for hit in result] == ["upload.md"]
+    assert [hit["relative_path"] for hit in result] == ["global.md"]
 
 
-async def test_rag_search_returns_all_uploaded_chunks_before_keyword_search(db_session, tmp_path):
+async def test_uploaded_file_search_falls_back_to_uploaded_chunks_for_generic_query(
+    db_session, tmp_path
+):
     chat_root = tmp_path / "chat"
     chat_root.mkdir()
     (chat_root / "upload.md").write_text(
@@ -187,7 +257,7 @@ async def test_rag_search_returns_all_uploaded_chunks_before_keyword_search(db_s
     service = AgentToolService(db_session)
 
     result_raw = await service.execute(
-        "rag_search",
+        "uploaded_file_search",
         {"query": "something unrelated", "top_k": 1},
         chat_session_id="chat-1",
         workspace_root=None,
@@ -198,7 +268,9 @@ async def test_rag_search_returns_all_uploaded_chunks_before_keyword_search(db_s
     assert "scheduling" in result[0]["text"]
 
 
-async def test_rag_search_returns_uploaded_chunks_for_generic_file_question(db_session, tmp_path):
+async def test_uploaded_file_search_returns_uploaded_chunks_for_generic_file_question(
+    db_session, tmp_path
+):
     chat_root = tmp_path / "chat"
     chat_root.mkdir()
     (chat_root / "upload.md").write_text(
@@ -213,7 +285,7 @@ async def test_rag_search_returns_uploaded_chunks_for_generic_file_question(db_s
     service = AgentToolService(db_session)
 
     result_raw = await service.execute(
-        "rag_search",
+        "uploaded_file_search",
         {"query": "uploaded PDF", "top_k": 2},
         chat_session_id="chat-1",
         workspace_root=None,
@@ -261,6 +333,62 @@ async def test_agent_returns_approval_request_for_local_file_tools(db_session, t
                 assert result["approval_request"] is not None
                 assert result["approval_request"]["approvals"][0]["tool_name"] == "read_local_file"
                 assert result["tool_events"][0]["status"] == "awaiting_approval"
+                assert result["tool_events"][0]["trace_id"]
+
+
+async def test_agent_run_turn_streams_incremental_tool_events_for_approval(db_session, tmp_path):
+    agent = StudentProductivityAgent(db_session)
+    streamed = []
+
+    deferred_output = DeferredToolRequests(
+        approvals=[
+            SimpleNamespace(
+                tool_call_id="tool-call-1",
+                tool_name="read_local_file",
+                args={"path": "notes.txt"},
+            )
+        ],
+        calls=[],
+        metadata={},
+    )
+
+    mock_result = AsyncMock()
+    mock_result.output = deferred_output
+    mock_result.all_messages = lambda: []
+
+    runtime_event = ToolTrace(
+        tool_name="memory_search",
+        arguments={"query": "notes"},
+        status="completed",
+        output='{"ok": true}',
+    )
+    mock_deps = AsyncMock()
+    mock_deps.tool_events = [runtime_event]
+    mock_deps.tools_used = ["memory_search"]
+
+    async def fake_run(**kwargs):
+        await kwargs["on_tool_events"]([runtime_event])
+        return (mock_result, mock_deps)
+
+    async def on_tool_events(tool_events):
+        streamed.append(tool_events)
+
+    with patch.object(agent.runtime, "run", side_effect=fake_run):
+        with patch.object(agent.runtime, "extract_text_or_requests", return_value=deferred_output):
+            with patch.object(
+                agent.runtime, "parse_tool_arguments", return_value={"path": "notes.txt"}
+            ):
+                result = await agent._run_turn(
+                    user_input="Read notes.txt",
+                    session_id="session-approval",
+                    workspace_root=str(tmp_path),
+                    on_tool_events=on_tool_events,
+                )
+
+    assert result.approval_request is not None
+    assert [event.tool_name for event in streamed[0]] == ["memory_search"]
+    assert [event.tool_name for event in streamed[1]] == ["read_local_file"]
+    assert streamed[1][0].status == "awaiting_approval"
 
 
 async def test_agent_resume_approval_returns_all_batch_approval_results(db_session, tmp_path):
@@ -299,6 +427,46 @@ async def test_agent_resume_approval_returns_all_batch_approval_results(db_sessi
 
     assert result["response"] == "done"
     assert set(captured["deferred_tool_results"].approvals) == {"call-1", "call-2"}
+
+
+async def test_agent_resume_approval_streams_denied_events(db_session, tmp_path):
+    agent = StudentProductivityAgent(db_session)
+    batch = approval_service.create_batch(
+        session_id="session-denied-approval",
+        user_input="Read notes",
+        tool_calls=[
+            {
+                "tool_call_id": "call-1",
+                "tool_name": "read_local_file",
+                "tool_arguments": {"path": str(tmp_path / "notes.txt")},
+                "summary": "Read notes",
+            }
+        ],
+        workspace_root=str(tmp_path),
+        messages=[],
+        tools_used=[],
+        tool_events=[],
+        deferred_metadata={},
+    )
+    streamed = []
+
+    async def fake_run_turn(**kwargs):
+        return AgentTurnResult(response="approval denied")
+
+    async def on_tool_events(tool_events):
+        streamed.append(tool_events)
+
+    with patch.object(agent, "_run_turn", side_effect=fake_run_turn):
+        result = await agent.resume_approval(
+            batch.id,
+            approved=False,
+            on_tool_events=on_tool_events,
+        )
+
+    assert result["response"] == "approval denied"
+    assert len(streamed) == 1
+    assert streamed[0][0].tool_name == "read_local_file"
+    assert streamed[0][0].status == "denied"
 
 
 @pytest.mark.skip(reason="Requires PydanticAI runtime mocking - complex test")

@@ -1,5 +1,72 @@
 <template>
   <main class="app-shell">
+    <div v-if="authReady && !currentUser" class="login-screen">
+      <section class="login-card">
+        <div class="login-copy">
+          <div class="login-brand">
+            <div class="logo-icon login-logo">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                <path d="M2 17l10 5 10-5"/>
+                <path d="M2 12l10 5 10-5"/>
+              </svg>
+            </div>
+            <div>
+              <h1>StudyAI</h1>
+              <p>学生智能助手工作台</p>
+            </div>
+          </div>
+          <div class="login-copy-main">
+            <span class="login-kicker">Local Workspace</span>
+            <h2>登录后继续你的学习会话</h2>
+            <p>本地账号会保留昵称、头像和记忆管理入口。</p>
+          </div>
+          <div class="login-status-list">
+            <span>本地资料</span>
+            <span>长期记忆</span>
+            <span>知识库</span>
+          </div>
+        </div>
+
+        <form class="login-panel" @submit.prevent="submitLogin">
+          <div class="login-form-head">
+            <p class="eyebrow">Sign In</p>
+            <h2>用户登录</h2>
+            <span>默认账号 local / studyai</span>
+          </div>
+
+          <label class="login-field">
+            <span>用户名</span>
+            <div class="login-input-wrap">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                <circle cx="12" cy="7" r="4"/>
+              </svg>
+              <input v-model="loginForm.username" autocomplete="username" />
+            </div>
+          </label>
+          <label class="login-field">
+            <span>密码</span>
+            <div class="login-input-wrap">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              <input v-model="loginForm.password" type="password" autocomplete="current-password" />
+            </div>
+          </label>
+          <p v-if="loginError" class="login-error">{{ loginError }}</p>
+          <button class="login-submit" type="submit" :disabled="loginLoading">
+            <span>{{ loginLoading ? "登录中..." : "进入工作台" }}</span>
+            <svg v-if="!loginLoading" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M5 12h14"/>
+              <path d="M13 5l7 7-7 7"/>
+            </svg>
+          </button>
+        </form>
+      </section>
+    </div>
+
     <!-- Sidebar -->
     <aside class="sidebar">
       <div class="sidebar-top">
@@ -115,18 +182,19 @@
         </div>
 
         <!-- User Profile -->
-        <div class="user-profile">
+        <button class="user-profile" type="button" @click="profileOpen = true">
           <div class="user-avatar">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <img v-if="currentUser?.avatar_url" :src="apiAssetUrl(currentUser.avatar_url)" alt="用户头像" />
+            <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
               <circle cx="12" cy="7" r="4"/>
             </svg>
           </div>
           <div class="user-info">
-            <strong>用户</strong>
-            <span>在线</span>
+            <strong>{{ currentUser?.display_name || "用户" }}</strong>
+            <span>{{ currentUser ? "在线" : "未登录" }}</span>
           </div>
-        </div>
+        </button>
       </div>
     </aside>
 
@@ -402,6 +470,17 @@
       </div>
     </div>
 
+    <div v-if="profileOpen" class="overlay" @click.self="profileOpen = false">
+      <div class="overlay-panel profile-overlay-panel">
+        <UserProfilePanel
+          :profile="currentUser"
+          @close="profileOpen = false"
+          @logout="handleLogout"
+          @profile-updated="currentUser = $event"
+        />
+      </div>
+    </div>
+
     <div v-if="quizHistoryOpen" class="overlay" @click.self="quizHistoryOpen = false">
       <div class="overlay-panel">
         <QuizHistoryPanel @close="quizHistoryOpen = false" />
@@ -424,8 +503,20 @@ import DatabaseOverviewPanel from "./components/DatabaseOverviewPanel.vue";
 import QuizHistoryPanel from "./components/QuizHistoryPanel.vue";
 import RagPanel from "./components/RagPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
+import UserProfilePanel from "./components/UserProfilePanel.vue";
 import EmailConfirm from "./components/EmailConfirm.vue";
-import { apiClient, getHealth, streamApprovalDecision, streamChat } from "./api/client";
+import {
+  apiAssetUrl,
+  apiClient,
+  getAuthToken,
+  getHealth,
+  getUserProfile,
+  loginUser,
+  logoutUser,
+  setAuthToken,
+  streamApprovalDecision,
+  streamChat
+} from "./api/client";
 
 const CHAT_CONVERSATIONS_KEY = "spa-conversations";
 const ACTIVE_CONVERSATION_KEY = "spa-active-conversation-id";
@@ -492,7 +583,16 @@ const checking = ref(false);
 const settingsOpen = ref(false);
 const quizHistoryOpen = ref(false);
 const databaseOpen = ref(false);
+const profileOpen = ref(false);
 const activeView = ref("chat");
+const authReady = ref(false);
+const currentUser = ref(null);
+const loginLoading = ref(false);
+const loginError = ref("");
+const loginForm = reactive({
+  username: "local",
+  password: "studyai"
+});
 
 const conversations = ref(restoreConversations());
 const activeConversationId = ref(
@@ -598,6 +698,37 @@ function formatToolPayload(payload) {
   return JSON.stringify(payload, null, 2);
 }
 
+function findMatchingToolPart(parts, toolEvent) {
+  const nextArgs = JSON.stringify(toolEvent?.arguments || {});
+  return parts.find((part) => {
+    if (part.type !== "tool") return false;
+    const currentEvent = part.toolEvent || {};
+    if (toolEvent?.trace_id && currentEvent.trace_id) {
+      return currentEvent.trace_id === toolEvent.trace_id;
+    }
+    return (
+      !toolEvent?.trace_id &&
+      !currentEvent.trace_id &&
+      currentEvent.tool_name === toolEvent?.tool_name &&
+      JSON.stringify(currentEvent.arguments || {}) === nextArgs
+    );
+  });
+}
+
+function mergeToolParts(message, toolEvents, { allowInsert = true } = {}) {
+  if (!Array.isArray(toolEvents) || toolEvents.length === 0) return;
+  toolEvents.forEach((toolEvent) => {
+    const existingPart = findMatchingToolPart(message.parts, toolEvent);
+    if (existingPart) {
+      existingPart.toolEvent = toolEvent;
+      return;
+    }
+    if (allowInsert) {
+      message.parts.push({ type: "tool", toolEvent });
+    }
+  });
+}
+
 function tryParseToolOutput(output) {
   if (!output || typeof output !== "string") return null;
   try {
@@ -605,6 +736,51 @@ function tryParseToolOutput(output) {
   } catch {
     return null;
   }
+}
+
+async function restoreAuth() {
+  if (!getAuthToken()) {
+    authReady.value = true;
+    return;
+  }
+  try {
+    const response = await getUserProfile();
+    currentUser.value = response.data;
+  } catch {
+    setAuthToken("");
+    currentUser.value = null;
+  } finally {
+    authReady.value = true;
+  }
+}
+
+async function submitLogin() {
+  loginLoading.value = true;
+  loginError.value = "";
+  try {
+    const response = await loginUser({
+      username: loginForm.username,
+      password: loginForm.password
+    });
+    currentUser.value = response.data.profile;
+    loginForm.password = "";
+  } catch (error) {
+    loginError.value = error.message || "登录失败";
+  } finally {
+    loginLoading.value = false;
+  }
+}
+
+async function handleLogout() {
+  try {
+    await logoutUser();
+  } catch {
+    setAuthToken("");
+  }
+  currentUser.value = null;
+  profileOpen.value = false;
+  loginForm.username = "local";
+  loginForm.password = "";
 }
 
 function startTimer(message) {
@@ -913,14 +1089,7 @@ async function submitMessage() {
           if (firstPart?.type === "text" && firstPart.content === WAITING_TEXT) {
             assistantMessage.parts.shift();
           }
-          const existingToolParts = assistantMessage.parts.filter((p) => p.type === "tool");
-          toolEvents.forEach((newEvent, idx) => {
-            if (idx < existingToolParts.length) {
-              existingToolParts[idx].toolEvent = newEvent;
-            } else {
-              assistantMessage.parts.push({ type: "tool", toolEvent: newEvent });
-            }
-          });
+          mergeToolParts(assistantMessage, toolEvents);
           scrollToBottom();
         },
         onApprovalRequired(approval) {
@@ -934,17 +1103,7 @@ async function submitMessage() {
           } else {
             assistantMessage.parts.push({ type: "text", content: "工具调用正在等待你的审批。" });
           }
-          (approval.tool_events || []).forEach((te) => {
-            const toolParts = assistantMessage.parts.filter((p) => p.type === "tool");
-            const existingIdx = toolParts.findIndex(
-              (tp) => tp.toolEvent.tool_name === te.tool_name
-            );
-            if (existingIdx >= 0) {
-              toolParts[existingIdx].toolEvent = te;
-            } else {
-              assistantMessage.parts.push({ type: "tool", toolEvent: te });
-            }
-          });
+          mergeToolParts(assistantMessage, approval.tool_events || []);
           conversation.pendingApproval = approval;
           scrollToBottom();
         },
@@ -957,6 +1116,7 @@ async function submitMessage() {
           if (lastThinking) {
             lastThinking.content = lastThinking.content.trim();
           }
+          mergeToolParts(assistantMessage, payload.tool_events || [], { allowInsert: false });
           scrollToBottom();
         }
       },
@@ -1054,14 +1214,7 @@ async function resolveApproval(approved) {
           if (firstPart?.type === "text" && firstPart.content === INITIAL_TEXT) {
             assistantMessage.parts.shift();
           }
-          const existingToolParts = assistantMessage.parts.filter((p) => p.type === "tool");
-          toolEvents.forEach((newEvent, idx) => {
-            if (idx < existingToolParts.length) {
-              existingToolParts[idx].toolEvent = newEvent;
-            } else {
-              assistantMessage.parts.push({ type: "tool", toolEvent: newEvent });
-            }
-          });
+          mergeToolParts(assistantMessage, toolEvents);
           scrollToBottom();
         },
         onApprovalRequired(nextApproval) {
@@ -1075,17 +1228,7 @@ async function resolveApproval(approved) {
           } else {
             assistantMessage.parts.push({ type: "text", content: "另一个操作正在等待你的审批。" });
           }
-          (nextApproval.tool_events || []).forEach((te) => {
-            const toolParts = assistantMessage.parts.filter((p) => p.type === "tool");
-            const existingIdx = toolParts.findIndex(
-              (tp) => tp.toolEvent.tool_name === te.tool_name
-            );
-            if (existingIdx >= 0) {
-              toolParts[existingIdx].toolEvent = te;
-            } else {
-              assistantMessage.parts.push({ type: "tool", toolEvent: te });
-            }
-          });
+          mergeToolParts(assistantMessage, nextApproval.tool_events || []);
           conversation.pendingApproval = nextApproval;
           scrollToBottom();
         },
@@ -1098,6 +1241,7 @@ async function resolveApproval(approved) {
           if (lastThinking) {
             lastThinking.content = lastThinking.content.trim();
           }
+          mergeToolParts(assistantMessage, payload.tool_events || [], { allowInsert: false });
           scrollToBottom();
         }
       }
@@ -1149,6 +1293,7 @@ onBeforeUnmount(() => {
 });
 
 onMounted(() => {
+  restoreAuth();
   resizeComposer(composerInput.value);
   loadSessionFiles(activeConversationId.value);
 });
@@ -1219,6 +1364,217 @@ body {
   overflow: hidden;
   padding: 18px;
   gap: 18px;
+}
+
+.login-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    linear-gradient(135deg, rgba(248, 245, 239, 0.94), rgba(232, 240, 238, 0.96)),
+    var(--bg-main);
+  backdrop-filter: blur(20px);
+}
+
+.login-card {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.92fr) minmax(340px, 1fr);
+  width: min(900px, 100%);
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.18);
+}
+
+.login-copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 34px;
+  background:
+    linear-gradient(160deg, rgba(31, 111, 120, 0.96), rgba(22, 88, 95, 0.96) 58%, rgba(218, 106, 30, 0.9));
+  color: #fff;
+}
+
+.login-logo {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: none;
+}
+
+.login-panel {
+  display: grid;
+  align-content: center;
+  min-width: 0;
+  gap: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 46px;
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.login-brand h1 {
+  margin: 0;
+  color: inherit;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.login-brand p {
+  margin: 6px 0 0;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 13px;
+}
+
+.login-copy-main {
+  display: grid;
+  gap: 10px;
+}
+
+.login-kicker {
+  width: fit-content;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 6px 10px;
+}
+
+.login-copy-main h2 {
+  margin: 0;
+  color: #fff;
+  font-size: 34px;
+  line-height: 1.13;
+}
+
+.login-copy-main p {
+  margin: 0;
+  max-width: 320px;
+  color: rgba(255, 255, 255, 0.76);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.login-status-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.login-status-list span {
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 10px;
+}
+
+.login-form-head {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.login-form-head h2 {
+  margin: 0;
+  color: #111827;
+  font-size: 28px;
+  line-height: 1.16;
+}
+
+.login-form-head > span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.login-field {
+  display: grid;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.login-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  border: 1px solid #d7e0ea;
+  border-radius: 14px;
+  background: #fff;
+  color: #64748b;
+  padding: 0 13px;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.login-input-wrap:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(31, 111, 120, 0.12);
+}
+
+.login-input-wrap input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+.login-submit {
+  display: inline-flex;
+  height: 46px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--accent), #168188);
+  color: #fff;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 800;
+  box-shadow: 0 14px 24px rgba(31, 111, 120, 0.22);
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.login-submit:hover:not(:disabled) {
+  box-shadow: 0 18px 30px rgba(31, 111, 120, 0.28);
+  transform: translateY(-1px);
+}
+
+.login-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+  transform: none;
+}
+
+.login-error {
+  margin: 0;
+  border: 1px solid rgba(225, 29, 72, 0.14);
+  border-radius: 12px;
+  background: #fff1f2;
+  color: #b91c1c;
+  font-size: 13px;
+  padding: 10px 12px;
 }
 
 /* Sidebar */
@@ -1448,12 +1804,16 @@ body {
 .user-profile {
   display: flex;
   align-items: center;
+  width: 100%;
   gap: 12px;
   padding: 14px 16px;
   background: var(--bg-card-strong);
   border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: 22px;
   box-shadow: 0 12px 24px var(--shadow-subtle);
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
 }
 
 .user-avatar {
@@ -1465,6 +1825,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
+}
+
+.user-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .user-info {
@@ -2469,6 +2836,14 @@ body {
   margin: 32px auto;
 }
 
+.profile-overlay-panel {
+  max-width: 720px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.18);
+  padding: 24px;
+}
+
 /* Eyebrow style */
 .eyebrow {
   text-transform: uppercase;
@@ -2499,6 +2874,25 @@ body {
 
 /* Responsive */
 @media (max-width: 1024px) {
+  .login-card {
+    grid-template-columns: 1fr;
+    max-width: 520px;
+    min-height: auto;
+  }
+
+  .login-copy {
+    gap: 34px;
+    padding: 28px;
+  }
+
+  .login-copy-main h2 {
+    font-size: 28px;
+  }
+
+  .login-panel {
+    padding: 30px 28px 32px;
+  }
+
   .app-shell {
     grid-template-columns: 1fr;
     padding: 0;
@@ -2584,6 +2978,23 @@ body {
 }
 
 @media (max-width: 680px) {
+  .login-screen {
+    padding: 14px;
+  }
+
+  .login-copy {
+    padding: 22px;
+  }
+
+  .login-panel {
+    padding: 24px 20px;
+  }
+
+  .login-copy-main h2,
+  .login-form-head h2 {
+    font-size: 24px;
+  }
+
   .header {
     padding: 16px 18px 14px;
   }

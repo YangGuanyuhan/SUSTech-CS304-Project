@@ -22,3 +22,5 @@ frontend/dist/
 .history/
 CLAUDE.md
 .claude
+shared/*
+!shared/SUSTech Info/

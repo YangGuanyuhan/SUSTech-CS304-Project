@@ -13,9 +13,11 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from backend.models.calendar import CalendarEventCreate, CalendarEventMove, CalendarEventUpdate
+from backend.models.quiz import QuizCreateToolArguments
 from backend.services.blackboard_service import BlackboardService, DemoBlackboardProvider
 from backend.services.calendar_service import CalendarService
 from backend.services.chat_file_service import CHAT_FILE_CONTEXT_CHUNK_LIMIT, ChatFileService
@@ -103,7 +105,11 @@ def get_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "list_local_files",
-                "description": "List files and directories inside the user-approved workspace root. Do not use for current-chat uploaded PDFs/PPTs/DOCX files; use rag_search or rag_answer instead.",
+                "description": (
+                    "List files and directories inside the user-approved workspace root. Do not "
+                    "use for current-chat uploaded PDFs/PPTs/DOCX files; use "
+                    "uploaded_file_search or uploaded_file_answer instead."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -123,7 +129,11 @@ def get_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "read_local_file",
-                "description": "Read a UTF-8 text file inside the approved workspace root. Do not use for current-chat uploaded PDFs/PPTs/DOCX files; use rag_search or rag_answer instead.",
+                "description": (
+                    "Read a UTF-8 text file inside the approved workspace root. Do not use for "
+                    "current-chat uploaded PDFs/PPTs/DOCX files; use uploaded_file_search or "
+                    "uploaded_file_answer instead."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -223,7 +233,11 @@ def get_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "rag_search",
-                "description": "Search current-chat uploaded PDF/PPTX/DOCX files first, then indexed local study materials and school information. Use this for 'my uploaded PDF', 'this PPT', 'attached file', '课件', or '上传的资料'.",
+                "description": (
+                    "Search the indexed global knowledge base only, including local study "
+                    "materials and school information. Do not use for current-chat uploaded "
+                    "files."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -238,7 +252,47 @@ def get_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "rag_answer",
-                "description": "Answer or summarize using current-chat uploaded PDF/PPTX/DOCX files first, then the indexed local knowledge base, with citations. Best tool for analyzing uploaded files.",
+                "description": (
+                    "Answer using the indexed global knowledge base only, with citations. Do "
+                    "not use for current-chat uploaded files."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "top_k": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "uploaded_file_search",
+                "description": (
+                    "Search only current-chat uploaded PDF/PPTX/DOCX/MD/TXT files. Use this "
+                    "for 'my uploaded PDF', 'this PPT', 'attached file', '课件', or "
+                    "'上传的资料' when raw snippets are needed."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "top_k": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "uploaded_file_answer",
+                "description": (
+                    "Answer, summarize, or analyze using only current-chat uploaded files, "
+                    "with citations. Best tool for uploaded PDF/PPT/DOCX analysis."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -380,22 +434,16 @@ def get_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "create_quiz",
-                "description": "Create a quiz session for the user and return structured quiz questions.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "topic": {"type": "string"},
-                        "question_count": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "maximum": 10,
-                            "default": 5,
-                        },
-                        "source_material": {"type": "string"},
-                        "title": {"type": "string"},
-                    },
-                    "required": ["topic"],
-                },
+                "description": (
+                    "Persist a fully-authored quiz session. "
+                    "This tool does not generate questions for you. "
+                    "Pass the complete structured quiz payload, including question_count, "
+                    "questions, correct answers, explanations, rubrics, and points. "
+                    "Formatting rules: true_false questions must include options exactly "
+                    "['True', 'False']; single_choice correct_answer must exactly match one option; "
+                    "short_answer questions must use options=[] and include a rubric."
+                ),
+                "parameters": QuizCreateToolArguments.model_json_schema(),
             },
         },
         {
@@ -667,6 +715,10 @@ class AgentToolService:
             return await self._rag_search(arguments, chat_session_id=chat_session_id)
         if tool_name == "rag_answer":
             return await self._rag_answer(arguments, chat_session_id=chat_session_id)
+        if tool_name == "uploaded_file_search":
+            return await self._uploaded_file_search(arguments, chat_session_id=chat_session_id)
+        if tool_name == "uploaded_file_answer":
+            return await self._uploaded_file_answer(arguments, chat_session_id=chat_session_id)
         if tool_name == "calendar_list_events":
             return await self._calendar_list_events(arguments)
         if tool_name == "calendar_create_event":
@@ -1067,20 +1119,14 @@ class AgentToolService:
         query = str(arguments.get("query", "")).strip()
         if not query:
             raise ToolExecutionError("`query` is required for rag_search.")
-        owner_ids = ChatFileService(self.session).query_owner_ids(chat_session_id)
         rag_service = RAGService(self.session)
-        hits = rag_service.sample_chunks(
-            owner_id=owner_ids[0],
-            limit=CHAT_FILE_CONTEXT_CHUNK_LIMIT,
+        hits = rag_service.search(
+            query,
+            top_k=int(arguments.get("top_k", 5)),
+            owner_id="local-user",
         )
         if not hits:
-            hits = rag_service.search(
-                query,
-                top_k=int(arguments.get("top_k", 5)),
-                owner_ids=owner_ids,
-            )
-        if not hits:
-            return "No matching uploaded file or knowledge base chunks were found."
+            return "No matching indexed knowledge base chunks were found."
         return json.dumps([hit.model_dump(mode="json") for hit in hits], ensure_ascii=False)
 
     async def _rag_answer(self, arguments: dict[str, Any], *, chat_session_id: str) -> str:
@@ -1088,11 +1134,48 @@ class AgentToolService:
         if not query:
             raise ToolExecutionError("`query` is required for rag_answer.")
         try:
-            owner_ids = ChatFileService(self.session).query_owner_ids(chat_session_id)
             result = await RAGService(self.session).query(
                 query,
                 top_k=int(arguments.get("top_k", 5)),
-                owner_ids=owner_ids,
+                owner_id="local-user",
+            )
+        except (RAGProviderError, RAGServiceError) as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
+
+    async def _uploaded_file_search(
+        self, arguments: dict[str, Any], *, chat_session_id: str
+    ) -> str:
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            raise ToolExecutionError("`query` is required for uploaded_file_search.")
+        owner_id = ChatFileService.chat_owner_id(chat_session_id)
+        rag_service = RAGService(self.session)
+        hits = rag_service.search(
+            query,
+            top_k=int(arguments.get("top_k", 5)),
+            owner_id=owner_id,
+        )
+        if not hits:
+            hits = rag_service.sample_chunks(
+                owner_id=owner_id,
+                limit=CHAT_FILE_CONTEXT_CHUNK_LIMIT,
+            )
+        if not hits:
+            return "No matching current-chat uploaded file chunks were found."
+        return json.dumps([hit.model_dump(mode="json") for hit in hits], ensure_ascii=False)
+
+    async def _uploaded_file_answer(
+        self, arguments: dict[str, Any], *, chat_session_id: str
+    ) -> str:
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            raise ToolExecutionError("`query` is required for uploaded_file_answer.")
+        try:
+            result = await RAGService(self.session).query(
+                query,
+                top_k=int(arguments.get("top_k", 5)),
+                owner_ids=[ChatFileService.chat_owner_id(chat_session_id)],
                 prefer_owner_context=True,
                 context_limit=CHAT_FILE_CONTEXT_CHUNK_LIMIT,
             )
@@ -1101,15 +1184,13 @@ class AgentToolService:
         return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
 
     async def _create_quiz(self, arguments: dict[str, Any], *, chat_session_id: str) -> str:
-        topic = str(arguments.get("topic", "")).strip()
-        if not topic:
-            raise ToolExecutionError("`topic` is required for create_quiz.")
+        try:
+            payload = QuizCreateToolArguments.model_validate(arguments)
+        except ValidationError as exc:
+            raise ToolExecutionError(f"Invalid create_quiz payload: {exc}") from exc
         quiz = await self.quiz_service.create_quiz(
             chat_session_id=chat_session_id,
-            topic=topic,
-            question_count=int(arguments.get("question_count", 5)),
-            source_material=arguments.get("source_material"),
-            title=arguments.get("title"),
+            quiz=payload.quiz,
         )
         return json.dumps({"quiz_session": quiz.model_dump(mode="json")}, ensure_ascii=False)
 

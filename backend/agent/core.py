@@ -294,7 +294,7 @@ class StudentProductivityAgent:
         prior_events_snapshot = list(prior_tool_events or [])
 
         async def runtime_tool_events_callback(tool_events: list[ToolTrace]) -> None:
-            await self._emit_tool_events(on_tool_events, prior_events_snapshot + list(tool_events))
+            await self._emit_tool_events(on_tool_events, list(tool_events))
 
         run_result, deps = await self.runtime.run(
             user_input=user_input,
@@ -312,6 +312,7 @@ class StudentProductivityAgent:
         tools_used = list(prior_tools_used or []) + deps.tools_used
 
         if isinstance(output, DeferredToolRequests):
+            tool_event_count_before_approval = len(tool_events)
             llm_logger.log_event(
                 session_id,
                 "llm_response",
@@ -336,7 +337,10 @@ class StudentProductivityAgent:
                 tool_events=tool_events,
                 tools_used=tools_used,
             )
-            await self._emit_tool_events(on_tool_events, approval_result.tool_events)
+            await self._emit_tool_events(
+                on_tool_events,
+                approval_result.tool_events[tool_event_count_before_approval:],
+            )
             return approval_result
 
         response_text = str(output).strip()
@@ -485,17 +489,18 @@ class StudentProductivityAgent:
             )
         ]
 
+        denied_events: list[ToolTrace] = []
         if not approved:
             # Add denied status for all tools in the batch
             for tool_call in pending.tool_calls:
-                pending.tool_events.append(
-                    ToolTrace(
-                        tool_name=tool_call["tool_name"],
-                        arguments=tool_call["tool_arguments"],
-                        status="denied",
-                        output='{"ok": false, "error": "User denied approval."}',
-                    )
+                denied_event = ToolTrace(
+                    tool_name=tool_call["tool_name"],
+                    arguments=tool_call["tool_arguments"],
+                    status="denied",
+                    output='{"ok": false, "error": "User denied approval."}',
                 )
+                pending.tool_events.append(denied_event)
+                denied_events.append(denied_event)
 
         # Log approval resolution for each tool
         for tool_call in pending.tool_calls:
@@ -509,6 +514,9 @@ class StudentProductivityAgent:
                     "arguments": tool_call["tool_arguments"],
                 },
             )
+
+        if denied_events:
+            await self._emit_tool_events(on_tool_events, denied_events)
 
         try:
             result = await self._run_turn(

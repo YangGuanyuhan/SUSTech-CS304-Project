@@ -28,6 +28,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.tools import DeferredToolRequests, ToolApproved, ToolDenied
 from sqlalchemy.orm import Session
 
+from backend.models.quiz import QuizDraft
 from backend.models.tooling import ToolTrace
 from backend.services.agent_tool_service import AgentToolService, ToolExecutionError
 from backend.services.chat_file_service import ChatFileService
@@ -54,34 +55,48 @@ Tool usage rules:
 8. Do NOT guess or hallucinate timestamps or dates. If the user does not explicitly mention a specific time, do not include unverified times when saving memories.
 9. When saving memories, only record what actually happened in this conversation.
    Do not infer or assume actions that were not explicitly performed or confirmed by a tool result.
-10. After successfully creating a quiz, do NOT present questions in chat.
+10. The create_quiz tool only persists a fully-authored quiz payload. It does NOT generate
+    quiz content for you. Before calling it, construct the complete quiz structure in the
+    tool arguments, including question_count, every question, answer options, correct_answer,
+    explanation, and rubric for short-answer questions.
+    For question formatting, follow these rules exactly:
+    - true_false: options must be exactly ["True", "False"], and correct_answer must be "True" or "False"
+    - single_choice: provide at least two options, and correct_answer must exactly match one option
+    - short_answer: options must be [], and rubric is required
+    After successfully creating a quiz, do NOT present questions in chat.
     Instead, inform the user that the quiz is ready and direct them to the quiz
     interface to begin.
 11. Use calendar tools for scheduling requests, event lookup, reminders, or timetable management.
 12. Blackboard calendar events are read-only. If the user wants to modify one, first copy it into a local event.
 13. When the user asks about indexed study materials, course notes, school information, PDFs,
     slides, documents, or the local knowledge base, prefer rag_search or rag_answer before
-    answering from general knowledge. If the knowledge base has no relevant hit, say that plainly.
+    answering from general knowledge. rag_search and rag_answer search only the indexed global
+    knowledge base. If the knowledge base has no relevant hit, say that plainly.
 14. Uploaded files in the current chat are NOT local workspace files. When the user says
     "uploaded file", "my PDF", "this PPT", "attached document", "课件", "上传的资料",
-    or similar, you must use rag_answer for analysis/summary/QA or rag_search for snippets.
+    or similar, you must use uploaded_file_answer for analysis/summary/QA or
+    uploaded_file_search for snippets.
     Do not call list_local_files, read_local_file, run_local_command, or rag_index_folder for
     current chat uploads unless the user explicitly asks about the local workspace.
-    The RAG tools search current chat uploads before the broader knowledge base.
+    If the user explicitly asks to compare or combine uploaded files with the broader knowledge
+    base, call both uploaded_file_* and rag_* tools, then synthesize the answer.
 15. RAG indexing is limited to directories configured in the Knowledge Base page. Use
     rag_index_folder with a relative path under the default RAG directory whenever possible.
     Do not ask to index arbitrary computer paths outside the configured RAG roots.
 16. web_search usage rules (IMPORTANT - follow these strictly):
    - ONLY use web_search when: the user explicitly asks to search/look up something online,
      the question requires REAL-TIME information (today's news, current prices, live scores),
-     after trying local tools (rag_search, rag_answer, memory_search) and they return no results,
+     after trying local tools (rag_search, rag_answer, uploaded_file_search,
+     uploaded_file_answer, memory_search) and they return no results,
      or the question is about recent events (within last few months) that you don't know.
    - Do NOT use web_search for: general knowledge questions you can answer from training data,
-     questions about uploaded files or local documents (use rag_search/rag_answer),
+     questions about uploaded files (use uploaded_file_search/uploaded_file_answer),
+     questions about indexed local documents (use rag_search/rag_answer),
      questions about previous conversations (use memory_search),
      academic concepts, definitions, well-established facts,
      or programming help, code examples, technical documentation.
-   - Search workflow: first check if local tools can answer (rag_search, memory_search).
+   - Search workflow: first check if local tools can answer (rag_search,
+     uploaded_file_search, memory_search).
      Only if local tools fail or user explicitly requests web search, use web_search.
 17. For Blackboard file download requests, use only this sequence:
     blackboard_get_all_courses if you need the course_id, then blackboard_download_files.
@@ -110,8 +125,9 @@ def build_chat_uploads_prompt(session: Session, session_id: str) -> str:
     if not files:
         return (
             "Current chat has no uploaded PDF/PPTX/DOCX files indexed. If the user asks "
-            "about an uploaded file, call rag_search or rag_answer to confirm before saying "
-            "there is no uploaded content. Do not inspect local workspace files for that request."
+            "about an uploaded file, call uploaded_file_search or uploaded_file_answer to "
+            "confirm before saying there is no uploaded content. Do not inspect local workspace "
+            "files for that request."
         )
 
     indexed = [item for item in files if item.status == "indexed"]
@@ -119,7 +135,10 @@ def build_chat_uploads_prompt(session: Session, session_id: str) -> str:
     failed = [item for item in files if item.status == "failed"]
     lines = [
         "Current chat uploaded-file context:",
-        "Use rag_answer for summaries, analysis, and questions about these uploads; use rag_search only when raw snippets are needed.",
+        (
+            "Use uploaded_file_answer for summaries, analysis, and questions about these "
+            "uploads; use uploaded_file_search only when raw snippets are needed."
+        ),
         "Do not use local file tools for these uploaded files.",
     ]
     if indexed:
@@ -181,8 +200,8 @@ async def build_tool_examples_prompt(session: Session, user_query: str) -> str:
     if any(word in query_lower for word in ["course", "material", "notes", "lecture"]):
         relevant_tools.append("rag_search")
     if any(word in query_lower for word in upload_terms):
-        relevant_tools.append("rag_search")
-        relevant_tools.append("rag_answer")
+        relevant_tools.append("uploaded_file_search")
+        relevant_tools.append("uploaded_file_answer")
     if any(word in query_lower for word in ["file", "code", "read", "show"]) and not any(
         word in query_lower for word in upload_terms
     ):
@@ -323,12 +342,14 @@ class PydanticAIRuntime:
         def chat_upload_instruction(ctx: RunContext[AgentDeps]) -> str:
             return build_chat_uploads_prompt(ctx.deps.session, ctx.deps.session_id)
 
-        async def _notify_tool_events(ctx: RunContext[AgentDeps]) -> None:
+        async def _notify_tool_events(
+            ctx: RunContext[AgentDeps], changed_events: list[ToolTrace]
+        ) -> None:
             callback = ctx.deps.on_tool_events
             if callback is None:
                 return
-            snapshot = [event.model_copy(deep=True) for event in ctx.deps.tool_events]
-            maybe_awaitable = callback(snapshot)
+            delta = [event.model_copy(deep=True) for event in changed_events]
+            maybe_awaitable = callback(delta)
             if inspect.isawaitable(maybe_awaitable):
                 _ = await maybe_awaitable
 
@@ -339,7 +360,7 @@ class PydanticAIRuntime:
         ) -> str:
             running_event = ToolTrace(tool_name=tool_name, arguments=arguments, status="running")
             ctx.deps.tool_events.append(running_event)
-            await _notify_tool_events(ctx)
+            await _notify_tool_events(ctx, [running_event])
             # Let the event loop flush the "running" SSE event before tool execution starts.
             await asyncio.sleep(0)
             try:
@@ -355,7 +376,7 @@ class PydanticAIRuntime:
                     {"ok": False, "tool_name": tool_name, "error": str(exc)},
                     ensure_ascii=False,
                 )
-                await _notify_tool_events(ctx)
+                await _notify_tool_events(ctx, [running_event])
                 return running_event.output
             except Exception as exc:
                 running_event.status = "failed"
@@ -367,13 +388,13 @@ class PydanticAIRuntime:
                     },
                     ensure_ascii=False,
                 )
-                await _notify_tool_events(ctx)
+                await _notify_tool_events(ctx, [running_event])
                 return running_event.output
 
             running_event.status = "failed" if '"ok": false' in output.lower() else "completed"
             running_event.output = output
             ctx.deps.tools_used.append(tool_name)
-            await _notify_tool_events(ctx)
+            await _notify_tool_events(ctx, [running_event])
             return output
 
         @agent.tool(name="memory_search")
@@ -576,7 +597,7 @@ class PydanticAIRuntime:
                 {"command": command, "timeout_seconds": timeout_seconds},
             )
 
-        @agent.tool(name="fetch_webpage", requires_approval=True)
+        @agent.tool(name="fetch_webpage", requires_approval=False)
         async def fetch_webpage(
             ctx: RunContext[AgentDeps], url: str, max_chars: int = 12000
         ) -> str:
@@ -597,33 +618,47 @@ class PydanticAIRuntime:
 
         @agent.tool(name="rag_search")
         async def rag_search(ctx: RunContext[AgentDeps], query: str, top_k: int = 5) -> str:
-            """Search current-chat uploaded PDF/PPTX/DOCX content first, then global RAG."""
+            """Search indexed global knowledge base content only."""
 
             return await _execute_tool(ctx, "rag_search", {"query": query, "top_k": top_k})
 
         @agent.tool(name="rag_answer")
         async def rag_answer(ctx: RunContext[AgentDeps], query: str, top_k: int = 5) -> str:
-            """Answer using current-chat uploaded files first; best for uploaded PDF/PPT analysis."""
+            """Answer using indexed global knowledge base content only."""
 
             return await _execute_tool(ctx, "rag_answer", {"query": query, "top_k": top_k})
+
+        @agent.tool(name="uploaded_file_search")
+        async def uploaded_file_search(
+            ctx: RunContext[AgentDeps], query: str, top_k: int = 5
+        ) -> str:
+            """Search current-chat uploaded PDF/PPTX/DOCX/MD/TXT content only."""
+
+            return await _execute_tool(
+                ctx, "uploaded_file_search", {"query": query, "top_k": top_k}
+            )
+
+        @agent.tool(name="uploaded_file_answer")
+        async def uploaded_file_answer(
+            ctx: RunContext[AgentDeps], query: str, top_k: int = 5
+        ) -> str:
+            """Answer using current-chat uploaded files only; best for uploaded file analysis."""
+
+            return await _execute_tool(
+                ctx, "uploaded_file_answer", {"query": query, "top_k": top_k}
+            )
 
         @agent.tool(name="create_quiz")
         async def create_quiz(
             ctx: RunContext[AgentDeps],
-            topic: str,
-            question_count: int = 5,
-            source_material: str | None = None,
-            title: str | None = None,
+            quiz: QuizDraft,
         ) -> str:
+            """Persist a complete quiz payload after you have authored every question."""
+
             return await _execute_tool(
                 ctx,
                 "create_quiz",
-                {
-                    "topic": topic,
-                    "question_count": question_count,
-                    "source_material": source_material,
-                    "title": title,
-                },
+                {"quiz": quiz.model_dump(mode="json")},
             )
 
         @agent.tool(name="quiz_history_summary")
