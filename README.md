@@ -27,6 +27,9 @@ StudyAI helps a student do four kinds of work in one place:
 | Quiz workflow | Agent-generated quizzes, inline answering, grading, and quiz history review. |
 | User profile and memory | Local login, avatar upload, display-name editing, long-term memory browsing, and legacy memory inspection. |
 | Task management | Agent-driven task tracking with progress inspection and task history. |
+| Web Search | Agent can query search engines for real-time information retrieval based on configured providers. |
+| Email Assistant | Agent can draft, review, and send emails via configured SMTP settings, and manage email drafts. |
+| Tool Learning | Agent learns from past tool usage patterns to improve future interactions and tool utilization. |
 | Persistence and inspection | SQLite-backed backend data plus a database overview panel for stored activity summaries. |
 
 ## Architecture At A Glance
@@ -75,6 +78,13 @@ CONTRIBUTING.md
 - `uv`
 - `npm`
 - Optional: Docker / Docker Compose
+
+### Get the code
+
+```bash
+git clone git@github.com:sustech-cs304/team-project-26spring-26s-8.git
+cd team-project-26spring-26s-8
+```
 
 ### Install backend dependencies
 
@@ -313,6 +323,12 @@ npm run build
 - RAG retrieval accuracy depends on the embedding model and chunking strategy; highly formatted documents (tables, multi-column layouts) may yield degraded results due to parser limitations.
 
 ## Additional Resources
+
+> **Tip:** You can view the full documentation site locally with a searchable interface by running:
+> ```bash
+> uv run mkdocs serve
+> ```
+> Then open `http://127.0.0.1:8000` (or the port specified by mkdocs) in your browser.
 
 ### Architecture and design
 
