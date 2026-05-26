@@ -45,14 +45,14 @@ Browser UI
 
 ### 2.3 Main files
 
-- Backend entrypoint: [backend/main.py](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/backend/main.py)
-- API routes: [backend/api/routes.py](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/backend/api/routes.py)
-- Agent orchestration: [backend/agent/core.py](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/backend/agent/core.py)
-- LLM integration: [backend/services/llm_service.py](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/backend/services/llm_service.py)
-- Runtime settings: [backend/services/runtime_settings.py](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/backend/services/runtime_settings.py)
-- Persisted profile management: [backend/services/settings_service.py](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/backend/services/settings_service.py)
-- Frontend chat UI: [frontend/src/components/ChatWindow.vue](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/frontend/src/components/ChatWindow.vue)
-- Frontend API settings UI: [frontend/src/components/SettingsPanel.vue](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/frontend/src/components/SettingsPanel.vue)
+- Backend entrypoint: [backend/main.py](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/backend/main.py)
+- API routes: [backend/api/routes.py](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/backend/api/routes.py)
+- Agent orchestration: [backend/agent/core.py](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/backend/agent/core.py)
+- LLM integration: [backend/services/llm_service.py](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/backend/services/llm_service.py)
+- Runtime settings: [backend/services/runtime_settings.py](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/backend/services/runtime_settings.py)
+- Persisted profile management: [backend/services/settings_service.py](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/backend/services/settings_service.py)
+- Frontend chat UI: [frontend/src/components/ChatWindow.vue](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/frontend/src/components/ChatWindow.vue)
+- Frontend API settings UI: [frontend/src/components/SettingsPanel.vue](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/frontend/src/components/SettingsPanel.vue)
 
 ## 3. Core Code Framework
 
@@ -99,7 +99,7 @@ The chat workspace includes:
 
 ### 4.1 Chat request pipeline
 
-Implemented in [backend/agent/core.py](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/backend/agent/core.py).
+Implemented in [backend/agent/core.py](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/backend/agent/core.py).
 
 Core steps:
 
@@ -119,7 +119,7 @@ Important implementation choice:
 
 ### 4.2 Runtime LLM configuration
 
-Implemented in [backend/services/runtime_settings.py](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/backend/services/runtime_settings.py).
+Implemented in [backend/services/runtime_settings.py](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/backend/services/runtime_settings.py).
 
 Behavior:
 
@@ -137,8 +137,8 @@ This layer powers:
 
 Implemented in:
 
-- [backend/services/settings_service.py](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/backend/services/settings_service.py)
-- [backend/services/secret_store.py](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/backend/services/secret_store.py)
+- [backend/services/settings_service.py](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/backend/services/settings_service.py)
+- [backend/services/secret_store.py](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/backend/services/secret_store.py)
 
 Behavior:
 
@@ -154,7 +154,7 @@ This supports:
 
 ### 4.4 Blackboard integration
 
-Implemented in [backend/services/blackboard_service.py](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/backend/services/blackboard_service.py).
+Implemented in [backend/services/blackboard_service.py](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/backend/services/blackboard_service.py).
 
 Current design:
 
@@ -166,7 +166,7 @@ This is the core plug-in point for replacing mock Blackboard with a real adapter
 
 ### 4.5 Frontend conversation model
 
-Implemented in [frontend/src/components/ChatWindow.vue](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/frontend/src/components/ChatWindow.vue).
+Implemented in [frontend/src/components/ChatWindow.vue](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/frontend/src/components/ChatWindow.vue).
 
 Each conversation stores:
 
@@ -191,7 +191,7 @@ Current persistence behavior:
 
 ## 5. Database Design
 
-Current SQLAlchemy models in [backend/db/models.py](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/backend/db/models.py):
+Current SQLAlchemy models in [backend/db/models.py](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/backend/db/models.py):
 
 - `memories`
 - `email_drafts`
@@ -213,7 +213,7 @@ This section describes how future capabilities should be added without rewriting
 
 Current insertion point:
 
-- [backend/services/blackboard_service.py](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/backend/services/blackboard_service.py)
+- [backend/services/blackboard_service.py](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/backend/services/blackboard_service.py)
 
 How to extend:
 
@@ -248,7 +248,7 @@ How to extend:
 
 Recommended insertion point:
 
-- [backend/agent/core.py](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/backend/agent/core.py)
+- [backend/agent/core.py](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/backend/agent/core.py)
 
 Reason:
 
@@ -292,7 +292,7 @@ How to extend:
 
 Recommended place:
 
-- [backend/services/memory_service.py](/home/zzh/Project/Software-Engineer/Agent-Project/team-project-26spring-26s-8/backend/services/memory_service.py)
+- [backend/services/memory_service.py](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/backend/services/memory_service.py)
 
 ### 6.5 Email workflow expansion
 

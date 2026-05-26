@@ -3,14 +3,19 @@ site_description: Student productivity agent documentation
 repo_url: https://github.com/sustech-cs304/team-project-26spring-26s-8
 docs_dir: docs
 
+exclude_docs: |
+  README.md
+  features/images/README.md
+
 theme:
   name: mkdocs
   navigation_depth: 3
 
+edit_uri: ""
+
 nav:
   - Home: index.md
   - CI/CD Pipeline: ci-cd.md
-  - RAG Setup: RAG_README.md
   - Architecture:
       - Technical Design: architecture/TECHNICAL_DESIGN.md
       - Database Overview: architecture/DATABASE_CURRENT_OVERVIEW.md
@@ -21,9 +26,12 @@ nav:
       - Quiz Feature: features/QUIZ_FEATURE.md
       - Memory System: features/MEMORY_SYSTEM_IMPLEMENTATION.md
       - Blackboard Feature: features/BLACKBOARD_FEATURE.md
+      - Web Search: features/WEB_SEARCH.md
+      - RAG Setup: RAG_README.md
   - Development:
       - Database Refactor: development/DATABASE_REFACTOR_SUMMARY.md
       - Database Refactor Chinese: development/DATABASE_REFACTOR_SUMMARY_ZH.md
+  - Report: final-report/final-report-26s-8.md
 
 markdown_extensions:
   - toc:

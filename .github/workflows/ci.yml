@@ -34,7 +34,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7
 
       - name: Install backend dependencies
         run: uv sync --frozen --all-extras --dev
@@ -85,7 +85,7 @@ jobs:
 
       - name: Upload test and coverage reports
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: quality-reports
           path: |
@@ -94,7 +94,7 @@ jobs:
           retention-days: 14
 
       - name: Upload build outputs
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: build-outputs
           path: |
@@ -353,7 +353,7 @@ jobs:
 
       - name: Upload code metrics
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: code-metrics
           path: artifacts/code-metrics
@@ -372,7 +372,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7
 
       - name: Install backend dependencies
         run: uv sync --frozen --all-extras --dev
@@ -406,7 +406,7 @@ jobs:
 
       - name: Upload security reports
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: security-reports
           path: artifacts/security
@@ -446,7 +446,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7
 
       - name: Install documentation dependencies
         run: uv sync --frozen --all-extras --dev
@@ -455,7 +455,7 @@ jobs:
         run: uv run mkdocs build --site-dir artifacts/docs-site
 
       - name: Upload documentation artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: docs-site
           path: artifacts/docs-site
@@ -471,19 +471,19 @@ jobs:
       - docs
     steps:
       - name: Download build outputs
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: build-outputs
           path: release/build
 
       - name: Download documentation site
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: docs-site
           path: release/docs
 
       - name: Download code metrics
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: code-metrics
           path: release/code-metrics
@@ -507,7 +507,7 @@ jobs:
           PY
 
       - name: Upload release bundle
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: release-bundle
           path: release
@@ -522,7 +522,7 @@ jobs:
       name: testing
     steps:
       - name: Download release bundle
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: release-bundle
           path: release
@@ -542,7 +542,7 @@ jobs:
       name: production
     steps:
       - name: Download release bundle
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: release-bundle
           path: release
