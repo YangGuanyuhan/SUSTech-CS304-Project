@@ -8,8 +8,8 @@ Two workflows drive the pipeline:
 
 | Workflow | File | Purpose |
 | --- | --- | --- |
-| CI/CD | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | Build, test, scan, package, and deploy gate |
-| Docker Build & Release | [`.github/workflows/docker-release.yml`](../.github/workflows/docker-release.yml) | Container image build and GitHub Release publishing |
+| CI/CD | [`.github/workflows/ci.yml`](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/.github/workflows/ci.yml) | Build, test, scan, package, and deploy gate |
+| Docker Build & Release | [`.github/workflows/docker-release.yml`](https://github.com/sustech-cs304/team-project-26spring-26s-8/blob/main/.github/workflows/docker-release.yml) | Container image build and GitHub Release publishing |
 
 ---
 

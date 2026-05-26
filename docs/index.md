@@ -6,9 +6,17 @@ calendar support, local knowledge-base RAG, and current-chat file Q&A.
 ## Start Here
 
 - [CI/CD Pipeline](ci-cd.md): what every GitHub workflow stage checks.
-- [RAG Setup](RAG_README.md): how local and uploaded document retrieval works.
-- [Technical Design](architecture/TECHNICAL_DESIGN.md): architecture overview.
+- [Technical Design](architecture/TECHNICAL_DESIGN.md): system architecture overview.
 - [Database Overview](architecture/DATABASE_CURRENT_OVERVIEW.md): persisted data model.
+
+## Features
+
+- [Email Feature](features/EMAIL_FEATURE.md)
+- [Quiz Feature](features/QUIZ_FEATURE.md)
+- [Memory System](features/MEMORY_SYSTEM_IMPLEMENTATION.md)
+- [Blackboard Feature](features/BLACKBOARD_FEATURE.md)
+- [Web Search](features/WEB_SEARCH.md)
+- [RAG Setup](RAG_README.md)
 
 ## Generated Artifacts
 
