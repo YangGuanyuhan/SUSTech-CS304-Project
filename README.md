@@ -262,25 +262,17 @@ The profile panel supports:
 - legacy memory browsing
 - logout
 
-## Usage Examples
+## Demo
 
-Here are simple example tasks that match the current implementation:
+![Demo 1](docs/demo/demo1.gif)
 
-```text
-Index the materials in shared/SUSTech Info and answer: when is final-exam week in the 2026 school calendar?
-```
+![Demo 2](docs/demo/demo2.gif)
 
-```text
-Sync my Blackboard calendar and tell me which deadlines are due next week.
-```
+![Demo 5](docs/demo/demo5.gif)
 
-```text
-Create a short quiz about Python decorators and let me answer it here.
-```
+![Demo 3](docs/demo/demo3.gif)
 
-```text
-Read my recent email context and draft a polite reply to a teaching assistant.
-```
+![Demo 4](docs/demo/demo4.gif)
 
 ## Optional Advanced Configuration
 
