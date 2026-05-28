@@ -2,7 +2,7 @@
 
 > A local-first student productivity agent for SUSTech coursework, built with FastAPI, PydanticAI, and Vue 3.
 
-StudyAI is a full-stack course project that combines an AI chat workspace with document retrieval, Blackboard integration, calendar management, quiz generation, memory, and email assistance. The system is designed for local use first: you run the backend and frontend on your own machine, configure integrations from the UI, and work through a single dashboard.
+StudyAI is a full-stack course project that combines an AI chat workspace with document retrieval, Blackboard integration, calendar management, quiz generation, memory, skills, MCP tools, and email assistance. The system is designed for local use first: you run the backend and frontend on your own machine, configure integrations from the UI, and work through a single dashboard.
 
 ![StudyAI interface preview](docs/architecture/design-26s-8.images/ui.png)
 
@@ -11,7 +11,7 @@ StudyAI is a full-stack course project that combines an AI chat workspace with d
 StudyAI helps a student do four kinds of work in one place:
 
 1. Talk to an AI assistant in a persistent chat workspace.
-2. Connect school systems and personal tools such as Blackboard, email, and search providers.
+2. Connect school systems and personal tools such as Blackboard, email, search providers, and MCP servers.
 3. Build a local knowledge base from course materials and ask questions over those files.
 4. Track study context over time through saved conversations, quizzes, calendars, and memory.
 
@@ -20,7 +20,7 @@ StudyAI helps a student do four kinds of work in one place:
 | Area | What is implemented |
 | --- | --- |
 | Chat workspace | Streaming assistant responses, visible tool events, approval-required actions, multi-conversation history, rename/delete/create conversation actions, and file upload into the current chat. |
-| Settings center | UI-based configuration for LLM, Blackboard, email, and search providers; connection testing; saved profiles; apply/delete profile actions; backend health refresh. |
+| Settings center | UI-based configuration for LLM, Blackboard, email, search providers, skills, and MCP servers; connection testing; saved profiles; apply/delete profile actions; backend health refresh. |
 | Knowledge base | Index files from a shared workspace, query indexed content with citations, inspect indexed sources, and remove indexed sources. |
 | Blackboard integration | Blackboard login configuration, course listing, announcement access through the agent, calendar sync, course file browsing, and file download through the backend. |
 | Calendar | Unified calendar view with local events plus Blackboard events, month/day/year modes, drag-to-move local events, and clone-from-Blackboard support. |
@@ -29,6 +29,7 @@ StudyAI helps a student do four kinds of work in one place:
 | Task management | Agent-driven task tracking with progress inspection and task history. |
 | Web Search | Agent can query search engines for real-time information retrieval based on configured providers. |
 | Email Assistant | Agent can draft, review, and send emails via configured SMTP settings, and manage email drafts. |
+| Skills and MCP | Agent can discover Codex-style skills from local folders and connect to stdio, Streamable HTTP, or SSE MCP servers configured from the Settings panel. |
 | Tool Learning | Agent learns from past tool usage patterns to improve future interactions and tool utilization. |
 | Persistence and inspection | SQLite-backed backend data plus a database overview panel for stored activity summaries. |
 
@@ -38,7 +39,7 @@ StudyAI helps a student do four kinds of work in one place:
 - Frontend: Vue 3 + Vite single-page app with chat, settings, knowledge-base, calendar, quiz, task, profile, and database-overview panels.
 - Storage: SQLite for application data, plus local `data/` folders for runtime artifacts.
 - Retrieval: Local document parsing (markitdown) and indexing through the RAG service (raganything + text-embedding-3-small).
-- Integrations: Configurable LLM providers, Blackboard Learn, email (SMTP/IMAP), and optional web search.
+- Integrations: Configurable LLM providers, Blackboard Learn, email (SMTP/IMAP), optional web search, local skills, and runtime MCP servers.
 
 ## Project Structure
 
@@ -116,6 +117,10 @@ Start the backend:
 uv run uvicorn backend.main:app
 ```
 
+On Linux x86_64, the lock file uses the PyTorch CPU wheel index for
+`torch` and `torchvision`, avoiding the large CUDA runtime packages during
+`uv run` and `uv sync`.
+
 Start the frontend in a second terminal:
 
 ```bash
@@ -166,7 +171,7 @@ Recommended first-use flow:
 2. Log in with the default local account (`local` / `studyai`).
 3. Open `Settings`.
 4. Create or edit an LLM profile, test the connection, and apply it.
-5. Optionally configure Blackboard, email, and search profiles from the same panel.
+5. Optionally configure Blackboard, email, search, skills, and MCP servers from the same panel.
 6. Return to the main workspace and start using chat, knowledge base, and calendar features.
 
 The Settings panel supports both runtime apply and saved profiles. In practice, that means you can:
@@ -176,6 +181,8 @@ The Settings panel supports both runtime apply and saved profiles. In practice, 
 - switch between providers without retyping everything
 
 Saved profile secrets are handled on the backend side rather than being returned to the browser.
+
+MCP authentication fields, including HTTP headers and stdio environment values, are encrypted before being persisted in `data/mcp-settings.json`. The browser receives masked values such as `********` when a saved MCP server is loaded.
 
 ## How To Use StudyAI
 
@@ -203,6 +210,18 @@ Based on the lecture notes I just uploaded, create a 5-question quiz and explain
 ```text
 Draft an email to my instructor asking for a project extension.
 ```
+
+### Skills and MCP
+
+The Settings panel includes `Skills` and `MCP` sections:
+
+- `Skills` lists available Codex-style skills discovered from `.agents/skills` folders in the repository path chain and from `~/.agents/skills`.
+- `MCP` lets you add stdio, Streamable HTTP, or SSE MCP servers without hand-writing JSON.
+- MCP server IDs must use only letters, numbers, `_`, or `-`, for example `mcdonalds`.
+- HTTP/SSE authentication can be added as key-value headers such as `Authorization = Bearer <token>`.
+- stdio server secrets can be added as key-value environment variables.
+
+After a server is saved and enabled, the agent receives the enabled MCP server list in its runtime prompt and can call the server's tools with the configured prefix.
 
 ### Knowledge base
 
@@ -337,6 +356,7 @@ npm run build
 - [Blackboard Feature](docs/features/BLACKBOARD_FEATURE.md) — SUSTech Blackboard integration and course file browsing
 - [Memory System](docs/features/MEMORY_SYSTEM_IMPLEMENTATION.md) — semantic search, context management, and tool learning
 - [Web Search](docs/features/WEB_SEARCH.md) — search provider integration and design notes
+- [Skills And MCP](docs/features/SKILLS_MCP.md) — local skill discovery, runtime MCP configuration, and encrypted MCP secrets
 
 ### Development and contributing
 
@@ -352,4 +372,3 @@ npm run build
 - [Vue 3](https://vuejs.org/) — frontend framework
 - [Vite](https://vitejs.dev/) — frontend build tool
 - [uv](https://docs.astral.sh/uv/) — Python package and project manager
-

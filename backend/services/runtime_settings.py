@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from threading import Lock
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 from backend.config import get_settings
 from backend.services.secret_store import secret_store
 
 # Secret prefix for encrypted storage (shared with settings_service to avoid circular import)
 SECRET_PREFIX = "llm_profile_secret:"
+MCP_SECRET_PREFIX = "mcp_secret:"
+MASKED_SECRET = "********"
 
 
 class RuntimeLLMConfig(BaseModel):
@@ -94,6 +98,50 @@ class RuntimeSearchUpdate(BaseModel):
     timeout: int | None = None
 
 
+class RuntimeMCPServerConfig(BaseModel):
+    """Runtime MCP server configuration."""
+
+    id: str = Field(min_length=1, pattern=r"^[A-Za-z0-9_-]+$")
+    enabled: bool = True
+    transport: Literal["stdio", "streamable_http", "sse"]
+    tool_prefix: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]+$")
+    command: str | None = None
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    cwd: str | None = None
+    url: str | None = None
+    headers: dict[str, str] = Field(default_factory=dict)
+    timeout: float = Field(default=5.0, gt=0, le=120)
+    read_timeout: float = Field(default=300.0, gt=0, le=1200)
+
+    @model_validator(mode="after")
+    def validate_transport_fields(self) -> "RuntimeMCPServerConfig":
+        if self.transport == "stdio" and not self.command:
+            raise ValueError("stdio MCP servers require `command`.")
+        if self.transport in {"streamable_http", "sse"} and not self.url:
+            raise ValueError(f"{self.transport} MCP servers require `url`.")
+        return self
+
+
+class RuntimeMCPConfig(BaseModel):
+    """Public runtime MCP config."""
+
+    servers: list[RuntimeMCPServerConfig] = Field(default_factory=list)
+
+
+class RuntimeMCPUpdate(BaseModel):
+    """Writable runtime MCP config payload."""
+
+    servers: list[RuntimeMCPServerConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_unique_server_ids(self) -> "RuntimeMCPUpdate":
+        ids = [server.id for server in self.servers]
+        if len(ids) != len(set(ids)):
+            raise ValueError("MCP server ids must be unique.")
+        return self
+
+
 class RuntimeSettingsManager:
     """Keep sensitive runtime config in process memory only."""
 
@@ -130,6 +178,7 @@ class RuntimeSettingsManager:
             "bocha": settings.bocha_api_key,
             "tavily": settings.tavily_api_key,
         }
+        self._mcp_servers: list[RuntimeMCPServerConfig] = self._load_encrypted_mcp_servers()
         self._lock = Lock()
 
     def _load_blackboard_password(self, stored_password: str | None) -> str | None:
@@ -338,6 +387,130 @@ class RuntimeSettingsManager:
 
         with self._lock:
             return self._search_timeout
+
+    # MCP config methods
+    def get_mcp_config(self) -> RuntimeMCPConfig:
+        """Return runtime MCP server configuration."""
+
+        with self._lock:
+            return RuntimeMCPConfig(
+                servers=[server.model_copy(deep=True) for server in self._mcp_servers]
+            )
+
+    def get_public_mcp_config(self) -> RuntimeMCPConfig:
+        """Return MCP config with sensitive values masked for UI display."""
+
+        with self._lock:
+            return RuntimeMCPConfig(
+                servers=[self._mask_mcp_server(server) for server in self._mcp_servers]
+            )
+
+    def update_mcp_config(self, update: RuntimeMCPUpdate) -> RuntimeMCPConfig:
+        """Replace runtime MCP server configuration and save encrypted secrets."""
+
+        with self._lock:
+            previous = {server.id: server for server in self._mcp_servers}
+            self._mcp_servers = [
+                self._resolve_masked_mcp_server(server, previous.get(server.id))
+                for server in update.servers
+            ]
+            self._save_encrypted_mcp_servers(self._mcp_servers)
+            return RuntimeMCPConfig(
+                servers=[self._mask_mcp_server(server) for server in self._mcp_servers]
+            )
+
+    def resolve_mcp_server_secrets(self, server: RuntimeMCPServerConfig) -> RuntimeMCPServerConfig:
+        """Replace UI secret placeholders on one server with current runtime values."""
+
+        with self._lock:
+            previous = next((item for item in self._mcp_servers if item.id == server.id), None)
+            return self._resolve_masked_mcp_server(server, previous)
+
+    def _mcp_secrets_file(self) -> Path:
+        return Path("data/mcp-settings.json")
+
+    def _load_encrypted_mcp_servers(self) -> list[RuntimeMCPServerConfig]:
+        path = self._mcp_secrets_file()
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            servers = data.get("servers", []) if isinstance(data, dict) else []
+            loaded = []
+            for raw in servers:
+                if not isinstance(raw, dict):
+                    continue
+                raw["headers"] = self._decrypt_mcp_mapping(raw.get("headers", {}))
+                raw["env"] = self._decrypt_mcp_mapping(raw.get("env", {}))
+                loaded.append(RuntimeMCPServerConfig.model_validate(raw))
+            return loaded
+        except Exception:
+            return []
+
+    def _save_encrypted_mcp_servers(self, servers: list[RuntimeMCPServerConfig]) -> None:
+        path = self._mcp_secrets_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "servers": [
+                {
+                    **server.model_dump(mode="json"),
+                    "headers": self._encrypt_mcp_mapping(server.headers),
+                    "env": self._encrypt_mcp_mapping(server.env),
+                }
+                for server in servers
+            ]
+        }
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        path.chmod(0o600)
+
+    def _encrypt_mcp_mapping(self, values: dict[str, str]) -> dict[str, str]:
+        return {
+            str(key): f"{MCP_SECRET_PREFIX}{secret_store.encrypt(str(value))}"
+            for key, value in values.items()
+        }
+
+    def _decrypt_mcp_mapping(self, values: dict[str, str]) -> dict[str, str]:
+        decrypted: dict[str, str] = {}
+        if not isinstance(values, dict):
+            return decrypted
+        for key, value in values.items():
+            text = str(value)
+            if text.startswith(MCP_SECRET_PREFIX):
+                try:
+                    decrypted[str(key)] = secret_store.decrypt(text[len(MCP_SECRET_PREFIX) :])
+                except Exception:
+                    decrypted[str(key)] = ""
+            else:
+                decrypted[str(key)] = text
+        return decrypted
+
+    def _mask_mcp_server(self, server: RuntimeMCPServerConfig) -> RuntimeMCPServerConfig:
+        masked = server.model_copy(deep=True)
+        masked.headers = {key: MASKED_SECRET for key in masked.headers}
+        masked.env = {key: MASKED_SECRET for key in masked.env}
+        return masked
+
+    def _resolve_masked_mcp_server(
+        self,
+        server: RuntimeMCPServerConfig,
+        previous: RuntimeMCPServerConfig | None,
+    ) -> RuntimeMCPServerConfig:
+        resolved = server.model_copy(deep=True)
+        if previous is None:
+            return resolved
+        resolved.headers = self._resolve_masked_mapping(resolved.headers, previous.headers)
+        resolved.env = self._resolve_masked_mapping(resolved.env, previous.env)
+        return resolved
+
+    def _resolve_masked_mapping(
+        self,
+        incoming: dict[str, str],
+        previous: dict[str, str],
+    ) -> dict[str, str]:
+        return {
+            key: previous.get(key, value) if value == MASKED_SECRET else value
+            for key, value in incoming.items()
+        }
 
 
 runtime_settings = RuntimeSettingsManager()

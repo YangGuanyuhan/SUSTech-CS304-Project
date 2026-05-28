@@ -15,9 +15,10 @@ dependencies = [
   "markitdown[pdf,docx,pptx]>=0.1.1",
   "openai>=2.30.0",
   "pydantic>=2.8.2",
-  "pydantic-ai>=0.0.24",
+  "pydantic-ai>=1.61.0,<1.75.0",
   "pydantic-settings>=2.4.0",
   "pypdf>=6.0.0",
+  "pyyaml>=6.0.0",
   "python-multipart>=0.0.27",
   "raganything>=1.2.10",
   "requests>=2.32.3",
@@ -25,6 +26,8 @@ dependencies = [
   "sqlalchemy>=2.0.36",
   "aiosqlite>=0.20.0",
   "tiktoken>=0.8.0",
+  "torch>=2.10.0",
+  "torchvision>=0.25.0",
   "uvicorn>=0.30.6",
 ]
 
@@ -54,6 +57,19 @@ ignore = ["B008", "E501", "ASYNC240", "UP042"]
 
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+]
+torchvision = [
+  { index = "pytorch-cpu", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]

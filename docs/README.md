@@ -33,6 +33,7 @@ docs/
 - [Blackboard Feature](features/BLACKBOARD_FEATURE.md) - SUSTech Blackboard integration, course listing, file browsing, and calendar sync
 - [Memory System Implementation](features/MEMORY_SYSTEM_IMPLEMENTATION.md) - Intelligent memory, semantic search, context management, and tool learning
 - [Web Search](features/WEB_SEARCH.md) - Search feature design and integration notes
+- [Skills And MCP](features/SKILLS_MCP.md) - Local skill discovery, runtime MCP configuration, and encrypted MCP secrets
 - [RAG System](RAG_README.md) - Local knowledge base setup and usage
 
 ### Development
@@ -59,6 +60,7 @@ docs/
 - [Blackboard Feature](features/BLACKBOARD_FEATURE.md)
 - [Memory System Implementation](features/MEMORY_SYSTEM_IMPLEMENTATION.md)
 - [Web Search](features/WEB_SEARCH.md)
+- [Skills And MCP](features/SKILLS_MCP.md)
 - [RAG System](RAG_README.md)
 
 ### Development-Focused Reading

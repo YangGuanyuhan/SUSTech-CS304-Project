@@ -373,6 +373,41 @@ export async function testSearchSettings(payload) {
   return parseJson(response);
 }
 
+export async function getSkillSettings() {
+  const response = await fetch(`${API_BASE}/settings/skills`);
+  return parseJson(response);
+}
+
+export async function refreshSkillSettings() {
+  const response = await fetch(`${API_BASE}/settings/skills/refresh`, {
+    method: "POST"
+  });
+  return parseJson(response);
+}
+
+export async function getMCPSettings() {
+  const response = await fetch(`${API_BASE}/settings/mcp`);
+  return parseJson(response);
+}
+
+export async function updateMCPSettings(payload) {
+  const response = await fetch(`${API_BASE}/settings/mcp`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
+export async function testMCPSettings(payload) {
+  const response = await fetch(`${API_BASE}/settings/mcp/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return parseJson(response);
+}
+
 export async function getDatabaseOverview() {
   const response = await fetch(`${API_BASE}/database/overview`);
   return parseJson(response);

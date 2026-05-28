@@ -28,6 +28,7 @@ from backend.services.rag_service import RAGProviderError, RAGService, RAGServic
 from backend.services.runtime_settings import runtime_settings
 from backend.services.settings_service import SettingsService
 from backend.services.shared_workspace_service import SharedWorkspaceError, SharedWorkspaceService
+from backend.services.skill_service import SkillService, SkillServiceError
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -55,6 +56,58 @@ def get_tool_definitions() -> list[dict[str, Any]]:
     """Return OpenAI-compatible tool schemas."""
 
     tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "list_skills",
+                "description": "List available agent skills with metadata only.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_skill",
+                "description": "Read the SKILL.md instructions for an available agent skill.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "max_chars": {
+                            "type": "integer",
+                            "minimum": 100,
+                            "maximum": 50000,
+                            "default": 50000,
+                        },
+                    },
+                    "required": ["name"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_skill_resource",
+                "description": "Read a reference/script/resource file inside an available skill directory.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "path": {"type": "string"},
+                        "max_chars": {
+                            "type": "integer",
+                            "minimum": 100,
+                            "maximum": 50000,
+                            "default": 50000,
+                        },
+                    },
+                    "required": ["name", "path"],
+                },
+            },
+        },
         {
             "type": "function",
             "function": {
@@ -693,6 +746,12 @@ class AgentToolService:
         chat_session_id: str,
         workspace_root: str | None,
     ) -> str:
+        if tool_name == "list_skills":
+            return await self._list_skills(workspace_root)
+        if tool_name == "read_skill":
+            return await self._read_skill(arguments, workspace_root)
+        if tool_name == "read_skill_resource":
+            return await self._read_skill_resource(arguments, workspace_root)
         if tool_name == "memory_search":
             return await self._memory_search(arguments)
         if tool_name == "memory_save":
@@ -758,6 +817,43 @@ class AgentToolService:
         if tool_name == "web_search":
             return await self._web_search(arguments)
         raise ToolExecutionError(f"Unknown tool `{tool_name}`.")
+
+    async def _list_skills(self, workspace_root: str | None) -> str:
+        skills = SkillService(workspace_root).discover()
+        return json.dumps(
+            {"skills": [skill.model_dump(mode="json") for skill in skills]},
+            ensure_ascii=False,
+        )
+
+    async def _read_skill(self, arguments: dict[str, Any], workspace_root: str | None) -> str:
+        name = str(arguments.get("name", "")).strip()
+        if not name:
+            raise ToolExecutionError("`name` is required for read_skill.")
+        try:
+            result = SkillService(workspace_root).read_skill(
+                name,
+                max_chars=int(arguments.get("max_chars", SkillService.MAX_SKILL_CONTENT_CHARS)),
+            )
+        except SkillServiceError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
+
+    async def _read_skill_resource(
+        self, arguments: dict[str, Any], workspace_root: str | None
+    ) -> str:
+        name = str(arguments.get("name", "")).strip()
+        path = str(arguments.get("path", "")).strip()
+        if not name or not path:
+            raise ToolExecutionError("`name` and `path` are required for read_skill_resource.")
+        try:
+            result = SkillService(workspace_root).read_resource(
+                name,
+                path,
+                max_chars=int(arguments.get("max_chars", SkillService.MAX_SKILL_CONTENT_CHARS)),
+            )
+        except SkillServiceError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
 
     async def _memory_search(self, arguments: dict[str, Any]) -> str:
         query = str(arguments.get("query", "")).strip()
