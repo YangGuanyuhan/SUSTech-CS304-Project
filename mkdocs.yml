@@ -27,6 +27,7 @@ nav:
       - Memory System: features/MEMORY_SYSTEM_IMPLEMENTATION.md
       - Blackboard Feature: features/BLACKBOARD_FEATURE.md
       - Web Search: features/WEB_SEARCH.md
+      - Skills And MCP: features/SKILLS_MCP.md
       - RAG Setup: RAG_README.md
   - Development:
       - Database Refactor: development/DATABASE_REFACTOR_SUMMARY.md

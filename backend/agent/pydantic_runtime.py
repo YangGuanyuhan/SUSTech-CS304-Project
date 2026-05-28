@@ -32,8 +32,11 @@ from backend.models.quiz import QuizDraft
 from backend.models.tooling import ToolTrace
 from backend.services.agent_tool_service import AgentToolService, ToolExecutionError
 from backend.services.chat_file_service import ChatFileService
+from backend.services.llm_logging_service import llm_logger
+from backend.services.mcp_service import MCPServerInstance, build_mcp_prompt, build_mcp_server
 from backend.services.rag_service import RAGServiceError
 from backend.services.runtime_settings import runtime_settings
+from backend.services.skill_service import SkillService
 from backend.services.tool_learning_service import ToolLearningService, get_static_examples
 
 SYSTEM_PROMPT = """
@@ -104,6 +107,11 @@ Tool usage rules:
     links to the user instead of claiming you saved files locally.
 18. For Blackboard file download requests, never call calendar tools, announcement tools,
     webpage tools, or local file tools unless the user explicitly asks for those separate actions.
+19. Skills are reusable workflow instructions. Available skill metadata is provided separately.
+    When the user explicitly mentions `$skill-name` or a request matches a skill description,
+    call read_skill before following that skill. Do not assume the SKILL.md body from metadata alone.
+20. MCP tools may be available with server-prefixed names. Treat them like real external tools:
+    call them when they directly satisfy the user's request, and explain tool errors plainly.
 
 Response style:
 - Be concise and practical.
@@ -315,14 +323,16 @@ class PydanticAIRuntime:
         return OpenAIModel(config.model, provider=provider)
 
     def _build_agent(
-        self, system_prompt: str = SYSTEM_PROMPT
+        self, system_prompt: str = SYSTEM_PROMPT, *, include_mcp: bool = True
     ) -> Agent[AgentDeps, str | DeferredToolRequests]:
+        mcp_toolsets = self._build_mcp_toolsets() if include_mcp else []
         agent = Agent[AgentDeps, str | DeferredToolRequests](
             model=self._build_model(),
             deps_type=AgentDeps,
             output_type=str | DeferredToolRequests,
             system_prompt=system_prompt,
             retries=1,
+            toolsets=mcp_toolsets,
             defer_model_check=True,
         )
 
@@ -341,6 +351,14 @@ class PydanticAIRuntime:
         @agent.system_prompt(dynamic=True)
         def chat_upload_instruction(ctx: RunContext[AgentDeps]) -> str:
             return build_chat_uploads_prompt(ctx.deps.session, ctx.deps.session_id)
+
+        @agent.system_prompt(dynamic=True)
+        def skill_instruction(ctx: RunContext[AgentDeps]) -> str:
+            return SkillService(ctx.deps.workspace_root).build_metadata_prompt()
+
+        @agent.system_prompt(dynamic=True)
+        def mcp_instruction(ctx: RunContext[AgentDeps]) -> str:
+            return build_mcp_prompt(runtime_settings.get_mcp_config().servers)
 
         async def _notify_tool_events(
             ctx: RunContext[AgentDeps], changed_events: list[ToolTrace]
@@ -396,6 +414,37 @@ class PydanticAIRuntime:
             ctx.deps.tools_used.append(tool_name)
             await _notify_tool_events(ctx, [running_event])
             return output
+
+        @agent.tool(name="list_skills")
+        async def list_skills(ctx: RunContext[AgentDeps]) -> str:
+            """List available agent skills with metadata only."""
+
+            return await _execute_tool(ctx, "list_skills", {})
+
+        @agent.tool(name="read_skill")
+        async def read_skill(
+            ctx: RunContext[AgentDeps],
+            name: str,
+            max_chars: int = SkillService.MAX_SKILL_CONTENT_CHARS,
+        ) -> str:
+            """Read SKILL.md for an available agent skill before following its instructions."""
+
+            return await _execute_tool(ctx, "read_skill", {"name": name, "max_chars": max_chars})
+
+        @agent.tool(name="read_skill_resource")
+        async def read_skill_resource(
+            ctx: RunContext[AgentDeps],
+            name: str,
+            path: str,
+            max_chars: int = SkillService.MAX_SKILL_CONTENT_CHARS,
+        ) -> str:
+            """Read a file inside an available skill directory."""
+
+            return await _execute_tool(
+                ctx,
+                "read_skill_resource",
+                {"name": name, "path": path, "max_chars": max_chars},
+            )
 
         @agent.tool(name="memory_search")
         async def memory_search(
@@ -786,6 +835,72 @@ class PydanticAIRuntime:
 
         return agent
 
+    def _build_mcp_toolsets(self) -> list[MCPServerInstance]:
+        servers: list[MCPServerInstance] = []
+        for config in runtime_settings.get_mcp_config().servers:
+            if not config.enabled:
+                continue
+            tool_prefix = config.tool_prefix or config.id
+            process_tool_call = self._build_mcp_process_tool_call(tool_prefix)
+            servers.append(build_mcp_server(config, process_tool_call=process_tool_call))
+        return servers
+
+    def _build_mcp_process_tool_call(self, tool_prefix: str):
+        async def process_tool_call(ctx, call_tool, name: str, arguments: dict[str, Any]):
+            tool_name = f"{tool_prefix}_{name}"
+            running_event = ToolTrace(
+                tool_name=tool_name,
+                arguments=arguments,
+                status="running",
+            )
+            deps = getattr(ctx, "deps", None)
+            if deps is not None:
+                deps.tool_events.append(running_event)
+                await self._notify_tool_events_from_deps(deps, [running_event])
+            try:
+                result = await call_tool(name, arguments, None)
+            except Exception as exc:
+                running_event.status = "failed"
+                running_event.output = json.dumps(
+                    {
+                        "ok": False,
+                        "tool_name": tool_name,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    },
+                    ensure_ascii=False,
+                )
+                if deps is not None:
+                    await self._notify_tool_events_from_deps(deps, [running_event])
+                raise
+
+            running_event.status = "completed"
+            running_event.output = self._serialize_mcp_tool_result(result)
+            if deps is not None:
+                deps.tools_used.append(tool_name)
+                await self._notify_tool_events_from_deps(deps, [running_event])
+            return result
+
+        return process_tool_call
+
+    @staticmethod
+    def _serialize_mcp_tool_result(result: Any) -> str:
+        try:
+            return json.dumps({"ok": True, "result": result}, ensure_ascii=False, default=str)
+        except TypeError:
+            return json.dumps({"ok": True, "result": str(result)}, ensure_ascii=False)
+
+    @staticmethod
+    async def _notify_tool_events_from_deps(
+        deps: AgentDeps, changed_events: list[ToolTrace]
+    ) -> None:
+        callback = deps.on_tool_events
+        if callback is None:
+            return
+        delta = [event.model_copy(deep=True) for event in changed_events]
+        maybe_awaitable = callback(delta)
+        if inspect.isawaitable(maybe_awaitable):
+            _ = await maybe_awaitable
+
     def _history_to_model_messages(self, history: list[dict[str, str]]):
         messages: list[ModelRequest | ModelResponse] = []
         for item in history:
@@ -866,15 +981,35 @@ class PydanticAIRuntime:
         # Build agent with dynamic prompt
         agent = self._build_agent(system_prompt=dynamic_prompt)
         final_history = message_history or self._history_to_model_messages(history or [])
-        run_result = await agent.run(
-            user_prompt=user_input,
-            message_history=final_history,
-            deferred_tool_results=deferred_tool_results,
-            deps=deps,
-            event_stream_handler=self._build_event_stream_handler(
+        run_kwargs = {
+            "user_prompt": user_input,
+            "message_history": final_history,
+            "deferred_tool_results": deferred_tool_results,
+            "deps": deps,
+            "event_stream_handler": self._build_event_stream_handler(
                 on_response_chunk, on_thinking_chunk=on_thinking_chunk
             ),
-        )
+        }
+        enabled_mcp = any(server.enabled for server in runtime_settings.get_mcp_config().servers)
+        if enabled_mcp:
+            try:
+                async with agent:
+                    run_result = await agent.run(**run_kwargs)
+            except Exception as exc:
+                llm_logger.log_event(
+                    session_id,
+                    "mcp_runtime_unavailable",
+                    {"error": f"{type(exc).__name__}: {exc}"},
+                )
+                fallback_prompt = (
+                    dynamic_prompt
+                    + "\n\nMCP tools are currently unavailable because server startup failed. "
+                    "Continue with built-in tools and explain MCP-specific failures plainly if relevant."
+                )
+                fallback_agent = self._build_agent(system_prompt=fallback_prompt, include_mcp=False)
+                run_result = await fallback_agent.run(**run_kwargs)
+        else:
+            run_result = await agent.run(**run_kwargs)
         return run_result, deps
 
     # async def run_stream(

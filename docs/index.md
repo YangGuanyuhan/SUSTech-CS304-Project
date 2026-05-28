@@ -1,7 +1,8 @@
 # StudyAI Documentation
 
 StudyAI is a student productivity agent with chat, Blackboard integration,
-calendar support, local knowledge-base RAG, and current-chat file Q&A.
+calendar support, local knowledge-base RAG, skills, MCP tools, and current-chat
+file Q&A.
 
 ## Start Here
 
@@ -16,6 +17,7 @@ calendar support, local knowledge-base RAG, and current-chat file Q&A.
 - [Memory System](features/MEMORY_SYSTEM_IMPLEMENTATION.md)
 - [Blackboard Feature](features/BLACKBOARD_FEATURE.md)
 - [Web Search](features/WEB_SEARCH.md)
+- [Skills And MCP](features/SKILLS_MCP.md)
 - [RAG Setup](RAG_README.md)
 
 ## Generated Artifacts

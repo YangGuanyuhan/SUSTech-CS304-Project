@@ -135,6 +135,29 @@ class SearchSettingsRequest(BaseModel):
     timeout: int | None = Field(default=None, ge=1, le=120)
 
 
+class MCPServerSettingsRequest(BaseModel):
+    id: str
+    enabled: bool = True
+    transport: str
+    tool_prefix: str | None = None
+    command: str | None = None
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    cwd: str | None = None
+    url: str | None = None
+    headers: dict[str, str] = Field(default_factory=dict)
+    timeout: float = Field(default=5.0, gt=0, le=120)
+    read_timeout: float = Field(default=300.0, gt=0, le=1200)
+
+
+class MCPSettingsRequest(BaseModel):
+    servers: list[MCPServerSettingsRequest] = Field(default_factory=list)
+
+
+class MCPTestRequest(BaseModel):
+    server: MCPServerSettingsRequest
+
+
 class CalendarEventCreateRequest(BaseModel):
     title: str
     start_at: datetime

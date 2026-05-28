@@ -477,6 +477,164 @@
           </section>
         </template>
 
+        <template v-else-if="activeSection === 'skills'">
+          <section class="content-panel hero-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Skills</p>
+                <h3>Agent Skills</h3>
+              </div>
+              <span class="badge" :class="{ ready: skillList.length > 0 }">
+                {{ skillList.length ? skillList.length + " 个可用" : "未发现" }}
+              </span>
+            </div>
+            <p class="hint">
+              后端会扫描仓库和用户目录下的 .agents/skills，只把元数据注入 Agent，需要时再读取 SKILL.md。
+            </p>
+          </section>
+
+          <section class="content-panel">
+            <div class="section-top">
+              <div>
+                <strong>已发现的 Skills</strong>
+                <p class="hint compact">禁用或解析失败的 skill 会显示错误，不会被 Agent 使用。</p>
+              </div>
+              <button type="button" class="secondary" :disabled="saving" @click="refreshSkills">刷新</button>
+            </div>
+            <div v-if="skillList.length" class="profile-list">
+              <article v-for="skill in skillList" :key="`${skill.name}-${skill.path}`" class="profile-item">
+                <div class="profile-info">
+                  <strong>{{ skill.name }}</strong>
+                  <p>{{ skill.description || skill.error || "无描述" }}</p>
+                  <small>{{ skill.scope }} · {{ skill.path }}</small>
+                </div>
+                <span class="badge" :class="{ ready: skill.enabled }">
+                  {{ skill.enabled ? (skill.allow_implicit_invocation ? "自动可用" : "仅显式") : "不可用" }}
+                </span>
+              </article>
+            </div>
+            <p v-else class="hint compact">暂无可用 skill。可在仓库或用户目录创建 .agents/skills/&lt;name&gt;/SKILL.md。</p>
+          </section>
+        </template>
+
+        <template v-else-if="activeSection === 'mcp'">
+          <section class="content-panel hero-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">MCP</p>
+                <h3>MCP Server 配置</h3>
+              </div>
+              <span class="badge" :class="{ ready: mcpServers.some((server) => server.enabled) }">
+                {{ mcpServers.some((server) => server.enabled) ? "已启用" : "未启用" }}
+              </span>
+            </div>
+            <p class="hint">
+              配置会保存在后端运行时内存中。启用后，Agent 会把 MCP server 暴露的工具作为带前缀的工具使用。
+            </p>
+          </section>
+
+          <section class="content-panel">
+            <div class="section-top">
+              <div>
+                <strong>Server 列表</strong>
+                <p class="hint compact">保存、删除会立即应用到后端运行时。后端重启后需要重新配置。</p>
+              </div>
+              <button type="button" :disabled="saving" @click="openMCPCreate">新增 Server</button>
+            </div>
+            <div v-if="mcpServers.length" class="profile-list">
+              <article v-for="server in mcpServers" :key="server.id" class="profile-item mcp-server-card">
+                <div class="profile-info">
+                  <div class="mcp-title-row">
+                    <strong>{{ server.id }}</strong>
+                    <span class="transport-pill">{{ server.transport }}</span>
+                  </div>
+                  <p>工具前缀: {{ server.tool_prefix || server.id }}</p>
+                  <small>{{ server.transport === "stdio" ? server.command : server.url }}</small>
+                </div>
+                <div class="profile-actions">
+                  <button type="button" class="secondary action-btn" :disabled="saving" @click="editMCPServer(server)">编辑</button>
+                  <button type="button" class="secondary action-btn" :disabled="saving" @click="testMCPServer(server)">测试</button>
+                  <button type="button" class="delete-btn" :disabled="saving" @click="removeMCPServer(server.id)">删除</button>
+                </div>
+              </article>
+            </div>
+            <p v-else class="hint compact">暂无 MCP server 配置。</p>
+            <div class="actions inline-actions panel-actions">
+              <button type="button" class="secondary" :disabled="saving" @click="refreshMCP">刷新</button>
+              <button type="button" :disabled="saving" @click="saveMCPConfig">重新应用当前列表</button>
+            </div>
+          </section>
+
+          <section v-if="mcpEditorOpen" class="content-panel editor-panel">
+            <div class="section-top">
+              <div>
+                <strong>{{ mcpEditorMode === "create" ? "新增 MCP Server" : "编辑 MCP Server" }}</strong>
+                <p class="hint compact">{{ mcpForm.transport === "stdio" ? "环境变量是选填项；按字段名和值逐行添加。" : "请求头是选填项；常见字段如 Authorization，值如 Bearer token。" }}</p>
+              </div>
+              <button type="button" class="secondary" :disabled="saving" @click="mcpEditorOpen = false">收起</button>
+            </div>
+            <form class="config-form" @submit.prevent="upsertMCPServer">
+              <label>
+                <span>Server ID</span>
+                <input v-model="mcpForm.id" :disabled="mcpEditorMode === 'edit'" placeholder="例如: filesystem" autocomplete="off" />
+              </label>
+              <label>
+                <span>Transport</span>
+                <select v-model="mcpForm.transport">
+                  <option value="stdio">stdio</option>
+                  <option value="streamable_http">streamable_http</option>
+                  <option value="sse">sse</option>
+                </select>
+              </label>
+              <label>
+                <span>工具前缀</span>
+                <input v-model="mcpForm.tool_prefix" placeholder="默认使用 Server ID" autocomplete="off" />
+              </label>
+              <label class="toggle-label">
+                <span class="toggle-row">
+                  <span>启用</span>
+                  <input v-model="mcpForm.enabled" type="checkbox" class="toggle-input" />
+                </span>
+              </label>
+              <label v-if="mcpForm.transport === 'stdio'" class="full">
+                <span>Command</span>
+                <input v-model="mcpForm.command" placeholder="npx 或 python" autocomplete="off" />
+              </label>
+              <label v-if="mcpForm.transport === 'stdio'" class="full">
+                <span>Args（每行一个）</span>
+                <textarea v-model="mcpForm.argsText" rows="3" placeholder="-y&#10;@modelcontextprotocol/server-filesystem&#10;/path/to/root"></textarea>
+              </label>
+              <label v-if="mcpForm.transport !== 'stdio'" class="full">
+                <span>URL</span>
+                <input v-model="mcpForm.url" placeholder="https://example.com/mcp" autocomplete="off" />
+              </label>
+              <div class="full key-value-editor">
+                <div class="key-value-top">
+                  <div>
+                    <strong>{{ mcpForm.transport === "stdio" ? "环境变量" : "请求头" }}</strong>
+                    <p class="hint compact">{{ mcpForm.transport === "stdio" ? "例如 MCP_API_KEY = 21ND。" : "例如 Authorization = Bearer 21ND。" }}</p>
+                  </div>
+                  <button type="button" class="secondary" :disabled="saving" @click="addMCPPair">
+                    新增字段
+                  </button>
+                </div>
+                <div v-if="mcpForm.pairs.length" class="key-value-rows">
+                  <div v-for="(pair, index) in mcpForm.pairs" :key="index" class="key-value-row">
+                    <input v-model="pair.key" placeholder="字段名" autocomplete="off" />
+                    <input v-model="pair.value" placeholder="内容" autocomplete="off" />
+                    <button type="button" class="delete-btn icon-btn" :disabled="saving" @click="removeMCPPair(index)">删除</button>
+                  </div>
+                </div>
+                <p v-else class="hint compact">没有额外字段；这是允许的。</p>
+              </div>
+              <div class="actions full">
+                <button type="button" class="secondary" :disabled="saving" @click="testMCPForm">测试当前配置</button>
+                <button type="submit" :disabled="saving">{{ saving ? "保存中..." : "保存并应用" }}</button>
+              </div>
+            </form>
+          </section>
+        </template>
+
         <template v-else-if="activeSection === 'backend'">
           <section class="content-panel hero-panel backend-hero">
             <div class="panel-heading">
@@ -587,17 +745,21 @@ import {
   getHealth,
   getLLMProfiles,
   getLLMSettings,
+  getMCPSettings,
   getSearchSettings,
+  refreshSkillSettings,
   saveBBProfile as saveBBProfileAPI,
   saveEmailProfile,
   saveLLMProfile,
   testBlackboardSettings,
   testEmailSettings,
   testLLMSettings,
+  testMCPSettings,
   testSearchSettings,
   updateBlackboardSettings,
   updateEmailSettings,
   updateLLMSettings,
+  updateMCPSettings,
   updateSearchSettings
 } from "../api/client";
 
@@ -623,6 +785,8 @@ const sections = [
   { id: "bb", label: "Blackboard", description: "课程系统登录", icon: "BB" },
   { id: "email", label: "Email 邮箱", description: "SMTP 邮件服务", icon: "@@" },
   { id: "search", label: "Web Search", description: "搜索提供商与密钥", icon: "SE" },
+  { id: "skills", label: "Skills", description: "工作流能力扩展", icon: "SK" },
+  { id: "mcp", label: "MCP", description: "外部工具服务器", icon: "MP" },
   { id: "backend", label: "后端服务", description: "状态与联通性", icon: "BE" },
   { id: "dev", label: "开发者工具", description: "数据库与调试入口", icon: "DV" }
 ];
@@ -696,6 +860,21 @@ const searchForm = reactive({
   api_key: "",
   replace_api_key: false,
   timeout: 30
+});
+
+const skillList = ref([]);
+const mcpServers = ref([]);
+const mcpEditorOpen = ref(false);
+const mcpEditorMode = ref("create");
+const mcpForm = reactive({
+  id: "",
+  enabled: true,
+  transport: "stdio",
+  tool_prefix: "",
+  command: "",
+  argsText: "",
+  url: "",
+  pairs: []
 });
 
 const emailEditorOpen = ref(false);
@@ -1134,6 +1313,196 @@ async function testSearch() {
   }
 }
 
+function applyMCPState(payload) {
+  mcpServers.value = (payload.servers ?? []).map((server) => ({ ...server }));
+}
+
+function objectToPairs(value = {}) {
+  return Object.entries(value ?? {}).map(([key, pairValue]) => ({
+    key,
+    value: String(pairValue ?? "")
+  }));
+}
+
+function pairsToObject(pairs) {
+  return pairs.reduce((acc, pair) => {
+    const key = pair.key.trim();
+    if (!key && !pair.value.trim()) {
+      return acc;
+    }
+    if (!key) {
+      throw new Error("额外字段存在空字段名。");
+    }
+    acc[key] = pair.value;
+    return acc;
+  }, {});
+}
+
+function mcpPayloadFromForm() {
+  const extra = pairsToObject(mcpForm.pairs);
+  const base = {
+    id: mcpForm.id.trim(),
+    enabled: mcpForm.enabled,
+    transport: mcpForm.transport,
+    tool_prefix: mcpForm.tool_prefix.trim() || null,
+    command: mcpForm.command.trim() || null,
+    args: mcpForm.argsText.split("\n").map((item) => item.trim()).filter(Boolean),
+    env: mcpForm.transport === "stdio" ? extra : {},
+    cwd: null,
+    url: mcpForm.url.trim() || null,
+    headers: mcpForm.transport === "stdio" ? {} : extra,
+    timeout: 5,
+    read_timeout: 300
+  };
+  if (!base.id) {
+    throw new Error("请输入 Server ID。");
+  }
+  if (base.transport === "stdio" && !base.command) {
+    throw new Error("stdio server 需要 Command。");
+  }
+  if (base.transport !== "stdio" && !base.url) {
+    throw new Error("HTTP/SSE server 需要 URL。");
+  }
+  return base;
+}
+
+function openMCPCreate() {
+  mcpEditorMode.value = "create";
+  mcpEditorOpen.value = true;
+  Object.assign(mcpForm, {
+    id: "",
+    enabled: true,
+    transport: "stdio",
+    tool_prefix: "",
+    command: "",
+    argsText: "",
+    url: "",
+    pairs: []
+  });
+}
+
+function editMCPServer(server) {
+  mcpEditorMode.value = "edit";
+  mcpEditorOpen.value = true;
+  Object.assign(mcpForm, {
+    id: server.id,
+    enabled: Boolean(server.enabled),
+    transport: server.transport,
+    tool_prefix: server.tool_prefix ?? "",
+    command: server.command ?? "",
+    argsText: (server.args ?? []).join("\n"),
+    url: server.url ?? "",
+    pairs: objectToPairs(server.transport === "stdio" ? server.env ?? {} : server.headers ?? {})
+  });
+}
+
+function addMCPPair() {
+  mcpForm.pairs.push({ key: "", value: "" });
+}
+
+function removeMCPPair(index) {
+  mcpForm.pairs.splice(index, 1);
+}
+
+async function persistMCPServers(successMessage) {
+  const response = await updateMCPSettings({ servers: mcpServers.value });
+  applyMCPState(response.data ?? {});
+  showMessage(successMessage || "MCP 配置已应用到运行时。");
+}
+
+async function upsertMCPServer() {
+  saving.value = true;
+  try {
+    const payload = mcpPayloadFromForm();
+    const index = mcpServers.value.findIndex((server) => server.id === payload.id);
+    if (index >= 0) {
+      mcpServers.value.splice(index, 1, payload);
+    } else {
+      mcpServers.value.push(payload);
+    }
+    mcpEditorOpen.value = false;
+    await persistMCPServers(`MCP Server "${payload.id}" 已保存并应用。`);
+  } catch (error) {
+    showMessage(`MCP 配置无效: ${error.message}`, "error");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function removeMCPServer(id) {
+  saving.value = true;
+  try {
+    mcpServers.value = mcpServers.value.filter((server) => server.id !== id);
+    await persistMCPServers(`MCP Server "${id}" 已删除并应用。`);
+  } catch (error) {
+    showMessage(`删除 MCP Server 失败: ${error.message}`, "error");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function refreshSkills() {
+  saving.value = true;
+  try {
+    const response = await refreshSkillSettings();
+    skillList.value = response.data?.skills ?? [];
+    showMessage("Skills 已刷新。");
+  } catch (error) {
+    showMessage(`刷新 Skills 失败: ${error.message}`, "error");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function refreshMCP() {
+  saving.value = true;
+  try {
+    const response = await getMCPSettings();
+    applyMCPState(response.data ?? {});
+    showMessage("MCP 配置已加载。");
+  } catch (error) {
+    showMessage(`加载 MCP 配置失败: ${error.message}`, "error");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function saveMCPConfig() {
+  saving.value = true;
+  try {
+    await persistMCPServers("MCP 配置已重新应用到运行时。");
+  } catch (error) {
+    showMessage(`保存 MCP 配置失败: ${error.message}`, "error");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function testMCPServer(server) {
+  saving.value = true;
+  try {
+    const response = await testMCPSettings({ server });
+    const result = response.data ?? {};
+    if (response.success && result.ok) {
+      showMessage(`MCP 连接正常，发现 ${result.tool_count} 个工具。`);
+    } else {
+      showMessage(`MCP 测试失败: ${result.error || "未知错误"}`, "error");
+    }
+  } catch (error) {
+    showMessage(`MCP 测试失败: ${error.message}`, "error");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function testMCPForm() {
+  try {
+    await testMCPServer(mcpPayloadFromForm());
+  } catch (error) {
+    showMessage(`MCP 配置无效: ${error.message}`, "error");
+  }
+}
+
 async function saveEmail() {
   saving.value = true;
   try {
@@ -1290,11 +1659,24 @@ async function testConnection() {
 async function refreshAll() {
   saving.value = true;
   try {
-    const [llmResponse, bbResponse, emailResponse, searchResponse, llmProfilesResponse, bbProfilesResponse, emailProfilesResponse, healthResponse] = await Promise.all([
+    const [
+      llmResponse,
+      bbResponse,
+      emailResponse,
+      searchResponse,
+      skillsResponse,
+      mcpResponse,
+      llmProfilesResponse,
+      bbProfilesResponse,
+      emailProfilesResponse,
+      healthResponse
+    ] = await Promise.all([
       getLLMSettings(),
       getBlackboardSettings(),
       getEmailSettings(),
       getSearchSettings(),
+      refreshSkillSettings(),
+      getMCPSettings(),
       getLLMProfiles(),
       getBBProfiles(),
       getEmailProfiles(),
@@ -1305,6 +1687,8 @@ async function refreshAll() {
     applyBBState(bbResponse.data);
     applyEmailState(emailResponse.data);
     applySearchState(searchResponse.data);
+    skillList.value = skillsResponse.data?.skills ?? [];
+    applyMCPState(mcpResponse.data ?? {});
     profiles.value = llmProfilesResponse.data ?? [];
     bbProfiles.value = bbProfilesResponse.data ?? [];
     emailProfiles.value = emailProfilesResponse.data ?? [];
@@ -1325,7 +1709,17 @@ watch(activeSection, () => {
 });
 
 onMounted(async () => {
-  await Promise.all([refresh(), refreshBlackboard(), refreshBBProfiles(), refreshEmail(), refreshEmailProfiles(), refreshSearch(), checkBackendHealth()]);
+  await Promise.all([
+    refresh(),
+    refreshBlackboard(),
+    refreshBBProfiles(),
+    refreshEmail(),
+    refreshEmailProfiles(),
+    refreshSearch(),
+    refreshSkills(),
+    refreshMCP(),
+    checkBackendHealth()
+  ]);
 });
 
 onBeforeUnmount(() => {
@@ -1636,6 +2030,63 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
+.mcp-server-card {
+  align-items: stretch;
+  background: linear-gradient(180deg, #ffffff, rgba(248, 250, 252, 0.92));
+}
+
+.mcp-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.transport-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgba(31, 111, 120, 0.1);
+  color: var(--accent-teal);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.key-value-editor {
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.key-value-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.key-value-rows {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.key-value-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.icon-btn {
+  white-space: nowrap;
+}
+
 .action-btn {
   background: rgba(31, 41, 55, 0.06);
   color: var(--text-primary);
@@ -1682,7 +2133,8 @@ label span {
 }
 
 input,
-select {
+select,
+textarea {
   box-sizing: border-box;
   width: 100%;
   padding: 14px 16px;
@@ -1690,11 +2142,13 @@ select {
   border: 1px solid var(--border-light);
   background: white;
   font-size: 14px;
+  font-family: inherit;
   transition: all 0.2s ease;
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   outline: none;
   border-color: var(--accent-orange);
   box-shadow: 0 0 0 4px var(--accent-orange-subtle);
@@ -1855,6 +2309,10 @@ button:disabled {
   .status-grid,
   .backend-grid,
   .config-form {
+    grid-template-columns: 1fr;
+  }
+
+  .key-value-row {
     grid-template-columns: 1fr;
   }
 }

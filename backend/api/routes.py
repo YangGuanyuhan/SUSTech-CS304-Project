@@ -20,6 +20,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import FileResponse
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
@@ -40,6 +41,8 @@ from backend.api.schemas import (
     LLMProfileRequest,
     LLMSettingsRequest,
     LoginRequest,
+    MCPSettingsRequest,
+    MCPTestRequest,
     MemoryDeleteByQueryRequest,
     QuizAttemptRequest,
     RAGIndexFolderRequest,
@@ -63,6 +66,7 @@ from backend.services.chat_file_service import CHAT_FILE_CONTEXT_CHUNK_LIMIT, Ch
 from backend.services.database_insights_service import DatabaseInsightsService
 from backend.services.email_service import EmailService, UnconfirmedSendError
 from backend.services.llm_service import LLMConnectionError, LLMService
+from backend.services.mcp_service import test_mcp_server
 from backend.services.memory_service import MemoryService
 from backend.services.quiz_service import QuizService
 from backend.services.rag_service import RAGProviderError, RAGService, RAGServiceError
@@ -70,11 +74,14 @@ from backend.services.runtime_settings import (
     RuntimeBlackboardUpdate,
     RuntimeEmailUpdate,
     RuntimeLLMUpdate,
+    RuntimeMCPServerConfig,
+    RuntimeMCPUpdate,
     RuntimeSearchUpdate,
     runtime_settings,
 )
 from backend.services.settings_service import SettingsService
 from backend.services.shared_workspace_service import SharedWorkspaceError, SharedWorkspaceService
+from backend.services.skill_service import SkillService
 from backend.services.user_service import (
     AuthenticationError,
     AvatarUploadError,
@@ -679,6 +686,63 @@ async def test_search_settings(request: SearchSettingsRequest) -> ApiResponse[ob
                 timeout=previous.timeout,
             )
         )
+
+
+@router.get("/settings/skills", response_model=ApiResponse[object])
+async def get_skill_settings(workspace_root: str | None = Query(default=None)) -> ApiResponse[object]:
+    skills = SkillService(workspace_root).discover()
+    return ApiResponse(
+        success=True,
+        data={"skills": [skill.model_dump(mode="json") for skill in skills]},
+    )
+
+
+@router.post("/settings/skills/refresh", response_model=ApiResponse[object])
+async def refresh_skill_settings(
+    workspace_root: str | None = Query(default=None),
+) -> ApiResponse[object]:
+    skills = SkillService(workspace_root).discover()
+    return ApiResponse(
+        success=True,
+        data={"skills": [skill.model_dump(mode="json") for skill in skills]},
+    )
+
+
+@router.get("/settings/mcp", response_model=ApiResponse[object])
+async def get_mcp_settings() -> ApiResponse[object]:
+    return ApiResponse(success=True, data=runtime_settings.get_public_mcp_config())
+
+
+@router.put("/settings/mcp", response_model=ApiResponse[object])
+async def update_mcp_settings(request: MCPSettingsRequest) -> ApiResponse[object]:
+    try:
+        config = runtime_settings.update_mcp_config(
+            RuntimeMCPUpdate.model_validate(request.model_dump())
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ApiResponse(success=True, data=config)
+
+
+@router.post("/settings/mcp/test", response_model=ApiResponse[object])
+async def test_mcp_settings(request: MCPTestRequest) -> ApiResponse[object]:
+    try:
+        server = runtime_settings.resolve_mcp_server_secrets(
+            RuntimeMCPServerConfig.model_validate(request.server.model_dump())
+        )
+        result = await test_mcp_server(server)
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        return ApiResponse(
+            success=False,
+            data={
+                "ok": False,
+                "id": request.server.id,
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+        )
+    return ApiResponse(success=True, data=result)
 
 
 @router.post("/chat")
