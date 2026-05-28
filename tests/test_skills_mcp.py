@@ -5,13 +5,13 @@ import pytest
 
 from backend.agent.pydantic_runtime import PydanticAIRuntime
 from backend.services.agent_tool_service import AgentToolService, ToolExecutionError
+from backend.services.mcp_service import build_mcp_prompt
 from backend.services.runtime_settings import (
     MASKED_SECRET,
     RuntimeMCPServerConfig,
     RuntimeMCPUpdate,
     RuntimeSettingsManager,
 )
-from backend.services.mcp_service import build_mcp_prompt
 from backend.services.skill_service import SkillService, SkillServiceError
 
 

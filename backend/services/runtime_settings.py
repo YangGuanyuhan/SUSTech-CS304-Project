@@ -115,7 +115,7 @@ class RuntimeMCPServerConfig(BaseModel):
     read_timeout: float = Field(default=300.0, gt=0, le=1200)
 
     @model_validator(mode="after")
-    def validate_transport_fields(self) -> "RuntimeMCPServerConfig":
+    def validate_transport_fields(self) -> RuntimeMCPServerConfig:
         if self.transport == "stdio" and not self.command:
             raise ValueError("stdio MCP servers require `command`.")
         if self.transport in {"streamable_http", "sse"} and not self.url:
@@ -135,7 +135,7 @@ class RuntimeMCPUpdate(BaseModel):
     servers: list[RuntimeMCPServerConfig] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def validate_unique_server_ids(self) -> "RuntimeMCPUpdate":
+    def validate_unique_server_ids(self) -> RuntimeMCPUpdate:
         ids = [server.id for server in self.servers]
         if len(ids) != len(set(ids)):
             raise ValueError("MCP server ids must be unique.")

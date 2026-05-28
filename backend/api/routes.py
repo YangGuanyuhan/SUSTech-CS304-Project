@@ -66,6 +66,7 @@ from backend.services.chat_file_service import CHAT_FILE_CONTEXT_CHUNK_LIMIT, Ch
 from backend.services.database_insights_service import DatabaseInsightsService
 from backend.services.email_service import EmailService, UnconfirmedSendError
 from backend.services.llm_service import LLMConnectionError, LLMService
+from backend.services.mcp_service import test_mcp_server
 from backend.services.memory_service import MemoryService
 from backend.services.quiz_service import QuizService
 from backend.services.rag_service import RAGProviderError, RAGService, RAGServiceError
@@ -81,7 +82,6 @@ from backend.services.runtime_settings import (
 from backend.services.settings_service import SettingsService
 from backend.services.shared_workspace_service import SharedWorkspaceError, SharedWorkspaceService
 from backend.services.skill_service import SkillService
-from backend.services.mcp_service import test_mcp_server
 from backend.services.user_service import (
     AuthenticationError,
     AvatarUploadError,

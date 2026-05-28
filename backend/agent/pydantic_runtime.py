@@ -32,6 +32,7 @@ from backend.models.quiz import QuizDraft
 from backend.models.tooling import ToolTrace
 from backend.services.agent_tool_service import AgentToolService, ToolExecutionError
 from backend.services.chat_file_service import ChatFileService
+from backend.services.llm_logging_service import llm_logger
 from backend.services.mcp_service import MCPServerInstance, build_mcp_prompt, build_mcp_server
 from backend.services.rag_service import RAGServiceError
 from backend.services.runtime_settings import runtime_settings
