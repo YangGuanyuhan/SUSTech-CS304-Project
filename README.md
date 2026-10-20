@@ -82,8 +82,8 @@ CONTRIBUTING.md
 ### Get the code
 
 ```bash
-git clone git@github.com:sustech-cs304/team-project-26spring-26s-8.git
-cd team-project-26spring-26s-8
+git clone https://github.com/YangGuanyuhan/SUSTech-CS304-Project.git
+cd SUSTech-CS304-Project
 ```
 
 ### Install backend dependencies
@@ -353,3 +353,11 @@ npm run build
 - [Vite](https://vitejs.dev/) — frontend build tool
 - [uv](https://docs.astral.sh/uv/) — Python package and project manager
 
+
+## Acknowledgements / 致谢
+
+This independently maintained repository is based on [StudyAI — sustech-cs304/team-project-26spring-26s-8](https://github.com/sustech-cs304/team-project-26spring-26s-8), originally developed for SUSTech CS304 Software Engineering.
+
+感谢原项目团队及所有贡献者的设计、开发与文档工作，包括 [linwenqi1](https://github.com/linwenqi1)、[shentoumengxin](https://github.com/shentoumengxin)、[Autumn1101](https://github.com/Autumn1101)、[YangGuanyuhan](https://github.com/YangGuanyuhan) 和 [Kill1ngPig](https://github.com/Kill1ngPig)。完整贡献记录请参阅[原仓库贡献者列表](https://github.com/sustech-cs304/team-project-26spring-26s-8/graphs/contributors)。
+
+The original Git history and author attribution are preserved. Independent maintenance does not imply sole authorship of the original work.
